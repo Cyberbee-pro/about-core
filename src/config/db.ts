@@ -13,7 +13,9 @@ export const connectDB = async (): Promise<typeof mongoose> => {
   }
 
   try {
-    const conn = await mongoose.connect(mongoUri);
+    const conn = await mongoose.connect(mongoUri, {
+      dbName: "about_core",
+    });
     isConnected = conn.connections[0].readyState === 1;
     return conn;
   } catch (error) {
