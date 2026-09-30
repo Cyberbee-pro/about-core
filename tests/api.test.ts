@@ -1,5 +1,4 @@
 import request from "supertest";
-import { app } from "../src/server";
 import { LogEntry } from "../src/models/LogEntry";
 import { Project } from "../src/models/Project";
 import { SiteConfig } from "../src/models/SiteConfig";
@@ -21,6 +20,7 @@ jest.mock("../src/config/db", () => ({
 interface CloudinaryMockOptions {
   folder: string;
   resource_type: string;
+  public_id?: string;
 }
 
 type CloudinaryMockCallback = (
@@ -28,52 +28,62 @@ type CloudinaryMockCallback = (
   result?: { secure_url: string; public_id: string }
 ) => void;
 
-const mockUploadCalls: CloudinaryMockOptions[] = [];
-
-const createMockUploadStream = (
-  options: CloudinaryMockOptions,
-  callback: CloudinaryMockCallback
-): Writable => {
-  mockUploadCalls.push(options);
-  const writable = new Writable({
-    write(_chunk, _encoding, next) {
-      next();
+jest.mock("../src/config/cloudinary", () => {
+  const uploadCalls: CloudinaryMockOptions[] = [];
+  const search = {
+    expression: jest.fn(),
+    max_results: jest.fn(),
+    execute: jest.fn().mockResolvedValue({ resources: [], total_count: 0 }),
+  };
+  search.expression.mockReturnValue(search);
+  search.max_results.mockReturnValue(search);
+  const uploader = {
+    upload_stream: (options: CloudinaryMockOptions, callback: CloudinaryMockCallback): Writable => {
+      uploadCalls.push(options);
+      const writable = new Writable({ write(_chunk, _encoding, next) { next(); } });
+      process.nextTick(() => callback(null, {
+        secure_url: `https://res.cloudinary.com/demo/${options.resource_type}/${options.folder}/test_file`,
+        public_id: "test_public_id",
+      }));
+      return writable;
     },
-  });
-  process.nextTick(() => {
-    writable.emit("finish");
-    callback(null, {
-      secure_url: `https://res.cloudinary.com/demo/${options.resource_type}/${options.folder}/test_file`,
-      public_id: "test_public_id",
-    });
-  });
-  return writable;
+  };
+  const cloudinary = { uploader, search, uploadCalls };
+  return { __esModule: true, default: cloudinary, cloudinary };
+});
+
+interface CloudinaryTestDouble {
+  search: {
+    expression: jest.Mock;
+    max_results: jest.Mock;
+    execute: jest.Mock;
+  };
+  uploadCalls: CloudinaryMockOptions[];
+}
+
+const mockCloudinary = jest.requireMock("../src/config/cloudinary") as {
+  default: CloudinaryTestDouble;
 };
-
-jest.mock("../src/config/cloudinary", () => ({
-  __esModule: true,
-  default: {
-    uploader: {
-      upload_stream: (
-        options: CloudinaryMockOptions,
-        callback: CloudinaryMockCallback
-      ) => createMockUploadStream(options, callback),
-    },
-  },
-  cloudinary: {
-    uploader: {
-      upload_stream: (
-        options: CloudinaryMockOptions,
-        callback: CloudinaryMockCallback
-      ) => createMockUploadStream(options, callback),
-    },
-  },
-}));
+const mockApiSearch = mockCloudinary.default.search;
+const mockUploadCalls = mockCloudinary.default.uploadCalls;
+const { app: expressApp } = require("../src/server") as typeof import("../src/server");
+const app = expressApp.listen(0);
 
 describe("about-core API & Middleware Integration Tests", () => {
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      app.close((error) => (error ? reject(error) : resolve()));
+    });
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockUploadCalls.length = 0;
+
+    // Re-establish search mock chaining after clearAllMocks
+    mockApiSearch.expression.mockReturnValue(mockApiSearch);
+    mockApiSearch.max_results.mockReturnValue(mockApiSearch);
+    mockApiSearch.execute.mockResolvedValue({ resources: [], total_count: 0 });
   });
 
   describe("Health Check", () => {
@@ -196,24 +206,27 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(201);
       expect(mockUploadCalls.length).toBe(3);
 
-      const imageUpload = mockUploadCalls.find((c) => c.folder === "portfolio/images");
+      const imageUpload = mockUploadCalls.find((c) => c.folder === "portfolio/projects/spatial-canvas/images");
       expect(imageUpload).toBeDefined();
       expect(imageUpload?.resource_type).toBe("image");
+      expect(imageUpload?.public_id).toBe("spatial-canvas_1");
 
-      const videoUpload = mockUploadCalls.find((c) => c.folder === "portfolio/videos");
+      const videoUpload = mockUploadCalls.find((c) => c.folder === "portfolio/projects/spatial-canvas/videos");
       expect(videoUpload).toBeDefined();
       expect(videoUpload?.resource_type).toBe("video");
+      expect(videoUpload?.public_id).toBe("spatial-canvas_1");
 
-      const modelUpload = mockUploadCalls.find((c) => c.folder === "portfolio/models");
+      const modelUpload = mockUploadCalls.find((c) => c.folder === "portfolio/projects/spatial-canvas/models");
       expect(modelUpload).toBeDefined();
       expect(modelUpload?.resource_type).toBe("raw");
+      expect(modelUpload?.public_id).toBe("spatial-canvas_1");
 
       expect(Project.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          image: "https://res.cloudinary.com/demo/image/portfolio/images/test_file",
-          videoDemo: "https://res.cloudinary.com/demo/video/portfolio/videos/test_file",
+          image: "https://res.cloudinary.com/demo/image/portfolio/projects/spatial-canvas/images/test_file",
+          videoDemo: "https://res.cloudinary.com/demo/video/portfolio/projects/spatial-canvas/videos/test_file",
           threeDModel: expect.objectContaining({
-            fileUrl: "https://res.cloudinary.com/demo/raw/portfolio/models/test_file",
+            fileUrl: "https://res.cloudinary.com/demo/raw/portfolio/projects/spatial-canvas/models/test_file",
           }),
         })
       );
@@ -472,6 +485,25 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(mockProject.versions[1].versionTag).toBe("v1.1.0");
       expect(mockProject.versions[1].isLatest).toBe(true);
       expect(mockProject.save).toHaveBeenCalled();
+    });
+
+    it("parses multipart version fields before adding a version", async () => {
+      const mockProject = {
+        _id: "60c72b2f9b1d8b2bad000001",
+        versions: [] as { versionTag: string }[],
+        save: jest.fn().mockResolvedValue(true),
+      };
+
+      (Project.findById as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .post("/api/v1/projects/60c72b2f9b1d8b2bad000001/versions")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("versionTag", "v1.2.0")
+        .field("changelog", JSON.stringify(["Added multipart support"]));
+
+      expect(res.status).toBe(201);
+      expect(mockProject.versions[0].versionTag).toBe("v1.2.0");
     });
   });
 });

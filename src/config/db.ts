@@ -1,10 +1,11 @@
 import mongoose from "mongoose";
 
 let isConnected = false;
+let cachedConnection: typeof mongoose | null = null;
 
 export const connectDB = async (): Promise<typeof mongoose> => {
-  if (isConnected && mongoose.connection.readyState === 1) {
-    return mongoose;
+  if (isConnected && mongoose.connection.readyState === 1 && cachedConnection) {
+    return cachedConnection;
   }
 
   const mongoUri = process.env.MONGO_URI;
@@ -17,6 +18,7 @@ export const connectDB = async (): Promise<typeof mongoose> => {
       dbName: "about_core",
     });
     isConnected = conn.connections[0].readyState === 1;
+    cachedConnection = conn;
     return conn;
   } catch (error) {
     isConnected = false;
@@ -29,4 +31,5 @@ export const disconnectDB = async (): Promise<void> => {
     await mongoose.disconnect();
     isConnected = false;
   }
+  cachedConnection = null;
 };

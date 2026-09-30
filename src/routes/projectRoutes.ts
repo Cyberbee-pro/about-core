@@ -37,6 +37,12 @@ router.put(
 
 router.delete("/:id", authMiddleware, deleteProject);
 
-router.post("/:id/versions", authMiddleware, addProjectVersion);
+router.post(
+  "/:id/versions",
+  authMiddleware,
+  projectUploadFields,
+  processMediaUploads,
+  addProjectVersion
+);
 
 export default router;
