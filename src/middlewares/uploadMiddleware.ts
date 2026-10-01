@@ -209,7 +209,10 @@ const getFolderInfo = (
   mediaType: "images" | "videos" | "models",
   versionTag?: string
 ): FolderInfo => {
-  const isProfile = reqPath.includes("/profile");
+  // Keep profile uploads tied to known profile endpoints. Substring matching
+  // also classifies project slugs such as `/profile-site` as profile assets.
+  const normalizedPath = reqPath.replace(/\/$/, "");
+  const isProfile = normalizedPath === "/profile" || normalizedPath === "/profile/config";
 
   if (isProfile) {
     return {

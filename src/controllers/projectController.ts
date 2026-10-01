@@ -389,6 +389,10 @@ export const addProjectVersion = async (
     const body = req.body as Partial<IProjectVersion> & {
       threeDModel?: { fileUrl?: string } | string;
     };
+    const threeDModel = parseJsonField<{ fileUrl?: string } | undefined>(
+      body.threeDModel,
+      undefined
+    );
     const {
       versionTag,
       releaseDate,
@@ -434,9 +438,7 @@ export const addProjectVersion = async (
       demoUrl,
       threeDFileUrl:
         threeDFileUrl ??
-        (typeof body.threeDModel === "object" && body.threeDModel !== null
-          ? body.threeDModel.fileUrl
-          : undefined),
+        threeDModel?.fileUrl,
       isLatest: shouldSetLatest,
     };
 
