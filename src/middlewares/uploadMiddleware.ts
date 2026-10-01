@@ -206,15 +206,37 @@ interface FolderInfo {
 const getFolderInfo = (
   reqPath: string,
   slug: string | null,
-  mediaType: "images" | "videos" | "models"
+  mediaType: "images" | "videos" | "models",
+  versionTag?: string
 ): FolderInfo => {
-  const isProfile = reqPath.includes("/profile") || !slug;
+  const isProfile = reqPath.includes("/profile");
 
   if (isProfile) {
     return {
       folder: `portfolio/profile/${mediaType}`,
       base: "profile",
     };
+  }
+
+  if (!slug) {
+    return {
+      folder: `portfolio/projects/misc/${mediaType}`,
+      base: "misc",
+    };
+  }
+
+  if (reqPath.includes("/versions") && versionTag) {
+    const safeVersionTag = versionTag
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^[-.]|[-.]$/g, "");
+    if (safeVersionTag) {
+      return {
+        folder: `portfolio/projects/${slug}/${safeVersionTag}/${mediaType}`,
+        base: slug,
+      };
+    }
   }
 
   return {
@@ -241,7 +263,14 @@ export const processMediaUploads = async (
 
     const files = req.files as MulterFilesMap;
     const body = req.body as Record<string, unknown>;
-    const slug = deriveSlug(body);
+    const isVersionUpload = req.path.includes("/versions");
+    const routeSlug = typeof req.params.slug === "string" ? req.params.slug : null;
+    const slug = routeSlug
+      ? routeSlug.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || null
+      : deriveSlug(body);
+    const versionTag = typeof body.versionTag === "string" ? body.versionTag : undefined;
+    const resolveFolder = (mediaType: "images" | "videos" | "models") =>
+      getFolderInfo(req.path, slug, mediaType, isVersionUpload ? versionTag : undefined);
 
     // Request‑level cache — one Map per request, shared across all uploads
     const cache: FolderCache = new Map();
@@ -249,7 +278,7 @@ export const processMediaUploads = async (
     // 1. Process Image upload
     if (files.image && files.image.length > 0) {
       const imageFile = files.image[0];
-      const { folder, base } = getFolderInfo(req.path, slug, "images");
+      const { folder, base } = resolveFolder("images");
       const publicId = await getNextPublicId(cache, folder, base);
 
       const result = await uploadBufferToCloudinary(imageFile.buffer, {
@@ -263,7 +292,7 @@ export const processMediaUploads = async (
     // 2. Process Video Demo upload
     if (files.videoDemo && files.videoDemo.length > 0) {
       const videoFile = files.videoDemo[0];
-      const { folder, base } = getFolderInfo(req.path, slug, "videos");
+      const { folder, base } = resolveFolder("videos");
       const publicId = await getNextPublicId(cache, folder, base);
 
       const result = await uploadBufferToCloudinary(videoFile.buffer, {
@@ -277,7 +306,7 @@ export const processMediaUploads = async (
     // 3. Process Raw 3D Model upload (.glb / .gltf)
     if (files.threeDModel && files.threeDModel.length > 0) {
       const modelFile = files.threeDModel[0];
-      const { folder, base } = getFolderInfo(req.path, slug, "models");
+      const { folder, base } = resolveFolder("models");
       const publicId = await getNextPublicId(cache, folder, base);
 
       const result = await uploadBufferToCloudinary(modelFile.buffer, {

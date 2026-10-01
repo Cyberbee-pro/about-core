@@ -6,6 +6,8 @@ export interface IProjectVersion {
   versionTag: string;
   releaseDate: Date;
   changelog: string[];
+  image?: string;
+  videoDemo?: string;
   demoUrl?: string;
   threeDFileUrl?: string;
   isLatest: boolean;
@@ -49,6 +51,8 @@ const VersionSchema = new Schema<IProjectVersion>({
   versionTag: { type: String, required: true },
   releaseDate: { type: Date, default: Date.now },
   changelog: [{ type: String }],
+  image: { type: String },
+  videoDemo: { type: String },
   demoUrl: { type: String },
   threeDFileUrl: { type: String },
   isLatest: { type: Boolean, default: false },

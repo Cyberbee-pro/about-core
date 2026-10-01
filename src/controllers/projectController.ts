@@ -376,18 +376,29 @@ export const addProjectVersion = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const id = extractParamString(req.params.id);
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
 
-    if (!id || !Types.ObjectId.isValid(id)) {
+    if (!slug) {
       res.status(400).json({
         success: false,
-        message: "Invalid project ID format",
+        message: "Project slug parameter is required",
       });
       return;
     }
 
-    const { versionTag, releaseDate, changelog, demoUrl, threeDFileUrl, isLatest } =
-      req.body as Partial<IProjectVersion>;
+    const body = req.body as Partial<IProjectVersion> & {
+      threeDModel?: { fileUrl?: string } | string;
+    };
+    const {
+      versionTag,
+      releaseDate,
+      changelog,
+      image,
+      videoDemo,
+      demoUrl,
+      threeDFileUrl,
+      isLatest,
+    } = body;
 
     if (!versionTag) {
       res.status(400).json({
@@ -397,11 +408,11 @@ export const addProjectVersion = async (
       return;
     }
 
-    const project = await Project.findById(id);
+    const project = await Project.findOne({ slug });
     if (!project) {
       res.status(404).json({
         success: false,
-        message: `Project not found with id: ${id}`,
+        message: `Project not found with slug: ${slug}`,
       });
       return;
     }
@@ -418,8 +429,14 @@ export const addProjectVersion = async (
       versionTag,
       releaseDate: releaseDate ? new Date(releaseDate) : new Date(),
       changelog: Array.isArray(changelog) ? changelog : [],
+      image,
+      videoDemo,
       demoUrl,
-      threeDFileUrl,
+      threeDFileUrl:
+        threeDFileUrl ??
+        (typeof body.threeDModel === "object" && body.threeDModel !== null
+          ? body.threeDModel.fileUrl
+          : undefined),
       isLatest: shouldSetLatest,
     };
 

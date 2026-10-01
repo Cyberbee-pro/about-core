@@ -461,17 +461,17 @@ describe("about-core API & Middleware Integration Tests", () => {
   });
 
   describe("Project Version Management", () => {
-    it("POST /api/v1/projects/:id/versions adds version to project", async () => {
+    it("POST /api/v1/projects/:slug/versions adds version to project", async () => {
       const mockProject = {
         _id: "60c72b2f9b1d8b2bad000001",
         versions: [{ versionTag: "v1.0.0", isLatest: true }],
         save: jest.fn().mockResolvedValue(true),
       };
 
-      (Project.findById as jest.Mock).mockResolvedValue(mockProject);
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
 
       const res = await request(app)
-        .post("/api/v1/projects/60c72b2f9b1d8b2bad000001/versions")
+        .post("/api/v1/projects/test-project/versions")
         .set("Authorization", "Bearer test-secret-token")
         .send({
           versionTag: "v1.1.0",
@@ -494,16 +494,60 @@ describe("about-core API & Middleware Integration Tests", () => {
         save: jest.fn().mockResolvedValue(true),
       };
 
-      (Project.findById as jest.Mock).mockResolvedValue(mockProject);
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
 
       const res = await request(app)
-        .post("/api/v1/projects/60c72b2f9b1d8b2bad000001/versions")
+        .post("/api/v1/projects/test-project/versions")
         .set("Authorization", "Bearer test-secret-token")
         .field("versionTag", "v1.2.0")
         .field("changelog", JSON.stringify(["Added multipart support"]));
 
       expect(res.status).toBe(201);
       expect(mockProject.versions[0].versionTag).toBe("v1.2.0");
+    });
+
+    it("stores uploaded media URLs on the new version", async () => {
+      const mockProject = {
+        _id: "60c72b2f9b1d8b2bad000001",
+        image: "https://example.com/project-image.png",
+        videoDemo: "https://example.com/project-video.mp4",
+        threeDModel: { fileUrl: "https://example.com/project-model.glb" },
+        versions: [] as Record<string, unknown>[],
+        save: jest.fn().mockResolvedValue(true),
+      };
+
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .post("/api/v1/projects/versioned-project/versions")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("versionTag", "v2.0.0")
+        .field("slug", "versioned-project")
+        .attach("image", Buffer.from("version image"), {
+          filename: "version.png",
+          contentType: "image/png",
+        })
+        .attach("videoDemo", Buffer.from("version video"), {
+          filename: "version.mp4",
+          contentType: "video/mp4",
+        })
+        .attach("threeDModel", Buffer.from("version model"), {
+          filename: "version.glb",
+          contentType: "model/gltf-binary",
+        });
+
+      const uploadedVersion = mockProject.versions[0];
+      expect(res.status).toBe(201);
+      expect(uploadedVersion).toEqual(
+        expect.objectContaining({
+          image: expect.stringContaining("/image/portfolio/projects/versioned-project/v2.0.0/images/"),
+          videoDemo: expect.stringContaining("/video/portfolio/projects/versioned-project/v2.0.0/videos/"),
+          threeDFileUrl: expect.stringContaining("/raw/portfolio/projects/versioned-project/v2.0.0/models/"),
+        })
+      );
+      expect(mockProject.image).toBe("https://example.com/project-image.png");
+      expect(mockProject.videoDemo).toBe("https://example.com/project-video.mp4");
+      expect(mockProject.threeDModel.fileUrl).toBe("https://example.com/project-model.glb");
     });
   });
 });

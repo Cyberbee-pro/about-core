@@ -38,7 +38,7 @@ router.put(
 router.delete("/:id", authMiddleware, deleteProject);
 
 router.post(
-  "/:id/versions",
+  "/:slug/versions",
   authMiddleware,
   projectUploadFields,
   processMediaUploads,
