@@ -10,20 +10,23 @@ export interface ILogEntry extends Document {
   statusCode: number;
   ip: string;
   message: string;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
   stack?: string;
 }
 
-const LogEntrySchema = new Schema<ILogEntry>({
-  timestamp: { type: Date, default: Date.now, index: true },
-  level: { type: String, enum: ["INFO", "WARN", "ERROR"], required: true },
-  method: { type: String, required: true },
-  endpoint: { type: String, required: true },
-  statusCode: { type: Number, required: true },
-  ip: { type: String, default: "unknown" },
-  message: { type: String, required: true },
-  metadata: { type: Schema.Types.Mixed },
-  stack: { type: String },
-}, { timestamps: false });
+const LogEntrySchema = new Schema<ILogEntry>(
+  {
+    timestamp: { type: Date, default: Date.now, index: true },
+    level: { type: String, enum: ["INFO", "WARN", "ERROR"], required: true },
+    method: { type: String, required: true },
+    endpoint: { type: String, required: true },
+    statusCode: { type: Number, required: true },
+    ip: { type: String, default: "unknown" },
+    message: { type: String, required: true },
+    metadata: { type: Schema.Types.Mixed },
+    stack: { type: String },
+  },
+  { timestamps: false }
+);
 
 export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
