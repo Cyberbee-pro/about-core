@@ -215,6 +215,18 @@ export const createProject = async (
       enableExplodedView: boolean;
     } | undefined>(body.threeDModel, undefined);
 
+    let skills: Types.ObjectId[] = [];
+    if (typeof body.skills === "string") {
+      try {
+        const parsed = JSON.parse(body.skills) as string[];
+        skills = parsed.map((s) => new Types.ObjectId(s));
+      } catch {
+        skills = body.skills.split(",").map((s) => s.trim()).filter(Boolean).map((s) => new Types.ObjectId(s));
+      }
+    } else if (Array.isArray(body.skills)) {
+      skills = (body.skills as unknown[]).map((s) => new Types.ObjectId(String(s)));
+    }
+
     const project = await Project.create({
       title,
       slug,
@@ -222,6 +234,7 @@ export const createProject = async (
       description,
       featured,
       tags,
+      skills,
       startDate,
       endDate,
       contributors,
@@ -310,6 +323,18 @@ export const updateProject = async (
     }
     if (body.versions !== undefined) {
       updatePayload.versions = parseJsonField<IProjectVersion[]>(body.versions, []);
+    }
+    if (body.skills !== undefined) {
+      if (typeof body.skills === "string") {
+        try {
+          const parsed = JSON.parse(body.skills) as string[];
+          updatePayload.skills = parsed.map((s) => new Types.ObjectId(s));
+        } catch {
+          updatePayload.skills = body.skills.split(",").map((s) => s.trim()).filter(Boolean).map((s) => new Types.ObjectId(s));
+        }
+      } else if (Array.isArray(body.skills)) {
+        updatePayload.skills = (body.skills as unknown[]).map((s) => new Types.ObjectId(String(s)));
+      }
     }
 
     const updatedProject = await Project.findByIdAndUpdate(id, updatePayload, {

@@ -15,6 +15,8 @@ This repository contains the backend infrastructure. You must ground all archite
 1.  **Serverless Constraints:** Never write state or logs to the local filesystem. Use MongoDB (`LogEntry` schema) for all logging.
 2.  **Type Safety:** `any` is strictly prohibited. All Express requests, responses, and Mongoose schemas must have explicit interfaces.
 3.  **Media Handling:** All image, video, and raw 3D (`.glb`) uploads must be buffered in memory via Multer and piped directly to Cloudinary.
+    *   Identify profile uploads only through explicit profile route paths or a dedicated profile upload scope/base URL. Do not use substring checks against request paths, since project slugs can contain words such as `profile`.
+    *   Treat multipart JSON fields as serialized input. Use the controller's `parseJsonField` helper to parse fields such as `threeDModel` before reading nested properties.
 
 ## Default Workflow
 When asked to implement a feature or generate the boilerplate:
