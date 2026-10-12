@@ -1,4 +1,4 @@
-import { Schema, model, Document } from "mongoose";
+import { Schema, model, Document, Types } from "mongoose";
 
 export interface ISocialLink { platform: string; url: string; }
 export interface IContributor { name: string; profilePicUrl: string; profileLink?: string; }
@@ -22,6 +22,7 @@ export interface IProject extends Document {
   description: string;
   featured: boolean;
   tags: string[];
+  skills: Types.ObjectId[];
   startDate: Date;
   endDate?: Date;
   contributors: IContributor[];
@@ -65,6 +66,7 @@ const ProjectSchema = new Schema<IProject>({
   description: { type: String, required: true },
   featured: { type: Boolean, default: false },
   tags: [{ type: String, trim: true }],
+  skills: [{ type: Schema.Types.ObjectId, ref: "Skill" }],
   startDate: { type: Date, required: true },
   endDate: { type: Date },
   contributors: [ContributorSchema],

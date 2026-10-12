@@ -1,7 +1,6 @@
 # about-core: Current Repository Context
 
 ## Purpose
-
 `about-core` is the serverless-ready, headless CMS API for the shibraj.dev
 portfolio. It serves two clients:
 
@@ -67,7 +66,7 @@ Protected requests accept either `Authorization: Bearer <ADMIN_SECRET>` or
 
 - `npm run dev` — start the TypeScript development server.
 - `npm run build` — type-check and compile to `dist/`.
-- `npm test` — run Jest serially.
+- `npm test` — run Jest serially. **All 85 tests pass** (audit verified 2026-10-10).
 - `npm run test:coverage` — collect coverage.
 
 Required environment variables are documented in `.env.example`:
@@ -76,6 +75,7 @@ credentials. `PORT` defaults to `5000`.
 
 ## Current Work State
 
-The MVP API, schemas, middleware, and integration tests are implemented. The
-active uncommitted work is refining Cloudinary sequential public-ID naming and
-its coverage in `tests/uploadNaming.test.ts` and `tests/api.test.ts`.
+The MVP API, schemas, middleware, and integration tests are implemented and
+verified. Codebase audit completed 2026-10-10: all 85 tests pass, TypeScript
+strictness confirmed, no critical issues found. Audit report stored at
+`local://codebase-audit-plan.md`.
