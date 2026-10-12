@@ -6,8 +6,8 @@ export interface IExperiencePosition {
   description: string;
   startDate: Date;
   endDate?: Date;
-  mediaUrls: string[]; // Cloudinary media assets
-  certificateUrls: string[]; // Cloudinary certificate assets
+  mediaUrls?: string[]; // Cloudinary media assets
+  certificateUrls?: string[]; // Cloudinary certificate assets
   isCurrent: boolean;
 }
 
