@@ -66,7 +66,7 @@ describe("Skill Model", () => {
 
   it("has unique index on name", () => {
     const nameIndex = Skill.schema.path("name");
-    expect((nameIndex as { options: { unique: boolean } }).options.unique).toBe(true);
+    expect((nameIndex as unknown as { options: { unique: boolean } }).options.unique).toBe(true);
   });
 });
 
@@ -403,7 +403,7 @@ describe("Project Model - Skills Reference", () => {
     // Verify it's an array path containing ObjectId refs
     const schemaType = (skillsPath as mongoose.Schema.Types.Array).caster;
     expect(schemaType).toBeDefined();
-    expect((schemaType as { options: { ref: string } }).options.ref).toBe("Skill");
+    expect((schemaType as unknown as { options: { ref: string } }).options.ref).toBe("Skill");
   });
 });
 
