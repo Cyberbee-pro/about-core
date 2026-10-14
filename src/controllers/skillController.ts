@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
-import { Skill } from "@/models/Skill";
-import { escapeRegex } from "@/utils/stringUtils";
+import { Skill } from "../models/Skill";
+import { escapeRegex } from "../utils/stringUtils";
 
 export const getSkills = async (
   _req: Request,

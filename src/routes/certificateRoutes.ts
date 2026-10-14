@@ -5,12 +5,12 @@ import {
   createCertificate,
   updateCertificate,
   deleteCertificate,
-} from "@/controllers/certificateController";
-import { authMiddleware } from "@/middlewares/authMiddleware";
+} from "../controllers/certificateController";
+import { authMiddleware } from "../middlewares/authMiddleware";
 import {
   certificateUploadFields,
   processCertificateUploads,
-} from "@/middlewares/uploadMiddleware";
+} from "../middlewares/uploadMiddleware";
 
 const router = Router();
 

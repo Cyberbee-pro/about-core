@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { Types } from "mongoose";
-import { Experience, IExperiencePosition } from "@/models/Experience";
-import { escapeRegex } from "@/utils/stringUtils";
+import { Experience, IExperiencePosition } from "../models/Experience";
+import { escapeRegex } from "../utils/stringUtils";
 
 function parsePositions(val: unknown): IExperiencePosition[] {
   if (typeof val === "string") {

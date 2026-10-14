@@ -4,17 +4,17 @@ dotenv.config();
 
 import express, { Application, Request, Response } from "express";
 import cors from "cors";
-import { connectDB } from "@/config/db";
-import { dbLoggerMiddleware } from "@/middlewares/dbLoggerMiddleware";
-import { notFoundMiddleware, errorMiddleware } from "@/middlewares/errorMiddleware";
-import { getHealth } from "@/controllers/configController";
-import projectRoutes from "@/routes/projectRoutes";
-import skillRoutes from "@/routes/skillRoutes";
-import certificateRoutes from "@/routes/certificateRoutes";
-import achievementRoutes from "@/routes/achievementRoutes";
-import experienceRoutes from "@/routes/experienceRoutes";
-import configRoutes from "@/routes/configRoutes";
-import logRoutes from "@/routes/logRoutes";
+import { connectDB } from "./config/db";
+import { dbLoggerMiddleware } from "./middlewares/dbLoggerMiddleware";
+import { notFoundMiddleware, errorMiddleware } from "./middlewares/errorMiddleware";
+import { getHealth } from "./controllers/configController";
+import projectRoutes from "./routes/projectRoutes";
+import skillRoutes from "./routes/skillRoutes";
+import certificateRoutes from "./routes/certificateRoutes";
+import achievementRoutes from "./routes/achievementRoutes";
+import experienceRoutes from "./routes/experienceRoutes";
+import configRoutes from "./routes/configRoutes";
+import logRoutes from "./routes/logRoutes";
 
 const app: Application = express();
 

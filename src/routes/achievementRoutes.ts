@@ -5,8 +5,8 @@ import {
   createAchievement,
   updateAchievement,
   deleteAchievement,
-} from "@/controllers/achievementController";
-import { authMiddleware } from "@/middlewares/authMiddleware";
+} from "../controllers/achievementController";
+import { authMiddleware } from "../middlewares/authMiddleware";
 
 const router = Router();
 

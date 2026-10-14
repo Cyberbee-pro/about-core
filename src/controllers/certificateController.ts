@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
-import { Certificate } from "@/models/Certificate";
-import { escapeRegex } from "@/utils/stringUtils";
+import { Certificate } from "../models/Certificate";
+import { escapeRegex } from "../utils/stringUtils";
 
 export const getCertificates = async (
   _req: Request,

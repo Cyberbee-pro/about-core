@@ -6,12 +6,12 @@ import {
   updateExperience,
   deleteExperience,
   addExperiencePosition,
-} from "@/controllers/experienceController";
-import { authMiddleware } from "@/middlewares/authMiddleware";
+} from "../controllers/experienceController";
+import { authMiddleware } from "../middlewares/authMiddleware";
 import {
   experienceUploadFields,
   processExperienceUploads,
-} from "@/middlewares/uploadMiddleware";
+} from "../middlewares/uploadMiddleware";
 
 const router = Router();
 
