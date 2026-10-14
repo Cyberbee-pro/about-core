@@ -18,7 +18,7 @@ logging, health checks, routes, and centralized error handling.
 
 | Scope | Routes | Notes |
 | --- | --- | --- |
-| Health | `GET /health`, `GET /api/v1/health` | Liveness/service metadata (`dbStatus`, `uptime`, `memoryUsageMB`). |
+| Health & Dashboard | `GET /`, `GET /health`, `GET /api/v1/health`, `GET /assets/*` | `GET /` serves Evangelion MAGI EVA-0 HTML dashboard. `GET /health` returns basic liveness. `GET /api/v1/health` serves HTML dashboard if `Accept: text/html` is requested, or JSON metadata (`dbStatus`, `uptime`, `memoryUsageMB`, `nodeVersion`, `env`) by default. Static assets served from `/assets`. |
 | Projects | `GET /api/v1/projects`, `GET /categories`, `GET /:slug` | Public reads exclude `invisible` projects. List filtering supports `category`, `featured`, and `tag`. |
 | Project admin | `POST /api/v1/projects`, `PUT /:id`, `DELETE /:id`, `POST /:slug/versions` | Protected by `ADMIN_SECRET`; create/update support multipart media. |
 | Skills | `GET /api/v1/skills`, `GET /:id`, `POST /`, `PUT /:id`, `DELETE /:id` | Public reads sorted by `{ weight: 1, name: 1 }`; mutations protected by `ADMIN_SECRET` with 409 duplicate name validation. |

@@ -1,0 +1,37 @@
+<svg width="892" height="40" viewBox="0 0 892 40" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g clip-path="url(#clip0_11_75)">
+<rect width="892" height="40" fill="#B0DD09"/>
+<g id="Repeat group 1_inner" data-figma-trr="l24u0.7-0f">
+<polygon points="0,0 27.7186,0 67.7186,40 40,40" fill="#000000"/>
+<polygon points="-55.4372,0 -27.7186,0 12.2814,40 -15.4372,40" fill="#000000"/>
+</g>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(55.4372)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(110.874)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(166.312)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(221.749)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(277.186)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(332.623)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(388.06)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(443.497)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(498.935)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(554.372)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(609.809)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(665.246)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(720.683)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(776.12)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(831.558)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(886.995)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(942.432)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(997.869)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(1053.31)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(1108.74)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(1164.18)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(1219.62)"/>
+<use xlink:href="#Repeat%20group%201_inner" transform="translate(1275.05)"/>
+</g>
+<defs>
+<clipPath id="clip0_11_75">
+<rect width="892" height="40" fill="white"/>
+</clipPath>
+</defs>
+</svg>

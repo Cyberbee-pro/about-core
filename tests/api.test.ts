@@ -94,11 +94,45 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(typeof res.body.uptime).toBe("number");
     });
 
-    it("GET /api/v1/health should return service details", async () => {
+    it("GET /api/v1/health should return service details as JSON by default", async () => {
       const res = await request(app).get("/api/v1/health");
       expect(res.status).toBe(200);
       expect(res.body.service).toBe("about-core");
       expect(res.body.version).toBe("1.0.0");
+      expect(res.body.status).toBe("healthy");
+      expect(res.body).toHaveProperty("dbStatus");
+      expect(res.body).toHaveProperty("memoryUsageMB");
+    });
+
+    it("GET / should serve the MAGI EVA-0 HTML health dashboard", async () => {
+      const res = await request(app).get("/");
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(res.text).toContain("ABOUT CORE");
+      expect(res.text).toContain("EVA 0");
+      expect(res.text).toContain("HEX_L.svg");
+      expect(res.text).toContain("HEX_R.svg");
+      expect(res.text).toContain("red-accent-line");
+      expect(res.text).toContain("memorySegments");
+      expect(res.text).toContain("memoryMeter");
+      expect(res.text).toContain("memory-bar");
+      expect(res.text).toContain("memoryVal");
+    });
+
+    it("GET /api/v1/health should serve HTML when Accept header includes text/html", async () => {
+      const res = await request(app)
+        .get("/api/v1/health")
+        .set("Accept", "text/html,application/xhtml+xml");
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(res.text).toContain("ABOUT CORE");
+      expect(res.text).toContain("EVA 0");
+    });
+
+    it("GET /assets/haz.svg should serve the static hazard SVG", async () => {
+      const res = await request(app).get("/assets/haz.svg");
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("image/svg+xml");
     });
   });
 
