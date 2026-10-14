@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+import mongoose from "mongoose";
 import { Request, Response, NextFunction } from "express";
 import { SiteConfig, ISiteConfig } from "@/models/SiteConfig";
 
@@ -54,3 +57,46 @@ export const updateSiteConfig = async (
     next(error);
   }
 };
+
+export const getHealth = async (req: Request, res: Response): Promise<void> => {
+  const healthData = {
+    status: "healthy",
+    service: "about-core",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+    dbStatus: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    memoryUsageMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    nodeVersion: process.version,
+    env: process.env.NODE_ENV || "development",
+  };
+
+  const prefersHtml =
+    req.accepts("html") &&
+    !req.xhr &&
+    (Boolean(req.headers.accept?.includes("text/html")) || req.query.format === "html");
+
+  if (prefersHtml) {
+    try {
+      const htmlPath = path.join(process.cwd(), "assets", "health.html");
+      const fallbackPath = path.join(__dirname, "..", "..", "assets", "health.html");
+      const resolvedPath = fs.existsSync(htmlPath)
+        ? htmlPath
+        : fs.existsSync(fallbackPath)
+        ? fallbackPath
+        : null;
+
+      if (resolvedPath) {
+        return res.sendFile(resolvedPath, (err) => {
+          if (err && !res.headersSent) {
+            res.status(200).json(healthData);
+          }
+        });
+      }
+    } catch (err) {
+      // Graceful fallback to JSON if HTML fails to load or send
+    }
+  }
+
+  res.status(200).json(healthData);
+};
+

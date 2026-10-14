@@ -1,3 +1,4 @@
+import fs from "fs";
 import request from "supertest";
 import { LogEntry } from "@/models/LogEntry";
 import { Project } from "@/models/Project";
@@ -133,6 +134,19 @@ describe("about-core API & Middleware Integration Tests", () => {
       const res = await request(app).get("/assets/haz.svg");
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("image/svg+xml");
+    });
+
+    it("GET /api/v1/health should gracefully fall back to JSON if health.html does not exist on disk", async () => {
+      const existsSpy = jest.spyOn(fs, "existsSync").mockReturnValue(false);
+      const res = await request(app)
+        .get("/api/v1/health")
+        .set("Accept", "text/html,application/xhtml+xml");
+      existsSpy.mockRestore();
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/json");
+      expect(res.body.service).toBe("about-core");
+      expect(res.body.status).toBe("healthy");
     });
   });
 

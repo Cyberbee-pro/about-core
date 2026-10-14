@@ -1,13 +1,14 @@
+import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 dotenv.config();
 
 import express, { Application, Request, Response } from "express";
 import cors from "cors";
-import mongoose from "mongoose";
 import { connectDB } from "@/config/db";
 import { dbLoggerMiddleware } from "@/middlewares/dbLoggerMiddleware";
 import { notFoundMiddleware, errorMiddleware } from "@/middlewares/errorMiddleware";
+import { getHealth } from "@/controllers/configController";
 import projectRoutes from "@/routes/projectRoutes";
 import skillRoutes from "@/routes/skillRoutes";
 import certificateRoutes from "@/routes/certificateRoutes";
@@ -28,18 +29,45 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static assets (MAGI dashboard SVGs, etc.)
-app.use("/assets", express.static(path.join(process.cwd(), "assets")));
+// Serve static assets (MAGI dashboard SVGs, etc.) with dual-path resolution for serverless support
+const cwdAssetsPath = path.join(process.cwd(), "assets");
+const dirnameAssetsPath = path.join(__dirname, "..", "assets");
+const resolvedAssetsDir = fs.existsSync(cwdAssetsPath)
+  ? cwdAssetsPath
+  : fs.existsSync(dirnameAssetsPath)
+  ? dirnameAssetsPath
+  : cwdAssetsPath;
+
+app.use("/assets", express.static(resolvedAssetsDir));
 
 // Custom LogEntry MongoDB logging middleware intercepts all requests
 app.use(dbLoggerMiddleware);
 
 // Root route - Evangelion MAGI EVA-0 Health Dashboard
 app.get("/", (_req: Request, res: Response) => {
-  res.sendFile(path.join(process.cwd(), "assets", "health.html"));
+  try {
+    const htmlPath = path.join(process.cwd(), "assets", "health.html");
+    const fallbackPath = path.join(__dirname, "..", "assets", "health.html");
+    const resolvedPath = fs.existsSync(htmlPath)
+      ? htmlPath
+      : fs.existsSync(fallbackPath)
+      ? fallbackPath
+      : null;
+
+    if (resolvedPath) {
+      return res.sendFile(resolvedPath, (err) => {
+        if (err && !res.headersSent) {
+          res.status(200).json({ status: "healthy", service: "about-core" });
+        }
+      });
+    }
+  } catch (_err) {
+    // Fallback if file resolution throws
+  }
+  res.status(200).json({ status: "healthy", service: "about-core" });
 });
 
-// Liveness & Health check
+// Liveness check
 app.get("/health", (_req: Request, res: Response) => {
   res.status(200).json({
     status: "healthy",
@@ -48,28 +76,8 @@ app.get("/health", (_req: Request, res: Response) => {
   });
 });
 
-app.get("/api/v1/health", async (req: Request, res: Response) => {
-  const prefersHtml =
-    req.accepts(["json", "html"]) === "html" &&
-    !req.xhr &&
-    Boolean(req.headers.accept?.includes("text/html"));
-
-  if (prefersHtml) {
-    return res.sendFile(path.join(process.cwd(), "assets", "health.html"));
-  }
-
-  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
-  res.status(200).json({
-    status: "healthy",
-    service: "about-core",
-    version: "1.0.0",
-    timestamp: new Date().toISOString(),
-    dbStatus,
-    memoryUsageMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-    nodeVersion: process.version,
-    env: process.env.NODE_ENV,
-  });
-});
+// Service health check with MAGI UI content negotiation and graceful JSON fallback
+app.get("/api/v1/health", getHealth);
 
 // Mount Feature Routes
 app.use("/api/v1/projects", projectRoutes);
