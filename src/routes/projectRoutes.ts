@@ -7,9 +7,9 @@ import {
   updateProject,
   deleteProject,
   addProjectVersion,
-} from "@/controllers/projectController";
-import { authMiddleware } from "@/middlewares/authMiddleware";
-import { projectUploadFields, processMediaUploads } from "@/middlewares/uploadMiddleware";
+} from "../controllers/projectController";
+import { authMiddleware } from "../middlewares/authMiddleware";
+import { projectUploadFields, processMediaUploads } from "../middlewares/uploadMiddleware";
 
 const router = Router();
 

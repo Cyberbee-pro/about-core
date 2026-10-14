@@ -5,12 +5,12 @@ import {
   createSkill,
   updateSkill,
   deleteSkill,
-} from "@/controllers/skillController";
-import { authMiddleware } from "@/middlewares/authMiddleware";
+} from "../controllers/skillController";
+import { authMiddleware } from "../middlewares/authMiddleware";
 import {
   skillUploadFields,
   processSkillUploads,
-} from "@/middlewares/uploadMiddleware";
+} from "../middlewares/uploadMiddleware";
 
 const router = Router();
 

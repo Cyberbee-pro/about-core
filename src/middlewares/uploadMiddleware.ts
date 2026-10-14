@@ -2,9 +2,9 @@ import { Request, Response, NextFunction } from "express";
 import multer, { FileFilterCallback } from "multer";
 import { Readable } from "stream";
 import { UploadApiResponse } from "cloudinary";
-import cloudinary from "@/config/cloudinary";
-import { Experience } from "@/models/Experience";
-import { escapeRegex } from "@/utils/stringUtils";
+import cloudinary from "../config/cloudinary";
+import { Experience } from "../models/Experience";
+import { escapeRegex } from "../utils/stringUtils";
 
 const storage = multer.memoryStorage();
 

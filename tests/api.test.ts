@@ -94,9 +94,10 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(typeof res.body.uptime).toBe("number");
     });
 
-    it("GET /api/v1/health should return service details as JSON by default", async () => {
+    it("GET /api/v1/health should return service details as JSON", async () => {
       const res = await request(app).get("/api/v1/health");
       expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/json");
       expect(res.body.service).toBe("about-core");
       expect(res.body.version).toBe("1.0.0");
       expect(res.body.status).toBe("healthy");
@@ -104,7 +105,17 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.body).toHaveProperty("memoryUsageMB");
     });
 
-    it("GET / should serve the MAGI EVA-0 HTML health dashboard", async () => {
+    it("GET /api/v1/health should always return JSON even when Accept header includes text/html", async () => {
+      const res = await request(app)
+        .get("/api/v1/health")
+        .set("Accept", "text/html,application/xhtml+xml");
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/json");
+      expect(res.body.service).toBe("about-core");
+      expect(res.body.status).toBe("healthy");
+    });
+
+    it("GET / should serve the MAGI EVA-0 HTML dashboard from public/index.html", async () => {
       const res = await request(app).get("/");
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("text/html");
@@ -119,18 +130,16 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.text).toContain("memoryVal");
     });
 
-    it("GET /api/v1/health should serve HTML when Accept header includes text/html", async () => {
-      const res = await request(app)
-        .get("/api/v1/health")
-        .set("Accept", "text/html,application/xhtml+xml");
+    it("GET /index.html should serve the static HTML dashboard directly", async () => {
+      const res = await request(app).get("/index.html");
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("text/html");
       expect(res.text).toContain("ABOUT CORE");
       expect(res.text).toContain("EVA 0");
     });
 
-    it("GET /assets/haz.svg should serve the static hazard SVG", async () => {
-      const res = await request(app).get("/assets/haz.svg");
+    it("GET /haz.svg should serve the static hazard SVG from public/", async () => {
+      const res = await request(app).get("/haz.svg");
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("image/svg+xml");
     });

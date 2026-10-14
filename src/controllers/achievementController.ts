@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
-import { Achievement } from "@/models/Achievement";
-import { escapeRegex } from "@/utils/stringUtils";
+import { Achievement } from "../models/Achievement";
+import { escapeRegex } from "../utils/stringUtils";
 
 export const getAchievements = async (
   _req: Request,

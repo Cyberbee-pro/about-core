@@ -28,10 +28,9 @@ Public reads are intended for viewer clients. Admin reads/mutations should be ca
 
 | Method and path | Access | Purpose / response |
 | --- | --- | --- |
-| `GET /` | Public | Evangelion / MAGI System (EVA-0) styled HTML Health Dashboard. |
+| `GET /`, `GET /index.html` | Public | Evangelion / MAGI System (EVA-0) styled HTML Health Dashboard served statically from `public/` (Vercel Edge CDN in production, Express static in development). |
 | `GET /health` | Public | Liveness: `{ status, uptime, timestamp }`. |
-| `GET /api/v1/health` | Public | Service health metadata: returns HTML MAGI dashboard if `Accept: text/html` is requested; otherwise returns JSON `{ status, service, version, timestamp, dbStatus, memoryUsageMB, nodeVersion, env }`. |
-| `GET /assets/*` | Public | Static assets serving SVGs (`haz.svg`, `HEX_L.svg`, `HEX_R.svg`) and dashboard assets. |
+| `GET /api/v1/health` | Public | Pure JSON service health metadata: `{ status, service, version, timestamp, dbStatus, memoryUsageMB, nodeVersion, env }`. |
 
 ### Projects
 

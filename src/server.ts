@@ -4,17 +4,17 @@ dotenv.config();
 
 import express, { Application, Request, Response } from "express";
 import cors from "cors";
-import mongoose from "mongoose";
-import { connectDB } from "@/config/db";
-import { dbLoggerMiddleware } from "@/middlewares/dbLoggerMiddleware";
-import { notFoundMiddleware, errorMiddleware } from "@/middlewares/errorMiddleware";
-import projectRoutes from "@/routes/projectRoutes";
-import skillRoutes from "@/routes/skillRoutes";
-import certificateRoutes from "@/routes/certificateRoutes";
-import achievementRoutes from "@/routes/achievementRoutes";
-import experienceRoutes from "@/routes/experienceRoutes";
-import configRoutes from "@/routes/configRoutes";
-import logRoutes from "@/routes/logRoutes";
+import { connectDB } from "./config/db";
+import { dbLoggerMiddleware } from "./middlewares/dbLoggerMiddleware";
+import { notFoundMiddleware, errorMiddleware } from "./middlewares/errorMiddleware";
+import { getHealth } from "./controllers/configController";
+import projectRoutes from "./routes/projectRoutes";
+import skillRoutes from "./routes/skillRoutes";
+import certificateRoutes from "./routes/certificateRoutes";
+import achievementRoutes from "./routes/achievementRoutes";
+import experienceRoutes from "./routes/experienceRoutes";
+import configRoutes from "./routes/configRoutes";
+import logRoutes from "./routes/logRoutes";
 
 const app: Application = express();
 
@@ -28,18 +28,13 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static assets (MAGI dashboard SVGs, etc.)
-app.use("/assets", express.static(path.join(process.cwd(), "assets")));
+// Serve static assets locally from public/ (mirrors Vercel Edge CDN in production)
+app.use(express.static(path.join(process.cwd(), "public")));
 
 // Custom LogEntry MongoDB logging middleware intercepts all requests
 app.use(dbLoggerMiddleware);
 
-// Root route - Evangelion MAGI EVA-0 Health Dashboard
-app.get("/", (_req: Request, res: Response) => {
-  res.sendFile(path.join(process.cwd(), "assets", "health.html"));
-});
-
-// Liveness & Health check
+// Liveness check
 app.get("/health", (_req: Request, res: Response) => {
   res.status(200).json({
     status: "healthy",
@@ -48,28 +43,8 @@ app.get("/health", (_req: Request, res: Response) => {
   });
 });
 
-app.get("/api/v1/health", async (req: Request, res: Response) => {
-  const prefersHtml =
-    req.accepts(["json", "html"]) === "html" &&
-    !req.xhr &&
-    Boolean(req.headers.accept?.includes("text/html"));
-
-  if (prefersHtml) {
-    return res.sendFile(path.join(process.cwd(), "assets", "health.html"));
-  }
-
-  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
-  res.status(200).json({
-    status: "healthy",
-    service: "about-core",
-    version: "1.0.0",
-    timestamp: new Date().toISOString(),
-    dbStatus,
-    memoryUsageMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-    nodeVersion: process.version,
-    env: process.env.NODE_ENV,
-  });
-});
+// Service health check (pure JSON API)
+app.get("/api/v1/health", getHealth);
 
 // Mount Feature Routes
 app.use("/api/v1/projects", projectRoutes);

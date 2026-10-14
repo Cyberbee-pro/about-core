@@ -1,5 +1,6 @@
+import mongoose from "mongoose";
 import { Request, Response, NextFunction } from "express";
-import { SiteConfig, ISiteConfig } from "@/models/SiteConfig";
+import { SiteConfig, ISiteConfig } from "../models/SiteConfig";
 
 export const getSiteConfig = async (
   _req: Request,
@@ -54,3 +55,17 @@ export const updateSiteConfig = async (
     next(error);
   }
 };
+
+export const getHealth = async (_req: Request, res: Response): Promise<void> => {
+  res.status(200).json({
+    status: "healthy",
+    service: "about-core",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+    dbStatus: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    memoryUsageMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    nodeVersion: process.version,
+    env: process.env.NODE_ENV || "development",
+  });
+};
+
