@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { SiteConfig, ISiteConfig } from "../models/SiteConfig";
+import { SiteConfig, ISiteConfig } from "@/models/SiteConfig";
 
 export const getSiteConfig = async (
   _req: Request,

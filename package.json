@@ -4,9 +4,9 @@
   "description": "Headless CMS API powering Next.js portfolio and Kotlin Android client",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc-alias",
     "start": "node dist/src/server.js",
-    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "dev": "ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/server.ts",
     "test": "jest --runInBand",
     "test:coverage": "jest --coverage"
   },
@@ -40,6 +40,8 @@
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
     "ts-node-dev": "^2.0.0",
+    "tsc-alias": "^1.9.7",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3"
   }
 }

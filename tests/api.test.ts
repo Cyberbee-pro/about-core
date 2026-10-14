@@ -1,7 +1,7 @@
 import request from "supertest";
-import { LogEntry } from "../src/models/LogEntry";
-import { Project } from "../src/models/Project";
-import { SiteConfig } from "../src/models/SiteConfig";
+import { LogEntry } from "@/models/LogEntry";
+import { Project } from "@/models/Project";
+import { SiteConfig } from "@/models/SiteConfig";
 import { Writable } from "stream";
 
 // Set environment variables for tests
@@ -9,10 +9,10 @@ process.env.ADMIN_SECRET = "test-secret-token";
 process.env.NODE_ENV = "test";
 
 // Mock Mongoose models
-jest.mock("../src/models/LogEntry");
-jest.mock("../src/models/Project");
-jest.mock("../src/models/SiteConfig");
-jest.mock("../src/config/db", () => ({
+jest.mock("@/models/LogEntry");
+jest.mock("@/models/Project");
+jest.mock("@/models/SiteConfig");
+jest.mock("@/config/db", () => ({
   connectDB: jest.fn().mockResolvedValue({}),
   disconnectDB: jest.fn().mockResolvedValue(undefined),
 }));
@@ -28,7 +28,7 @@ type CloudinaryMockCallback = (
   result?: { secure_url: string; public_id: string }
 ) => void;
 
-jest.mock("../src/config/cloudinary", () => {
+jest.mock("@/config/cloudinary", () => {
   const uploadCalls: CloudinaryMockOptions[] = [];
   const search = {
     expression: jest.fn(),
@@ -61,12 +61,12 @@ interface CloudinaryTestDouble {
   uploadCalls: CloudinaryMockOptions[];
 }
 
-const mockCloudinary = jest.requireMock("../src/config/cloudinary") as {
+const mockCloudinary = jest.requireMock("@/config/cloudinary") as {
   default: CloudinaryTestDouble;
 };
 const mockApiSearch = mockCloudinary.default.search;
 const mockUploadCalls = mockCloudinary.default.uploadCalls;
-const { app: expressApp } = require("../src/server") as typeof import("../src/server");
+const { app: expressApp } = require("@/server") as typeof import("@/server");
 const app = expressApp.listen(0);
 
 describe("about-core API & Middleware Integration Tests", () => {
