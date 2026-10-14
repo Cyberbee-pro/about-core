@@ -136,6 +136,23 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.headers["content-type"]).toContain("image/svg+xml");
     });
 
+    it("GET /assets/health.html should serve the static HTML file directly", async () => {
+      const res = await request(app).get("/assets/health.html");
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(res.text).toContain("ABOUT CORE");
+      expect(res.text).toContain("EVA 0");
+    });
+
+    it("GET / should redirect to /api/v1/health if health.html does not exist on disk", async () => {
+      const existsSpy = jest.spyOn(fs, "existsSync").mockReturnValue(false);
+      const res = await request(app).get("/");
+      existsSpy.mockRestore();
+
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe("/api/v1/health");
+    });
+
     it("GET /api/v1/health should gracefully fall back to JSON if health.html does not exist on disk", async () => {
       const existsSpy = jest.spyOn(fs, "existsSync").mockReturnValue(false);
       const res = await request(app)

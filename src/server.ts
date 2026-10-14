@@ -57,14 +57,14 @@ app.get("/", (_req: Request, res: Response) => {
     if (resolvedPath) {
       return res.sendFile(resolvedPath, (err) => {
         if (err && !res.headersSent) {
-          res.status(200).json({ status: "healthy", service: "about-core" });
+          res.redirect("/api/v1/health");
         }
       });
     }
   } catch (_err) {
     // Fallback if file resolution throws
   }
-  res.status(200).json({ status: "healthy", service: "about-core" });
+  res.redirect("/api/v1/health");
 });
 
 // Liveness check
