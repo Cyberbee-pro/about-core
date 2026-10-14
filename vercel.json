@@ -1,4 +1,7 @@
 {
+  "version": 2,
+  "framework": null,
+  "outputDirectory": ".",
   "functions": {
     "api/index.ts": {
       "includeFiles": "assets/**"
@@ -6,8 +9,12 @@
   },
   "routes": [
     {
+      "src": "/assets/(.*)",
+      "dest": "/assets/$1"
+    },
+    {
       "src": "/(.*)",
-      "dest": "api/index.ts"
+      "dest": "/api/index.ts"
     }
   ]
 }
