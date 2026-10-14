@@ -269,5 +269,6 @@ All responses are JSON. Frontends should check `response.ok` and parse the error
 - Request/business behavior: `src/controllers/`
 - Schemas: `src/models/`
 - Authentication, upload, logging, errors: `src/middlewares/`
+- Utilities (e.g. `escapeRegex`): `src/utils/`
 - Mongo and Cloudinary setup: `src/config/`
 - API integration coverage: `tests/`

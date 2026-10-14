@@ -4,6 +4,7 @@ import { Readable } from "stream";
 import { UploadApiResponse } from "cloudinary";
 import cloudinary from "@/config/cloudinary";
 import { Experience } from "@/models/Experience";
+import { escapeRegex } from "@/utils/stringUtils";
 
 const storage = multer.memoryStorage();
 
@@ -491,7 +492,7 @@ export const processExperienceUploads = async (
     if ((!rawOrg || !rawTag) && (rawParamOrg || req.params.id)) {
       try {
         const query = rawParamOrg
-          ? { organization: { $regex: new RegExp(`^${rawParamOrg}$`, "i") } }
+          ? { organization: { $regex: new RegExp(`^${escapeRegex(rawParamOrg)}$`, "i") } }
           : { _id: req.params.id };
         const expDoc = await Experience.findOne(query);
         if (expDoc) {

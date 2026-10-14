@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { Types } from "mongoose";
 import { Experience, IExperiencePosition } from "@/models/Experience";
+import { escapeRegex } from "@/utils/stringUtils";
 
 function parsePositions(val: unknown): IExperiencePosition[] {
   if (typeof val === "string") {
@@ -91,7 +92,7 @@ export const createExperience = async (
     }
 
     const existingExperience = await Experience.findOne({
-      organization: { $regex: new RegExp(`^${trimmedOrg}$`, "i") },
+      organization: { $regex: new RegExp(`^${escapeRegex(trimmedOrg)}$`, "i") },
     });
 
     if (existingExperience) {
@@ -177,7 +178,7 @@ export const updateExperience = async (
     if (req.body.organization !== undefined) {
       const trimmedOrg = req.body.organization.trim();
       const existingExperience = await Experience.findOne({
-        organization: { $regex: new RegExp(`^${trimmedOrg}$`, "i") },
+        organization: { $regex: new RegExp(`^${escapeRegex(trimmedOrg)}$`, "i") },
         _id: { $ne: req.params.id },
       });
 
@@ -283,7 +284,7 @@ export const addExperiencePosition = async (
         : "";
 
     const existingExperience = await Experience.findOne({
-      organization: { $regex: new RegExp(`^${organization}$`, "i") },
+      organization: { $regex: new RegExp(`^${escapeRegex(organization)}$`, "i") },
     });
 
     if (!existingExperience) {

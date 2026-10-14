@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { Achievement } from "@/models/Achievement";
+import { escapeRegex } from "@/utils/stringUtils";
 
 export const getAchievements = async (
   _req: Request,
@@ -57,7 +58,7 @@ export const createAchievement = async (
     }
 
     const existingAchievement = await Achievement.findOne({
-      title: { $regex: new RegExp(`^${trimmedTitle}$`, "i") },
+      title: { $regex: new RegExp(`^${escapeRegex(trimmedTitle)}$`, "i") },
     });
 
     if (existingAchievement) {
@@ -94,7 +95,7 @@ export const updateAchievement = async (
     if (req.body.title !== undefined) {
       const trimmedTitle = req.body.title.trim();
       const existingAchievement = await Achievement.findOne({
-        title: { $regex: new RegExp(`^${trimmedTitle}$`, "i") },
+        title: { $regex: new RegExp(`^${escapeRegex(trimmedTitle)}$`, "i") },
         _id: { $ne: req.params.id },
       });
 

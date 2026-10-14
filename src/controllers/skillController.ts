@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { Skill } from "@/models/Skill";
+import { escapeRegex } from "@/utils/stringUtils";
 
 export const getSkills = async (
   _req: Request,
@@ -57,7 +58,7 @@ export const createSkill = async (
     }
 
     const existingSkill = await Skill.findOne({
-      name: { $regex: new RegExp(`^${trimmedName}$`, "i") },
+      name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
     });
 
     if (existingSkill) {
@@ -99,7 +100,7 @@ export const updateSkill = async (
     if (req.body.name !== undefined) {
       const trimmedName = req.body.name.trim();
       const existingSkill = await Skill.findOne({
-        name: { $regex: new RegExp(`^${trimmedName}$`, "i") },
+        name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
         _id: { $ne: req.params.id },
       });
 

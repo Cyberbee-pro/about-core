@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { Certificate } from "@/models/Certificate";
+import { escapeRegex } from "@/utils/stringUtils";
 
 export const getCertificates = async (
   _req: Request,
@@ -57,7 +58,7 @@ export const createCertificate = async (
     }
 
     const existingCert = await Certificate.findOne({
-      title: { $regex: new RegExp(`^${trimmedTitle}$`, "i") },
+      title: { $regex: new RegExp(`^${escapeRegex(trimmedTitle)}$`, "i") },
     });
 
     if (existingCert) {
@@ -99,7 +100,7 @@ export const updateCertificate = async (
     if (req.body.title !== undefined) {
       const trimmedTitle = req.body.title.trim();
       const existingCert = await Certificate.findOne({
-        title: { $regex: new RegExp(`^${trimmedTitle}$`, "i") },
+        title: { $regex: new RegExp(`^${escapeRegex(trimmedTitle)}$`, "i") },
         _id: { $ne: req.params.id },
       });
 

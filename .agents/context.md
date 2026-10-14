@@ -84,12 +84,13 @@ Protected requests accept either `Authorization: Bearer <ADMIN_SECRET>` or
 - Do not write runtime files; use MongoDB and Cloudinary for persistence.
 - Preserve Mongoose validation and lowercase/trim normalization for categories,
   slugs, titles, and organizations.
+- Always sanitize user input in dynamic regex queries with `escapeRegex` from `@/utils/stringUtils`.
 
 ## Commands and Configuration
 
-- `npm run dev` — start the TypeScript development server.
-- `npm run build` — type-check and compile to `dist/`.
-- `npm test` — run Jest serially. **All 8 test suites and 116 tests pass**.
+- `npm run dev` — start the development server with `ts-node-dev -r tsconfig-paths/register`.
+- `npm run build` — type-check and compile to `dist/` with `tsc-alias` resolving `@/` path aliases.
+- `npm test` — run Jest serially. **All 9 test suites and 119 tests pass**.
 - `npm run test:coverage` — collect coverage.
 
 Required environment variables are documented in `.env.example`:
@@ -101,5 +102,6 @@ credentials. `PORT` defaults to `5000`.
 The complete CMS API including Projects, Skills, Certificates, Achievements,
 Experiences (with single position append `POST /api/v1/experiences/:organization/positions`),
 Site Config, Request Logging, and Media Uploads is implemented, typed with strict
-TypeScript, fully refactored with `@/*` path aliases, and verified. All 8 test suites
-(116 tests) pass. Evidence reports and TDD artifacts are preserved in `.agents/tdd/`.
+TypeScript, fully refactored with `@/*` path aliases, production-compiled with `tsc-alias`,
+and sanitized against regex injection. All 9 test suites (119 tests) pass.
+Evidence reports and TDD artifacts are preserved in `.agents/tdd/`.
