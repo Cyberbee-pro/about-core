@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { FilterQuery } from "mongoose";
-import { LogEntry, ILogEntry, LogLevel } from "../models/LogEntry";
+import { LogEntry, ILogEntry, LogLevel } from "@/models/LogEntry";
 
 export interface LogQueryFilter {
   date?: string;

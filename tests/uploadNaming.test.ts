@@ -1,7 +1,7 @@
 /**
  * Tests for getNextPublicId — sequential naming, caching, and fallback.
  */
-jest.mock("../src/config/cloudinary", () => {
+jest.mock("@/config/cloudinary", () => {
   const search = {
     expression: jest.fn(),
     max_results: jest.fn(),
@@ -13,7 +13,7 @@ jest.mock("../src/config/cloudinary", () => {
   return { __esModule: true, default: cloudinary, cloudinary };
 });
 
-import { getNextPublicId } from "../src/middlewares/uploadMiddleware";
+import { getNextPublicId } from "@/middlewares/uploadMiddleware";
 
 interface CloudinarySearchTestDouble {
   search: {
@@ -23,7 +23,7 @@ interface CloudinarySearchTestDouble {
   };
 }
 
-const mockCloudinary = jest.requireMock("../src/config/cloudinary") as {
+const mockCloudinary = jest.requireMock("@/config/cloudinary") as {
   default: CloudinarySearchTestDouble;
 };
 const mockSearch = mockCloudinary.default.search;

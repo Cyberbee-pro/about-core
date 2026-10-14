@@ -2,7 +2,8 @@ import { Request, Response, NextFunction } from "express";
 import multer, { FileFilterCallback } from "multer";
 import { Readable } from "stream";
 import { UploadApiResponse } from "cloudinary";
-import cloudinary from "../config/cloudinary";
+import cloudinary from "@/config/cloudinary";
+import { Experience } from "@/models/Experience";
 
 const storage = multer.memoryStorage();
 
@@ -53,6 +54,20 @@ export const projectUploadFields = upload.fields([
   { name: "image", maxCount: 1 },
   { name: "videoDemo", maxCount: 1 },
   { name: "threeDModel", maxCount: 1 },
+]);
+
+export const skillUploadFields = upload.fields([
+  { name: "logoUrl", maxCount: 1 },
+]);
+
+export const certificateUploadFields = upload.fields([
+  { name: "mediaUrl", maxCount: 1 },
+]);
+
+export const experienceUploadFields = upload.fields([
+  { name: "iconUrl", maxCount: 1 },
+  { name: "mediaUrls", maxCount: 10 },
+  { name: "certificateUrls", maxCount: 10 },
 ]);
 
 // ---------------------------------------------------------------------------
@@ -346,3 +361,200 @@ export const processMediaUploads = async (
     next(error);
   }
 };
+
+// ---------------------------------------------------------------------------
+// Skills, Certificates & Experiences Upload Helpers & Processors
+// ---------------------------------------------------------------------------
+
+export const deriveSkillName = (name: unknown): string => {
+  if (typeof name === "string" && name.trim()) {
+    return name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+  }
+  return "skill";
+};
+
+export const deriveCertPublicId = (
+  organization: unknown,
+  title: unknown,
+  dateOrYear?: unknown
+): string => {
+  const orgSlug =
+    typeof organization === "string" && organization.trim()
+      ? organization.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/(^_+|_+$)+/g, "")
+      : "org";
+  const titleSlug =
+    typeof title === "string" && title.trim()
+      ? title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/(^_+|_+$)+/g, "")
+      : "cert";
+  const textToScan = `${typeof title === "string" ? title : ""} ${typeof dateOrYear === "string" ? dateOrYear : ""}`;
+  const yearMatch = textToScan.match(/\b(19\d\d|20\d\d)\b/);
+  const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
+  return `${orgSlug}_${titleSlug}_${year}`.replace(/_+/g, "_");
+};
+
+export const deriveExperienceOrg = (org: unknown): string => {
+  if (typeof org === "string" && org.trim()) {
+    return org
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+  }
+  return "organization";
+};
+
+export const processSkillUploads = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.files) {
+      return next();
+    }
+
+    const files = req.files as MulterFilesMap;
+    if (files.logoUrl && files.logoUrl.length > 0) {
+      const file = files.logoUrl[0];
+      const skillName = deriveSkillName(req.body.name);
+      const folder = `portfolio/skills/${skillName}`;
+      const result = await uploadBufferToCloudinary(file.buffer, {
+        folder,
+        resource_type: "image",
+        public_id: skillName,
+      });
+      req.body.logoUrl = result.secure_url;
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const processCertificateUploads = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.files) {
+      return next();
+    }
+
+    const files = req.files as MulterFilesMap;
+    if (files.mediaUrl && files.mediaUrl.length > 0) {
+      const file = files.mediaUrl[0];
+      const publicId = deriveCertPublicId(
+        req.body.organization,
+        req.body.title,
+        req.body.date
+      );
+      const folder = "portfolio/certificate";
+      const result = await uploadBufferToCloudinary(file.buffer, {
+        folder,
+        resource_type: "image",
+        public_id: publicId,
+      });
+      req.body.mediaUrl = result.secure_url;
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const processExperienceUploads = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.files) {
+      return next();
+    }
+
+    const files = req.files as MulterFilesMap;
+    const rawParamOrg = typeof req.params.organization === "string"
+      ? decodeURIComponent(req.params.organization).trim()
+      : undefined;
+    let rawTag = typeof req.body.tag === "string" ? req.body.tag.trim() : "";
+    let rawOrg = typeof req.body.organization === "string"
+      ? req.body.organization.trim()
+      : (rawParamOrg || "");
+
+    if ((!rawOrg || !rawTag) && (rawParamOrg || req.params.id)) {
+      try {
+        const query = rawParamOrg
+          ? { organization: { $regex: new RegExp(`^${rawParamOrg}$`, "i") } }
+          : { _id: req.params.id };
+        const expDoc = await Experience.findOne(query);
+        if (expDoc) {
+          if (!rawOrg) rawOrg = expDoc.organization;
+          if (!rawTag) rawTag = expDoc.tag;
+        }
+      } catch {
+        // Fall back to defaults
+      }
+    }
+
+    const tag = rawTag === "extracurricular" ? "extracurricular" : "focus";
+    const orgSlug = deriveExperienceOrg(rawOrg);
+
+    const cache: FolderCache = new Map();
+
+    // 1. Process Icon upload
+    if (files.iconUrl && files.iconUrl.length > 0) {
+      const iconFile = files.iconUrl[0];
+      const folder = `portfolio/experiences/${tag}/${orgSlug}/icons`;
+      const result = await uploadBufferToCloudinary(iconFile.buffer, {
+        folder,
+        resource_type: "image",
+        public_id: "experience_icon",
+      });
+      req.body.iconUrl = result.secure_url;
+    }
+
+    // 2. Process Media uploads
+    if (files.mediaUrls && files.mediaUrls.length > 0) {
+      const folder = `portfolio/experiences/${tag}/${orgSlug}/media`;
+      const uploadedMediaUrls: string[] = [];
+      for (const mediaFile of files.mediaUrls) {
+        const publicId = await getNextPublicId(cache, folder, "experience_media");
+        const result = await uploadBufferToCloudinary(mediaFile.buffer, {
+          folder,
+          resource_type: "image",
+          public_id: publicId,
+        });
+        uploadedMediaUrls.push(result.secure_url);
+      }
+      req.body.uploadedMediaUrls = uploadedMediaUrls;
+    }
+
+    // 3. Process Certificate uploads
+    if (files.certificateUrls && files.certificateUrls.length > 0) {
+      const folder = `portfolio/experiences/${tag}/${orgSlug}/certificates`;
+      const uploadedCertificateUrls: string[] = [];
+      for (const certFile of files.certificateUrls) {
+        const publicId = await getNextPublicId(cache, folder, "experience_certificate");
+        const result = await uploadBufferToCloudinary(certFile.buffer, {
+          folder,
+          resource_type: "image",
+          public_id: publicId,
+        });
+        uploadedCertificateUrls.push(result.secure_url);
+      }
+      req.body.uploadedCertificateUrls = uploadedCertificateUrls;
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+

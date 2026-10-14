@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { getAdminLogs } from "../controllers/logController";
-import { authMiddleware } from "../middlewares/authMiddleware";
+import { getAdminLogs } from "@/controllers/logController";
+import { authMiddleware } from "@/middlewares/authMiddleware";
 
 const router = Router();
 

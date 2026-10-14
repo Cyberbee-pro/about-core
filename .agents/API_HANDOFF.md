@@ -79,6 +79,94 @@ For JSON, send arrays/objects as JSON values. For multipart form data, send nest
 
 Send `versionTag` (required; e.g. `v1.0.0`), and optional `releaseDate`, `changelog` array, `image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `isLatest`; `threeDModel` may alternatively contain `fileUrl`. If `isLatest` is true, existing versions are marked not latest before append. The route appends rather than replacing a version. A multipart model upload is processed into `threeDModel.fileUrl`; the controller uses that URL as `threeDFileUrl` if the explicit field was not supplied. Response is `201 { success, message, data: updatedProject }`.
 
+### Skills
+
+| Method and path | Access | Purpose |
+| --- | --- | --- |
+| `GET /api/v1/skills` | Public | List all skills, sorted by `{ weight: 1, name: 1 }`. Returns `{ success, count, data: Skill[] }`. |
+| `GET /api/v1/skills/:id` | Public | Fetch one skill by MongoDB ObjectId. Missing ID returns 404. |
+| `POST /api/v1/skills` | Admin | Create a skill. Duplicate name returns 409 Conflict. Returns `201 { success, data: Skill }`. |
+| `PUT /api/v1/skills/:id` | Admin | Update skill by MongoDB ObjectId. Duplicate name check excludes current ID. Returns 404 if missing, 200 on success. |
+| `DELETE /api/v1/skills/:id` | Admin | Delete skill by MongoDB ObjectId. Returns 404 if missing, 200 on success. |
+
+Fields:
+- `name` (required unique string, trimmed).
+- `logoUrl` (required string; Cloudinary path e.g. `portfolio/skills/{name}/{name}.jpg`).
+- `featured` (boolean, default `false`).
+- `weight` (number, default `0`).
+
+### Certificates
+
+| Method and path | Access | Purpose |
+| --- | --- | --- |
+| `GET /api/v1/certificates` | Public | List all certificates, sorted by `{ weight: 1, title: 1 }`. Returns `{ success, count, data: Certificate[] }`. |
+| `GET /api/v1/certificates/:id` | Public | Fetch one certificate by MongoDB ObjectId. Missing ID returns 404. |
+| `POST /api/v1/certificates` | Admin | Create a certificate. Duplicate title returns 409 Conflict. Returns `201 { success, data: Certificate }`. |
+| `PUT /api/v1/certificates/:id` | Admin | Update certificate by MongoDB ObjectId. Returns 404 if missing, 409 if duplicate title, 200 on success. |
+| `DELETE /api/v1/certificates/:id` | Admin | Delete certificate by MongoDB ObjectId. Returns 404 if missing, 200 on success. |
+
+Fields:
+- `title` (required string, trimmed).
+- `description` (required string).
+- `link` (optional string URL).
+- `mediaUrl` (required string; Cloudinary path e.g. `portfolio/certificate/{org_title_year}.jpg`).
+- `organization` (required string, trimmed).
+- `weight` (number, default `0`).
+
+### Achievements
+
+| Method and path | Access | Purpose |
+| --- | --- | --- |
+| `GET /api/v1/achievements` | Public | List all achievements, sorted by `{ weight: 1, title: 1 }`. Returns `{ success, count, data: Achievement[] }`. |
+| `GET /api/v1/achievements/:id` | Public | Fetch one achievement by MongoDB ObjectId. Missing ID returns 404. |
+| `POST /api/v1/achievements` | Admin | Create an achievement. Duplicate title returns 409 Conflict. Returns `201 { success, data: Achievement }`. |
+| `PUT /api/v1/achievements/:id` | Admin | Update achievement by MongoDB ObjectId. Returns 404 if missing, 409 if duplicate title, 200 on success. |
+| `DELETE /api/v1/achievements/:id` | Admin | Delete achievement by MongoDB ObjectId. Returns 404 if missing, 200 on success. |
+
+Fields:
+- `title` (required string, trimmed).
+- `date` (required string, e.g. `"Month Year"`).
+- `detail` (required string).
+- `weight` (number, default `0`).
+
+### Experiences
+
+| Method and path | Access | Purpose |
+| --- | --- | --- |
+| `GET /api/v1/experiences` | Public | List all experience organizations, sorted by `{ weight: 1, organization: 1 }`. Returns `{ success, count, data: Experience[] }`. |
+| `GET /api/v1/experiences/:id` | Public | Fetch one experience by MongoDB ObjectId. Missing ID returns 404. |
+| `POST /api/v1/experiences` | Admin | Create an experience document. Duplicate organization returns 409 Conflict. Returns `201 { success, data: Experience }`. |
+| `POST /api/v1/experiences/:organization/positions` | Admin | Append a single position/promotion to an existing experience without overwriting existing history. Looks up experience via case-insensitive organization regex. Supports multipart uploads for `mediaUrls` and `certificateUrls`. Returns `200 { success, message, data: Experience }`. |
+| `PUT /api/v1/experiences/:id` | Admin | Update experience by MongoDB ObjectId. Returns 404 if missing, 409 if duplicate organization, 200 on success. |
+| `DELETE /api/v1/experiences/:id` | Admin | Delete experience by MongoDB ObjectId. Returns 404 if missing, 200 on success. |
+
+Fields:
+- `organization` (required string, trimmed).
+- `tag` (required enum: `"focus"` | `"extracurricular"`).
+- `type` (required enum: `"internship"` | `"contract"` | `"freelance"` | `"full_time"` | `"part_time"` | `"club"` | `"volunteering"`).
+- `iconUrl` (required string).
+- `skills` (ObjectId array, ref to `Skill`).
+- `weight` (number, default `0`).
+- `positions` (array of position subdocuments):
+  - `positionTag` (required string, e.g. `"Initial Hire"`, `"Senior Role Promotion"`).
+  - `title` (required string).
+  - `description` (required string).
+  - `startDate` (required Date/ISO string).
+  - `endDate` (optional Date/ISO string).
+  - `mediaUrls` (optional string array).
+  - `certificateUrls` (optional string array).
+  - `isCurrent` (boolean, default `false`).
+
+#### Appending Positions (`POST /api/v1/experiences/:organization/positions`)
+- Path parameter: `:organization` (case-insensitive string matching the unique organization name, e.g. `/experiences/gcsrm/positions` or `/experiences/Tech%20Corp/positions`).
+- Accepts `req.body.position` formatted as JSON object, JSON-stringified object, or directly at top level of `req.body`.
+- Accepts multipart files on fields `mediaUrls` and `certificateUrls`. These are streamed to Cloudinary folders:
+  - Media: `portfolio/experiences/{tag}/{organization}/media/experience_media_{num}`
+  - Certificates: `portfolio/experiences/{tag}/{organization}/certificates/experience_certificate_{num}`
+- **Active Role Single-Truth**: When `isCurrent` is `true` on the new position, all existing positions within the experience document are automatically updated to `isCurrent: false`.
+- Appends the new position using `$push` without overwriting earlier career positions.
+- Missing organization returns `404 Not Found` with `{ success: false, message: "Experience not found for organization: <organization>" }`. Unauthenticated access returns `401 Unauthorized`.
+
 ### Site configuration
 
 | Method and path | Access | Purpose |
@@ -161,14 +249,14 @@ For an admin request, add `Authorization: Bearer ${adminSecret}`. For `FormData`
 - `400`: missing required input, invalid project ID, or Mongoose validation/cast failure.
 - `401`: missing or invalid admin secret.
 - `404`: unknown route/resource, missing project, or public attempt to read an invisible project.
-- `409`: duplicate key (commonly duplicate slug).
+- `409`: duplicate key (e.g. duplicate slug, skill name, cert/achievement title, or experience organization).
 - `500`: unexpected/server configuration errors.
 
 All responses are JSON. Frontends should check `response.ok` and parse the error `message`; do not assume all failures share the same exact message. CORS origins are controlled by comma-separated `CLIENT_ORIGIN`; unset currently permits `*`. MongoDB (`MONGO_URI`) is required. Cloudinary credentials are required for media uploads. Local development uses `npm install`, configure environment variables, then `npm run dev`; `npm run build` compiles TypeScript.
 
 ## Data model / ownership summary
 
-- MongoDB is authoritative for projects, site config, and API logs.
+- MongoDB is authoritative for projects, skills, certificates, achievements, experiences, site config, and API logs.
 - Cloudinary stores media bytes; MongoDB stores secure URLs and presentation metadata.
 - `Project.versions` is embedded in its project; there is no independent version endpoint for listing/editing.
 - There is no user/role collection or OAuth callback route implemented here despite historical references to an OAuth gatekeeper.

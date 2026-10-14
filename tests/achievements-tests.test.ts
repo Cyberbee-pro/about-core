@@ -1,21 +1,21 @@
 import request from "supertest";
-import { Achievement } from "../src/models/Achievement";
+import { Achievement } from "@/models/Achievement";
 
 // Set env for admin auth in tests
 process.env.ADMIN_SECRET = "test-secret-token";
 process.env.NODE_ENV = "test";
 
 // Mock models and DB
-jest.mock("../src/models/Achievement");
-jest.mock("../src/models/LogEntry");
-jest.mock("../src/models/Project");
-jest.mock("../src/models/SiteConfig");
-jest.mock("../src/config/db", () => ({
+jest.mock("@/models/Achievement");
+jest.mock("@/models/LogEntry");
+jest.mock("@/models/Project");
+jest.mock("@/models/SiteConfig");
+jest.mock("@/config/db", () => ({
   connectDB: jest.fn().mockResolvedValue({}),
   disconnectDB: jest.fn().mockResolvedValue(undefined),
 }));
 
-const { app } = require("../src/server");
+const { app } = require("@/server");
 
 describe("Achievements API Integration Tests", () => {
   beforeEach(() => {

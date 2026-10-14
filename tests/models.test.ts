@@ -1,9 +1,9 @@
 import mongoose from "mongoose";
-import { Skill } from "../src/models/Skill";
-import { Achievement } from "../src/models/Achievement";
-import { Experience } from "../src/models/Experience";
-import { Certificate } from "../src/models/Certificate";
-import { Project } from "../src/models/Project";
+import { Skill } from "@/models/Skill";
+import { Achievement } from "@/models/Achievement";
+import { Experience } from "@/models/Experience";
+import { Certificate } from "@/models/Certificate";
+import { Project } from "@/models/Project";
 
 /**
  * These tests validate Mongoose schema definitions using `document.validate()`
@@ -411,7 +411,7 @@ describe("Project Model - Skills Reference", () => {
 
 describe("Models barrel export (src/models/index.ts)", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const barrel = require("../src/models/index");
+  const barrel = require("@/models/index");
 
   it("exports Project model", () => {
     expect(barrel.Project).toBeDefined();

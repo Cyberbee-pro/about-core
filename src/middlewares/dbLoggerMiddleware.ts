@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { LogEntry, LogLevel } from "../models/LogEntry";
+import { LogEntry, LogLevel } from "@/models/LogEntry";
 
 export const dbLoggerMiddleware = (
   req: Request,

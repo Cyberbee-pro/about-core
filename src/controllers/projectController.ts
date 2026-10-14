@@ -7,7 +7,7 @@ import {
   ISocialLink,
   IProjectVersion,
   ProjectStatus,
-} from "../models/Project";
+} from "@/models/Project";
 
 export interface ProjectQueryParams {
   category?: string;

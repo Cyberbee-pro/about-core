@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { connectDB, disconnectDB } from "../src/config/db";
+import { connectDB, disconnectDB } from "@/config/db";
 
 jest.mock("mongoose", () => {
   const original = jest.requireActual("mongoose");
