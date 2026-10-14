@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ABOUT CORE - EVA 0</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      text-shadow: none !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100vh;
+      min-height: 100vh;
+      background-color: #000000;
+      color: #FFFFFF;
+      font-family: 'Michroma', sans-serif;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    .hazard-bar {
+      width: 100%;
+      height: 32px;
+      background-image: url('/assets/haz.svg');
+      background-repeat: repeat-x;
+      background-size: auto 32px;
+      flex-shrink: 0;
+    }
+
+    .main-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 40px;
+      flex: 1;
+      width: 100%;
+      max-width: 1400px;
+      padding: 0 20px;
+    }
+
+    .hex-image {
+      height: 380px;
+      width: auto;
+      display: block;
+      flex-shrink: 0;
+    }
+
+    .center-box {
+      background-color: #7030D0;
+      padding: 40px 48px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .main-title {
+      color: #FFFFFF;
+      font-size: 40px;
+      font-weight: normal;
+      letter-spacing: 2px;
+      line-height: 1.1;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+
+    .sub-title {
+      color: #FFFFFF;
+      font-size: 32px;
+      font-weight: normal;
+      letter-spacing: 2px;
+      line-height: 1.1;
+      margin-bottom: 28px;
+      text-transform: uppercase;
+    }
+
+    .metrics-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .metric-row {
+      font-size: 16px;
+      letter-spacing: 1px;
+      white-space: nowrap;
+      line-height: 1.4;
+    }
+
+    .metric-label {
+      color: #FFFFFF;
+    }
+
+    .metric-value {
+      color: #A3FF00;
+    }
+
+    @media (max-width: 1100px) {
+      .main-container {
+        gap: 20px;
+      }
+
+      .hex-image {
+        height: 280px;
+      }
+
+      .center-box {
+        padding: 28px 32px;
+      }
+
+      .main-title {
+        font-size: 30px;
+      }
+
+      .sub-title {
+        font-size: 24px;
+        margin-bottom: 20px;
+      }
+
+      .metric-row {
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Top Hazard Bar -->
+  <div class="hazard-bar" aria-hidden="true"></div>
+
+  <!-- Main Content Container -->
+  <main class="main-container">
+    <!-- Left Image -->
+    <img src="/assets/HEX_L.svg" alt="HEX Left" class="hex-image" style="height: 380px;">
+
+    <!-- Center Box -->
+    <div class="center-box">
+      <h1 class="main-title">ABOUT CORE</h1>
+      <div class="sub-title">- EVA 0</div>
+
+      <div class="metrics-list" aria-label="System Health Metrics">
+        <div class="metric-row">
+          <span class="metric-label">status : </span><span id="status" class="metric-value" style="color: #A3FF00;">CONNECTING...</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">service : </span><span id="service" class="metric-value" style="color: #A3FF00;">--</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">version : </span><span id="version" class="metric-value" style="color: #A3FF00;">--</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">timestamp : </span><span id="timestamp" class="metric-value" style="color: #A3FF00;">--</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">dbStatus : </span><span id="dbStatus" class="metric-value" style="color: #A3FF00;">--</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">memory Usage : </span><span class="metric-value" style="color: #A3FF00;"><span id="memoryUsageMB">--</span> MB</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">nodeVersion : </span><span id="nodeVersion" class="metric-value" style="color: #A3FF00;">--</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">env : </span><span id="env" class="metric-value" style="color: #A3FF00;">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Image -->
+    <img src="/assets/HEX_R.svg" alt="HEX Right" class="hex-image" style="height: 380px;">
+  </main>
+
+  <!-- Bottom Hazard Bar -->
+  <div class="hazard-bar" aria-hidden="true"></div>
+
+  <script>
+    async function updateHealthMetrics() {
+      try {
+        const response = await fetch('/api/v1/health', {
+          headers: { 'Accept': 'application/json' },
+          cache: 'no-store'
+        });
+
+        if (!response.ok) {
+          throw new Error('HTTP ' + response.status);
+        }
+
+        const data = await response.json();
+
+        const statusEl = document.getElementById('status');
+        const serviceEl = document.getElementById('service');
+        const versionEl = document.getElementById('version');
+        const timestampEl = document.getElementById('timestamp');
+        const dbStatusEl = document.getElementById('dbStatus');
+        const memoryUsageMBEl = document.getElementById('memoryUsageMB');
+        const nodeVersionEl = document.getElementById('nodeVersion');
+        const envEl = document.getElementById('env');
+
+        if (statusEl) statusEl.textContent = data.status || '--';
+        if (serviceEl) serviceEl.textContent = data.service || '--';
+        if (versionEl) versionEl.textContent = data.version || '--';
+        if (timestampEl) timestampEl.textContent = data.timestamp || '--';
+        if (dbStatusEl) dbStatusEl.textContent = data.dbStatus || '--';
+        if (memoryUsageMBEl) memoryUsageMBEl.textContent = (data.memoryUsageMB !== undefined) ? data.memoryUsageMB : '--';
+        if (nodeVersionEl) nodeVersionEl.textContent = data.nodeVersion || '--';
+        if (envEl) envEl.textContent = data.env || '--';
+      } catch (err) {
+        const statusEl = document.getElementById('status');
+        if (statusEl) {
+          statusEl.textContent = 'OFFLINE';
+        }
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      updateHealthMetrics();
+      setInterval(updateHealthMetrics, 3000);
+    });
+  </script>
+</body>
+</html>

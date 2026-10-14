@@ -24,12 +24,14 @@ Public reads are intended for viewer clients. Admin reads/mutations should be ca
 
 ## Endpoint reference
 
-### Health
+### Health & Dashboard
 
 | Method and path | Access | Purpose / response |
 | --- | --- | --- |
+| `GET /` | Public | Evangelion / MAGI System (EVA-0) styled HTML Health Dashboard. |
 | `GET /health` | Public | Liveness: `{ status, uptime, timestamp }`. |
-| `GET /api/v1/health` | Public | Service health and version metadata: `{ status, service, version, timestamp }`. |
+| `GET /api/v1/health` | Public | Service health metadata: returns HTML MAGI dashboard if `Accept: text/html` is requested; otherwise returns JSON `{ status, service, version, timestamp, dbStatus, memoryUsageMB, nodeVersion, env }`. |
+| `GET /assets/*` | Public | Static assets serving SVGs (`haz.svg`, `HEX_L.svg`, `HEX_R.svg`) and dashboard assets. |
 
 ### Projects
 
