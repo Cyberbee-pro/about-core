@@ -112,6 +112,11 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.text).toContain("EVA 0");
       expect(res.text).toContain("HEX_L.svg");
       expect(res.text).toContain("HEX_R.svg");
+      expect(res.text).toContain("red-accent-line");
+      expect(res.text).toContain("memorySegments");
+      expect(res.text).toContain("memoryMeter");
+      expect(res.text).toContain("memory-bar");
+      expect(res.text).toContain("memoryVal");
     });
 
     it("GET /api/v1/health should serve HTML when Accept header includes text/html", async () => {
