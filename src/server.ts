@@ -1,4 +1,3 @@
-import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 dotenv.config();
@@ -29,43 +28,11 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static assets (MAGI dashboard SVGs, etc.) with dual-path resolution for serverless support
-const cwdAssetsPath = path.join(process.cwd(), "assets");
-const dirnameAssetsPath = path.join(__dirname, "..", "assets");
-const resolvedAssetsDir = fs.existsSync(cwdAssetsPath)
-  ? cwdAssetsPath
-  : fs.existsSync(dirnameAssetsPath)
-  ? dirnameAssetsPath
-  : cwdAssetsPath;
-
-app.use("/assets", express.static(resolvedAssetsDir));
+// Serve static assets locally from public/ (mirrors Vercel Edge CDN in production)
+app.use(express.static(path.join(process.cwd(), "public")));
 
 // Custom LogEntry MongoDB logging middleware intercepts all requests
 app.use(dbLoggerMiddleware);
-
-// Root route - Evangelion MAGI EVA-0 Health Dashboard
-app.get("/", (_req: Request, res: Response) => {
-  try {
-    const htmlPath = path.join(process.cwd(), "assets", "health.html");
-    const fallbackPath = path.join(__dirname, "..", "assets", "health.html");
-    const resolvedPath = fs.existsSync(htmlPath)
-      ? htmlPath
-      : fs.existsSync(fallbackPath)
-      ? fallbackPath
-      : null;
-
-    if (resolvedPath) {
-      return res.sendFile(resolvedPath, (err) => {
-        if (err && !res.headersSent) {
-          res.redirect("/api/v1/health");
-        }
-      });
-    }
-  } catch (_err) {
-    // Fallback if file resolution throws
-  }
-  res.redirect("/api/v1/health");
-});
 
 // Liveness check
 app.get("/health", (_req: Request, res: Response) => {
@@ -76,7 +43,7 @@ app.get("/health", (_req: Request, res: Response) => {
   });
 });
 
-// Service health check with MAGI UI content negotiation and graceful JSON fallback
+// Service health check (pure JSON API)
 app.get("/api/v1/health", getHealth);
 
 // Mount Feature Routes
