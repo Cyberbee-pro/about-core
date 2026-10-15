@@ -4,6 +4,7 @@ import { Achievement } from "@/models/Achievement";
 import { Experience } from "@/models/Experience";
 import { Certificate } from "@/models/Certificate";
 import { Project } from "@/models/Project";
+import { SiteConfig } from "@/models/SiteConfig";
 
 /**
  * These tests validate Mongoose schema definitions using `document.validate()`
@@ -137,8 +138,7 @@ describe("Experience Model", () => {
     iconUrl: "https://cdn.example.com/icons/techcorp.png",
     positions: [
       {
-        positionTag: "Initial Hire",
-        title: "Software Engineering Intern",
+        position: "Software Engineering Intern",
         description: "Worked on backend services using Node.js.",
         startDate: new Date("2024-06-01"),
         endDate: new Date("2024-12-01"),
@@ -163,10 +163,10 @@ describe("Experience Model", () => {
     expect(experience.iconUrl).toBe(validExperienceData.iconUrl);
     expect(experience.weight).toBe(0);
     expect(experience.positions).toHaveLength(1);
-    expect(experience.positions[0].positionTag).toBe("Initial Hire");
-    expect(experience.positions[0].title).toBe("Software Engineering Intern");
+    expect(experience.positions[0].position).toBe("Software Engineering Intern");
     expect(experience.positions[0].isCurrent).toBe(false);
   });
+
 
   it("rejects invalid tag enum value", () => {
     const doc = new Experience({ ...validExperienceData, tag: "invalid_tag" });
@@ -221,8 +221,7 @@ describe("Experience Model", () => {
       ...validExperienceData,
       positions: [
         {
-          positionTag: "v1",
-          title: "Junior Dev",
+          position: "Junior Dev",
           description: "Started as junior.",
           startDate: new Date("2024-01-01"),
         },
@@ -230,6 +229,22 @@ describe("Experience Model", () => {
     });
     expect(experience.positions[0].isCurrent).toBe(false);
   });
+
+  it("fails validation when position is missing in position subdocument", () => {
+    const experience = new Experience({
+      ...validExperienceData,
+      positions: [
+        {
+          description: "Missing position title",
+          startDate: new Date("2024-01-01"),
+        },
+      ],
+    });
+    const error = experience.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors["positions.0.position"]).toBeDefined();
+  });
+
 
   it("fails validation when organization is missing", () => {
     const { organization: _org, ...noOrg } = validExperienceData;
@@ -407,7 +422,105 @@ describe("Project Model - Skills Reference", () => {
   });
 });
 
+// ─── SiteConfig Model ────────────────────────────────────────────────────────
+
+describe("SiteConfig Model", () => {
+  const validConfigData = {
+    name: "Shibraj Das",
+    jobTitles: ["Full-Stack Developer", "Low-Level Developer", "Game Developer"],
+    resumeDriveUrl: "https://drive.google.com/resume",
+    statusMessage: "Building systems...",
+    bioSummary: "Full stack engineer specializing in distributed systems.",
+  };
+
+  it("validates a well-formed site config document with all required fields", () => {
+    const config = new SiteConfig(validConfigData);
+    const error = config.validateSync();
+    expect(error).toBeUndefined();
+    expect(config.name).toBe("Shibraj Das");
+    expect(config.jobTitles).toEqual([
+      "Full-Stack Developer",
+      "Low-Level Developer",
+      "Game Developer",
+    ]);
+    expect(config.resumeDriveUrl).toBe("https://drive.google.com/resume");
+    expect(config.statusMessage).toBe("Building systems...");
+    expect(config.bioSummary).toBe("Full stack engineer specializing in distributed systems.");
+    expect(config.pfpUrl).toBeUndefined();
+    expect(config.pfpPublicId).toBeUndefined();
+  });
+
+  it("accepts optional pfpUrl and pfpPublicId", () => {
+    const config = new SiteConfig({
+      ...validConfigData,
+      pfpUrl: "https://res.cloudinary.com/demo/image/upload/pfp.png",
+      pfpPublicId: "portfolio/site_config/pfp_123456",
+    });
+
+    expect(config.validateSync()).toBeUndefined();
+    expect(config.pfpUrl).toBe("https://res.cloudinary.com/demo/image/upload/pfp.png");
+    expect(config.pfpPublicId).toBe("portfolio/site_config/pfp_123456");
+  });
+
+  it("fails validation on empty document without injecting schema defaults", () => {
+    const doc = new SiteConfig({});
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.name).toBeDefined();
+    expect(error!.errors.jobTitles).toBeDefined();
+    expect(error!.errors.resumeDriveUrl).toBeDefined();
+    expect(error!.errors.statusMessage).toBeDefined();
+    expect(error!.errors.bioSummary).toBeDefined();
+  });
+
+  it("fails validation when name is missing", () => {
+    const { name: _n, ...noName } = validConfigData;
+    const doc = new SiteConfig(noName);
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.name).toBeDefined();
+  });
+
+  it("fails validation when jobTitles is missing", () => {
+    const { jobTitles: _j, ...noJobTitles } = validConfigData;
+    const doc = new SiteConfig(noJobTitles);
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.jobTitles).toBeDefined();
+  });
+
+  it("fails validation when resumeDriveUrl is missing", () => {
+    const { resumeDriveUrl: _r, ...noResume } = validConfigData;
+    const doc = new SiteConfig(noResume);
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.resumeDriveUrl).toBeDefined();
+  });
+
+  it("fails validation when statusMessage is missing", () => {
+    const { statusMessage: _s, ...noStatus } = validConfigData;
+    const doc = new SiteConfig(noStatus);
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.statusMessage).toBeDefined();
+  });
+
+  it("fails validation when bioSummary is missing", () => {
+    const { bioSummary: _b, ...noBio } = validConfigData;
+    const doc = new SiteConfig(noBio);
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.bioSummary).toBeDefined();
+  });
+
+  it("sets the correct model name", () => {
+    expect(SiteConfig.modelName).toBe("SiteConfig");
+  });
+});
+
+
 // ─── Barrel Export ───────────────────────────────────────────────────────────
+
 
 describe("Models barrel export (src/models/index.ts)", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports

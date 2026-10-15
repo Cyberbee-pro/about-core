@@ -71,6 +71,13 @@ export const experienceUploadFields = upload.fields([
   { name: "certificateUrls", maxCount: 10 },
 ]);
 
+export const siteConfigUploadFields = upload.fields([
+  { name: "pfp", maxCount: 1 },
+  { name: "pfpUrl", maxCount: 1 },
+  { name: "image", maxCount: 1 },
+]);
+
+
 // ---------------------------------------------------------------------------
 // Cloudinary upload helpers
 // ---------------------------------------------------------------------------
@@ -558,4 +565,39 @@ export const processExperienceUploads = async (
     next(error);
   }
 };
+
+export const processSiteConfigUploads = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.files) {
+      return next();
+    }
+
+    const files = req.files as MulterFilesMap;
+    const pfpFile =
+      (files.pfp && files.pfp[0]) ||
+      (files.pfpUrl && files.pfpUrl[0]) ||
+      (files.image && files.image[0]);
+
+    if (pfpFile) {
+      const publicId = `pfp_${Date.now()}`;
+      const folder = "portfolio/site_config";
+      const result = await uploadBufferToCloudinary(pfpFile.buffer, {
+        folder,
+        resource_type: "image",
+        public_id: publicId,
+      });
+      req.body.pfpUrl = result.secure_url;
+      req.body.pfpPublicId = result.public_id;
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
 

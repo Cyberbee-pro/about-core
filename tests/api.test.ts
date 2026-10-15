@@ -38,12 +38,13 @@ jest.mock("@/config/cloudinary", () => {
   search.expression.mockReturnValue(search);
   search.max_results.mockReturnValue(search);
   const uploader = {
+    destroy: jest.fn().mockResolvedValue({ result: "ok" }),
     upload_stream: (options: CloudinaryMockOptions, callback: CloudinaryMockCallback): Writable => {
       uploadCalls.push(options);
       const writable = new Writable({ write(_chunk, _encoding, next) { next(); } });
       process.nextTick(() => callback(null, {
         secure_url: `https://res.cloudinary.com/demo/${options.resource_type}/${options.folder}/test_file`,
-        public_id: "test_public_id",
+        public_id: options.public_id ? `${options.folder}/${options.public_id}` : "test_public_id",
       }));
       return writable;
     },
@@ -53,6 +54,10 @@ jest.mock("@/config/cloudinary", () => {
 });
 
 interface CloudinaryTestDouble {
+  uploader: {
+    destroy: jest.Mock;
+    upload_stream: jest.Mock;
+  };
   search: {
     expression: jest.Mock;
     max_results: jest.Mock;
@@ -66,6 +71,8 @@ const mockCloudinary = jest.requireMock("@/config/cloudinary") as {
 };
 const mockApiSearch = mockCloudinary.default.search;
 const mockUploadCalls = mockCloudinary.default.uploadCalls;
+const mockDestroy = mockCloudinary.default.uploader.destroy;
+
 const { app: expressApp } = require("@/server") as typeof import("@/server");
 const app = expressApp.listen(0);
 
@@ -388,8 +395,12 @@ describe("about-core API & Middleware Integration Tests", () => {
   });
 
   describe("Site Configuration Routes", () => {
-    it("GET /api/v1/config returns existing configuration", async () => {
+    it("GET /api/v1/config returns existing configuration with profile and job titles", async () => {
       const mockConfig = {
+        name: "Shibraj Das",
+        pfpUrl: "https://res.cloudinary.com/demo/image/upload/pfp.jpg",
+        pfpPublicId: "portfolio/site_config/pfp_123456",
+        jobTitles: ["Full-Stack Developer", "Low-Level Developer"],
         resumeDriveUrl: "https://drive.google.com/resume",
         statusMessage: "Building systems...",
         bioSummary: "Full Stack Engineer",
@@ -400,30 +411,33 @@ describe("about-core API & Middleware Integration Tests", () => {
       const res = await request(app).get("/api/v1/config");
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+      expect(res.body.data.name).toBe("Shibraj Das");
+      expect(res.body.data.pfpUrl).toBe("https://res.cloudinary.com/demo/image/upload/pfp.jpg");
+      expect(res.body.data.pfpPublicId).toBe("portfolio/site_config/pfp_123456");
+      expect(res.body.data.jobTitles).toEqual(["Full-Stack Developer", "Low-Level Developer"]);
       expect(res.body.data.resumeDriveUrl).toBe("https://drive.google.com/resume");
     });
 
-    it("GET /api/v1/config generates default config when none exists", async () => {
+    it("GET /api/v1/config returns 404 when no configuration exists", async () => {
       (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
-      (SiteConfig.create as jest.Mock).mockResolvedValue({
-        resumeDriveUrl: "https://drive.google.com",
-        statusMessage: "Building systems...",
-        bioSummary: "Full stack engineer specializing in distributed systems and 3D web applications.",
-      });
 
       const res = await request(app).get("/api/v1/config");
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(SiteConfig.create).toHaveBeenCalled();
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toBe("Site configuration not found");
+      expect(SiteConfig.create).not.toHaveBeenCalled();
     });
 
-    it("PUT /api/v1/config updates configuration when authenticated", async () => {
+    it("PUT /api/v1/config updates configuration when authenticated with complete payload", async () => {
       const updatedConfig = {
+        name: "Shibraj D.",
+        jobTitles: ["Lead Architect", "Systems Engineer"],
         resumeDriveUrl: "https://drive.google.com/new-resume",
         statusMessage: "Shipping features...",
         bioSummary: "Updated bio",
       };
 
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
       (SiteConfig.findOneAndUpdate as jest.Mock).mockResolvedValue(updatedConfig);
 
       const res = await request(app)
@@ -433,7 +447,108 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+      expect(res.body.data.name).toBe("Shibraj D.");
+      expect(res.body.data.jobTitles).toEqual(["Lead Architect", "Systems Engineer"]);
       expect(res.body.data.statusMessage).toBe("Shipping features...");
+    });
+
+    it("PUT /api/v1/config rejects update when required fields are missing", async () => {
+      const incompleteConfig = {
+        name: "Shibraj D.",
+      };
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send(incompleteConfig);
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Missing required fields");
+      expect(res.body.message).toContain("jobTitles");
+      expect(res.body.message).toContain("resumeDriveUrl");
+    });
+
+    it("PUT /api/v1/config parses stringified jobTitles from multipart requests with all required fields", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
+        Promise.resolve(update)
+      );
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Core Engineer", "Graphics Dev"]))
+        .field("resumeDriveUrl", "https://drive.google.com/resume")
+        .field("statusMessage", "Building systems...")
+        .field("bioSummary", "Full stack engineer");
+
+      expect(res.status).toBe(200);
+      expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          name: "Shibraj Das",
+          jobTitles: ["Core Engineer", "Graphics Dev"],
+          resumeDriveUrl: "https://drive.google.com/resume",
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it("PUT /api/v1/config uploads new profile picture to portfolio/site_config and deletes previous image", async () => {
+      const existingConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeDriveUrl: "https://drive.google.com/resume",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+        pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_old",
+        pfpPublicId: "portfolio/site_config/pfp_old",
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
+        Promise.resolve({ ...existingConfig, ...update })
+      );
+
+      const fakeImage = Buffer.from("fake-avatar-data");
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Full-Stack Developer"]))
+        .field("resumeDriveUrl", "https://drive.google.com/resume")
+        .field("statusMessage", "Building systems...")
+        .field("bioSummary", "Full stack engineer")
+        .attach("pfp", fakeImage, {
+          filename: "avatar.png",
+          contentType: "image/png",
+        });
+
+      expect(res.status).toBe(200);
+
+      // Verify Cloudinary upload folder and naming
+      const pfpUploadCall = mockUploadCalls.find(
+        (call) => call.folder === "portfolio/site_config"
+      );
+      expect(pfpUploadCall).toBeDefined();
+      expect(pfpUploadCall?.resource_type).toBe("image");
+      expect(pfpUploadCall?.public_id).toMatch(/^pfp_\d+$/);
+
+      // Verify previous image was deleted from Cloudinary
+      expect(mockDestroy).toHaveBeenCalledWith("portfolio/site_config/pfp_old");
+
+      // Verify update in database
+      expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          pfpUrl: expect.stringContaining("portfolio/site_config/test_file"),
+          pfpPublicId: expect.stringContaining("portfolio/site_config/pfp_"),
+        }),
+        expect.any(Object)
+      );
     });
   });
 

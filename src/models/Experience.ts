@@ -1,8 +1,7 @@
 import { Schema, model, Document, Types } from "mongoose";
 
 export interface IExperiencePosition {
-  positionTag: string; // e.g., "Senior Role Promotion", "Initial Hire"
-  title: string;
+  position: string; // e.g., "Technical Lead", "Senior Developer"
   description: string;
   startDate: Date;
   endDate?: Date;
@@ -34,8 +33,7 @@ export interface IExperience extends Document {
 }
 
 const ExperiencePositionSchema = new Schema<IExperiencePosition>({
-  positionTag: { type: String, required: true },
-  title: { type: String, required: true },
+  position: { type: String, required: true },
   description: { type: String, required: true },
   startDate: { type: Date, required: true },
   endDate: { type: Date },
@@ -43,6 +41,7 @@ const ExperiencePositionSchema = new Schema<IExperiencePosition>({
   certificateUrls: [{ type: String }],
   isCurrent: { type: Boolean, default: false },
 });
+
 
 const ExperienceSchema = new Schema<IExperience>({
   organization: { type: String, required: true, trim: true },
