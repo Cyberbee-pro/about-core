@@ -462,6 +462,32 @@ describe("SiteConfig Model", () => {
     expect(config.pfpPublicId).toBe("portfolio/site_config/pfp_123456");
   });
 
+  it("defaults pfpHistory to an empty array", () => {
+    const config = new SiteConfig(validConfigData);
+    expect(config.pfpHistory).toBeDefined();
+    expect(config.pfpHistory).toEqual([]);
+  });
+
+  it("accepts valid pfpHistory items", () => {
+    const uploadedAt = new Date("2026-01-01T00:00:00.000Z");
+    const config = new SiteConfig({
+      ...validConfigData,
+      pfpHistory: [
+        {
+          url: "https://res.cloudinary.com/demo/image/upload/pfp1.png",
+          publicId: "portfolio/site_config/pfp_1",
+          uploadedAt,
+        },
+      ],
+    });
+
+    expect(config.validateSync()).toBeUndefined();
+    expect(config.pfpHistory).toHaveLength(1);
+    expect(config.pfpHistory![0].publicId).toBe("portfolio/site_config/pfp_1");
+    expect(config.pfpHistory![0].url).toBe("https://res.cloudinary.com/demo/image/upload/pfp1.png");
+  });
+
+
   it("fails validation on empty document without injecting schema defaults", () => {
     const doc = new SiteConfig({});
     const error = doc.validateSync();

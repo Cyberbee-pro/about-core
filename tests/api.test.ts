@@ -496,7 +496,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       );
     });
 
-    it("PUT /api/v1/config uploads new profile picture to portfolio/site_config and deletes previous image", async () => {
+    it("PUT /api/v1/config uploads new profile picture to portfolio/site_config, retains history, and does NOT delete previous image", async () => {
       const existingConfig = {
         name: "Shibraj Das",
         jobTitles: ["Full-Stack Developer"],
@@ -505,6 +505,13 @@ describe("about-core API & Middleware Integration Tests", () => {
         bioSummary: "Full stack engineer",
         pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_old",
         pfpPublicId: "portfolio/site_config/pfp_old",
+        pfpHistory: [
+          {
+            url: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_old",
+            publicId: "portfolio/site_config/pfp_old",
+            uploadedAt: new Date("2026-01-01T00:00:00.000Z"),
+          },
+        ],
       };
 
       (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
@@ -537,20 +544,86 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(pfpUploadCall?.resource_type).toBe("image");
       expect(pfpUploadCall?.public_id).toMatch(/^pfp_\d+$/);
 
-      // Verify previous image was deleted from Cloudinary
-      expect(mockDestroy).toHaveBeenCalledWith("portfolio/site_config/pfp_old");
+      // Verify previous image was NOT deleted from Cloudinary
+      expect(mockDestroy).not.toHaveBeenCalled();
 
-      // Verify update in database
+      // Verify update in database preserves history and adds new avatar
       expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
         {},
         expect.objectContaining({
           pfpUrl: expect.stringContaining("portfolio/site_config/test_file"),
           pfpPublicId: expect.stringContaining("portfolio/site_config/pfp_"),
+          pfpHistory: expect.arrayContaining([
+            expect.objectContaining({
+              publicId: "portfolio/site_config/pfp_old",
+            }),
+            expect.objectContaining({
+              publicId: expect.stringContaining("portfolio/site_config/pfp_"),
+            }),
+          ]),
         }),
         expect.any(Object)
       );
     });
+
+    it("PUT /api/v1/config allows selecting past profile picture from pfpHistory (carousel selection)", async () => {
+      const existingConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeDriveUrl: "https://drive.google.com/resume",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+        pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_current",
+        pfpPublicId: "portfolio/site_config/pfp_current",
+        pfpHistory: [
+          {
+            url: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_current",
+            publicId: "portfolio/site_config/pfp_current",
+            uploadedAt: new Date("2026-02-01T00:00:00.000Z"),
+          },
+          {
+            url: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_past",
+            publicId: "portfolio/site_config/pfp_past",
+            uploadedAt: new Date("2026-01-01T00:00:00.000Z"),
+          },
+        ],
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
+        Promise.resolve({ ...existingConfig, ...update })
+      );
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          name: "Shibraj Das",
+          jobTitles: ["Full-Stack Developer"],
+          resumeDriveUrl: "https://drive.google.com/resume",
+          statusMessage: "Building systems...",
+          bioSummary: "Full stack engineer",
+          pfpPublicId: "portfolio/site_config/pfp_past",
+        });
+
+      expect(res.status).toBe(200);
+
+      // Verify active pfp was switched to selected past history item
+      expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_past",
+          pfpPublicId: "portfolio/site_config/pfp_past",
+          pfpHistory: existingConfig.pfpHistory,
+        }),
+        expect.any(Object)
+      );
+
+      // Verify no Cloudinary destroy was triggered
+      expect(mockDestroy).not.toHaveBeenCalled();
+    });
   });
+
 
   describe("Admin Log Query Routes", () => {
     it("GET /api/v1/admin/logs queries logs by date filter when authenticated", async () => {

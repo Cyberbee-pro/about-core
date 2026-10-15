@@ -1,20 +1,41 @@
 import { Schema, model, Document } from "mongoose";
 
+export interface IPfpItem {
+  url: string;
+  publicId: string;
+  uploadedAt: Date;
+}
+
 export interface ISiteConfig extends Document {
   name: string;
   pfpUrl?: string;
   pfpPublicId?: string;
+  pfpHistory?: IPfpItem[];
   jobTitles: string[];
   resumeDriveUrl: string;
   statusMessage: string;
   bioSummary: string;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
+
+
+const PfpItemSchema = new Schema<IPfpItem>(
+  {
+    url: { type: String, required: true },
+    publicId: { type: String, required: true },
+    uploadedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
 
 const SiteConfigSchema = new Schema<ISiteConfig>(
   {
     name: { type: String, required: true },
     pfpUrl: { type: String },
     pfpPublicId: { type: String },
+    pfpHistory: { type: [PfpItemSchema], default: [] },
+
     jobTitles: {
       type: [String],
       required: true,

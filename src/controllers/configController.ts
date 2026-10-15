@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import { Request, Response, NextFunction } from "express";
-import { SiteConfig, ISiteConfig } from "../models/SiteConfig";
-import cloudinary from "../config/cloudinary";
+import { SiteConfig, ISiteConfig, IPfpItem } from "../models/SiteConfig";
 
 const parseJobTitles = (input: unknown): string[] | undefined => {
   if (typeof input === "string") {
@@ -99,10 +98,25 @@ export const createSiteConfig = async (
       return;
     }
 
+    const initialHistory: IPfpItem[] = [];
+    if (
+      typeof pfpUrl === "string" &&
+      pfpUrl.trim() &&
+      typeof pfpPublicId === "string" &&
+      pfpPublicId.trim()
+    ) {
+      initialHistory.push({
+        url: pfpUrl.trim(),
+        publicId: pfpPublicId.trim(),
+        uploadedAt: new Date(),
+      });
+    }
+
     const config = await SiteConfig.create({
       name: (name as string).trim(),
       ...(typeof pfpUrl === "string" ? { pfpUrl: pfpUrl.trim() } : {}),
       ...(typeof pfpPublicId === "string" ? { pfpPublicId: pfpPublicId.trim() } : {}),
+      pfpHistory: initialHistory,
       jobTitles: parsedJobTitles!,
       resumeDriveUrl: (resumeDriveUrl as string).trim(),
       statusMessage: (statusMessage as string).trim(),
@@ -154,22 +168,55 @@ export const updateSiteConfig = async (
       bioSummary: (bioSummary as string).trim(),
     };
 
-    if (typeof pfpUrl === "string") updateData.pfpUrl = pfpUrl.trim();
-    if (typeof pfpPublicId === "string") updateData.pfpPublicId = pfpPublicId.trim();
-
     const existingConfig = await SiteConfig.findOne();
 
+    // Preserve and manage pfpHistory
+    const history: IPfpItem[] = existingConfig?.pfpHistory
+      ? [...existingConfig.pfpHistory]
+      : [];
+
     if (
+      existingConfig?.pfpUrl &&
       existingConfig?.pfpPublicId &&
-      updateData.pfpPublicId &&
-      existingConfig.pfpPublicId !== updateData.pfpPublicId
+      !history.some((item) => item.publicId === existingConfig.pfpPublicId)
     ) {
-      try {
-        await cloudinary.uploader.destroy(existingConfig.pfpPublicId);
-      } catch (err) {
-        console.error("Failed to delete previous profile picture from Cloudinary:", err);
+      history.push({
+        url: existingConfig.pfpUrl,
+        publicId: existingConfig.pfpPublicId,
+        uploadedAt: existingConfig.updatedAt || new Date(),
+      });
+    }
+
+    const incomingPublicId = typeof pfpPublicId === "string" ? pfpPublicId.trim() : undefined;
+    const incomingUrl = typeof pfpUrl === "string" ? pfpUrl.trim() : undefined;
+
+    if (incomingPublicId || incomingUrl) {
+      // Check if item already exists in history (Carousel selection)
+      const matchedItem = history.find(
+        (item) =>
+          (incomingPublicId && item.publicId === incomingPublicId) ||
+          (incomingUrl && item.url === incomingUrl)
+      );
+
+      if (matchedItem) {
+        // Carousel selection from past history
+        updateData.pfpUrl = matchedItem.url;
+        updateData.pfpPublicId = matchedItem.publicId;
+      } else if (incomingPublicId && incomingUrl) {
+        // New upload or new asset: add to history and set as active
+        history.unshift({
+          url: incomingUrl,
+          publicId: incomingPublicId,
+          uploadedAt: new Date(),
+        });
+        updateData.pfpUrl = incomingUrl;
+        updateData.pfpPublicId = incomingPublicId;
+      } else if (incomingUrl) {
+        updateData.pfpUrl = incomingUrl;
       }
     }
+
+    updateData.pfpHistory = history;
 
     const updatedConfig = await SiteConfig.findOneAndUpdate({}, updateData, {
       new: true,
@@ -186,6 +233,7 @@ export const updateSiteConfig = async (
     next(error);
   }
 };
+
 
 
 
