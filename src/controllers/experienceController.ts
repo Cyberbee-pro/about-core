@@ -110,8 +110,7 @@ export const createExperience = async (
     if (uploadedMediaUrls && uploadedMediaUrls.length > 0) {
       if (positions.length === 0) {
         positions.push({
-          positionTag: "Initial Role",
-          title: "Member",
+          position: "Member",
           description: "",
           startDate: new Date(),
           isCurrent: true,
@@ -129,8 +128,7 @@ export const createExperience = async (
     if (uploadedCertUrls && uploadedCertUrls.length > 0) {
       if (positions.length === 0) {
         positions.push({
-          positionTag: "Initial Role",
-          title: "Member",
+          position: "Member",
           description: "",
           startDate: new Date(),
           isCurrent: true,
@@ -143,6 +141,7 @@ export const createExperience = async (
           ...uploadedCertUrls,
         ];
       }
+
     }
 
     const skills = parseSkills(req.body.skills);
@@ -347,8 +346,7 @@ export const addExperiencePosition = async (
       positionRaw.isCurrent === "true";
 
     const newPosition: IExperiencePosition = {
-      positionTag: positionRaw.positionTag || "Promotion",
-      title: positionRaw.title || "Role",
+      position: positionRaw.position || positionRaw.title || positionRaw.positionTag || "Role",
       description: positionRaw.description || "",
       startDate: positionRaw.startDate ? new Date(positionRaw.startDate) : new Date(),
       endDate: positionRaw.endDate ? new Date(positionRaw.endDate) : undefined,
@@ -356,6 +354,7 @@ export const addExperiencePosition = async (
       mediaUrls,
       certificateUrls,
     };
+
 
     if (isCurrent) {
       await Experience.updateMany(

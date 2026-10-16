@@ -84,13 +84,13 @@ const validExperiencePayload = {
   weight: 0,
   positions: [
     {
-      positionTag: "Initial Hire",
-      title: "Software Engineering Intern",
+      position: "Software Engineering Intern",
       description: "Worked on backend services using Node.js.",
       startDate: "2024-06-01T00:00:00.000Z",
       isCurrent: false,
     },
   ],
+
 };
 
 const mockExperienceDoc = {
@@ -165,13 +165,13 @@ describe("Experiences API Integration Tests", () => {
         "positions",
         JSON.stringify([
           {
-            positionTag: "Promotion",
-            title: "Senior Lead",
+            position: "Senior Lead",
             description: "Lead developer",
             startDate: "2024-01-01",
             isCurrent: true,
           },
         ])
+
       )
       .attach("iconUrl", fakeIconBuffer, {
         filename: "icon.png",
@@ -259,8 +259,7 @@ describe("Experiences API Integration Tests", () => {
         .set("Authorization", "Bearer test-secret-token")
         .send({
           position: {
-            positionTag: "Promotion",
-            title: "Tech Lead",
+            position: "Tech Lead",
             description: "Promoted to lead",
             startDate: "2024-01-01",
             isCurrent: true,
@@ -277,8 +276,7 @@ describe("Experiences API Integration Tests", () => {
         ...validExperiencePayload,
         positions: [
           {
-            positionTag: "Initial Role",
-            title: "Junior Dev",
+            position: "Junior Dev",
             description: "Entry role",
             startDate: new Date("2023-01-01"),
             isCurrent: true,
@@ -288,12 +286,12 @@ describe("Experiences API Integration Tests", () => {
       (Experience.findOne as jest.Mock).mockResolvedValue(existingDoc);
 
       const newPositionPayload = {
-        positionTag: "Promotion",
-        title: "Senior Dev",
+        position: "Senior Dev",
         description: "Promoted to Senior",
         startDate: "2024-01-01T00:00:00.000Z",
         isCurrent: true,
       };
+
 
       const expectedUpdatedDoc = {
         ...existingDoc,
@@ -326,9 +324,10 @@ describe("Experiences API Integration Tests", () => {
         expect.objectContaining({
           $push: expect.objectContaining({
             positions: expect.objectContaining({
-              title: "Senior Dev",
+              position: "Senior Dev",
               isCurrent: true,
             }),
+
           }),
         }),
         expect.any(Object)
@@ -342,8 +341,7 @@ describe("Experiences API Integration Tests", () => {
         positions: [
           ...mockExperienceDoc.positions,
           {
-            positionTag: "Lead Promotion",
-            title: "Tech Lead",
+            position: "Tech Lead",
             description: "Leading frontend",
             startDate: new Date("2024-06-01"),
             isCurrent: true,
@@ -367,13 +365,13 @@ describe("Experiences API Integration Tests", () => {
         .field(
           "position",
           JSON.stringify({
-            positionTag: "Lead Promotion",
-            title: "Tech Lead",
+            position: "Tech Lead",
             description: "Leading frontend",
             startDate: "2024-06-01",
             isCurrent: true,
           })
         )
+
         .attach("mediaUrls", fakeMediaBuffer, {
           filename: "lead_demo.png",
           contentType: "image/png",
