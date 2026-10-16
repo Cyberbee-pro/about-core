@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import { Request, Response, NextFunction } from "express";
-import { SiteConfig, ISiteConfig, IPfpItem } from "../models/SiteConfig";
+import { SiteConfig, IPfpItem } from "../models/SiteConfig";
 
 const parseJobTitles = (input: unknown): string[] | undefined => {
   if (typeof input === "string") {
@@ -98,6 +98,14 @@ export const createSiteConfig = async (
       return;
     }
 
+    if ((pfpUrl && !pfpPublicId) || (!pfpUrl && pfpPublicId)) {
+      res.status(400).json({
+        success: false,
+        message: "Both pfpUrl and pfpPublicId must be provided together",
+      });
+      return;
+    }
+
     const initialHistory: IPfpItem[] = [];
     if (
       typeof pfpUrl === "string" &&
@@ -160,7 +168,7 @@ export const updateSiteConfig = async (
       return;
     }
 
-    const updateData: Partial<ISiteConfig> = {
+    const setFields: Record<string, unknown> = {
       name: (name as string).trim(),
       jobTitles: parsedJobTitles!,
       resumeDriveUrl: (resumeDriveUrl as string).trim(),
@@ -168,61 +176,109 @@ export const updateSiteConfig = async (
       bioSummary: (bioSummary as string).trim(),
     };
 
-    const existingConfig = await SiteConfig.findOne();
+    const hasUploadedFile = Boolean(
+      req.files &&
+        ((Array.isArray((req.files as Record<string, unknown[]>).pfp) &&
+          (req.files as Record<string, unknown[]>).pfp.length > 0) ||
+          (Array.isArray((req.files as Record<string, unknown[]>).pfpUrl) &&
+            (req.files as Record<string, unknown[]>).pfpUrl.length > 0) ||
+          (Array.isArray((req.files as Record<string, unknown[]>).image) &&
+            (req.files as Record<string, unknown[]>).image.length > 0))
+    );
 
-    // Preserve and manage pfpHistory
-    const history: IPfpItem[] = existingConfig?.pfpHistory
+    const incomingPublicId = typeof pfpPublicId === "string" ? pfpPublicId.trim() : undefined;
+    const incomingUrl = typeof pfpUrl === "string" ? pfpUrl.trim() : undefined;
+
+    const existingConfig = await SiteConfig.findOne();
+    const existingHistory: IPfpItem[] = existingConfig?.pfpHistory
       ? [...existingConfig.pfpHistory]
       : [];
 
     if (
       existingConfig?.pfpUrl &&
       existingConfig?.pfpPublicId &&
-      !history.some((item) => item.publicId === existingConfig.pfpPublicId)
+      !existingHistory.some((item) => item.publicId === existingConfig.pfpPublicId)
     ) {
-      history.push({
+      existingHistory.push({
         url: existingConfig.pfpUrl,
         publicId: existingConfig.pfpPublicId,
         uploadedAt: existingConfig.updatedAt || new Date(),
       });
     }
 
-    const incomingPublicId = typeof pfpPublicId === "string" ? pfpPublicId.trim() : undefined;
-    const incomingUrl = typeof pfpUrl === "string" ? pfpUrl.trim() : undefined;
+    let newHistoryItem: IPfpItem | undefined;
 
-    if (incomingPublicId || incomingUrl) {
-      // Check if item already exists in history (Carousel selection)
-      const matchedItem = history.find(
-        (item) =>
-          (incomingPublicId && item.publicId === incomingPublicId) ||
-          (incomingUrl && item.url === incomingUrl)
-      );
-
-      if (matchedItem) {
-        // Carousel selection from past history
-        updateData.pfpUrl = matchedItem.url;
-        updateData.pfpPublicId = matchedItem.publicId;
-      } else if (incomingPublicId && incomingUrl) {
-        // New upload or new asset: add to history and set as active
-        history.unshift({
+    if (hasUploadedFile) {
+      if (incomingUrl && incomingPublicId) {
+        newHistoryItem = {
           url: incomingUrl,
           publicId: incomingPublicId,
           uploadedAt: new Date(),
-        });
-        updateData.pfpUrl = incomingUrl;
-        updateData.pfpPublicId = incomingPublicId;
-      } else if (incomingUrl) {
-        updateData.pfpUrl = incomingUrl;
+        };
+        setFields.pfpUrl = incomingUrl;
+        setFields.pfpPublicId = incomingPublicId;
+      }
+    } else if (incomingPublicId || incomingUrl) {
+      if (incomingPublicId && incomingUrl) {
+        // Strict matching: both fields must match the exact same item in history
+        const matchedItem = existingHistory.find(
+          (item) => item.publicId === incomingPublicId && item.url === incomingUrl
+        );
+        if (!matchedItem) {
+          res.status(400).json({
+            success: false,
+            message: "Selected profile picture does not match history or is mismatched",
+          });
+          return;
+        }
+        setFields.pfpUrl = matchedItem.url;
+        setFields.pfpPublicId = matchedItem.publicId;
+      } else if (incomingPublicId && !incomingUrl) {
+        const matchedItem = existingHistory.find(
+          (item) => item.publicId === incomingPublicId
+        );
+        if (!matchedItem) {
+          res.status(400).json({
+            success: false,
+            message: "Profile picture publicId not found in history",
+          });
+          return;
+        }
+        setFields.pfpUrl = matchedItem.url;
+        setFields.pfpPublicId = matchedItem.publicId;
+      } else if (!incomingPublicId && incomingUrl) {
+        const matchedItem = existingHistory.find((item) => item.url === incomingUrl);
+        if (!matchedItem) {
+          res.status(400).json({
+            success: false,
+            message: "Raw profile picture URL without valid publicId is not allowed",
+          });
+          return;
+        }
+        setFields.pfpUrl = matchedItem.url;
+        setFields.pfpPublicId = matchedItem.publicId;
       }
     }
 
-    updateData.pfpHistory = history;
+    const updateOps: Record<string, unknown> = {
+      $set: setFields,
+    };
 
-    const updatedConfig = await SiteConfig.findOneAndUpdate({}, updateData, {
+    if (newHistoryItem) {
+      updateOps.$push = {
+        pfpHistory: {
+          $each: [newHistoryItem],
+          $position: 0,
+        },
+      };
+    }
+
+    const updatedConfig = await SiteConfig.findOneAndUpdate({}, updateOps, {
       new: true,
       upsert: true,
       runValidators: true,
     });
+
 
     res.status(200).json({
       success: true,

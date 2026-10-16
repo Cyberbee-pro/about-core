@@ -472,7 +472,7 @@ describe("about-core API & Middleware Integration Tests", () => {
     it("PUT /api/v1/config parses stringified jobTitles from multipart requests with all required fields", async () => {
       (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
       (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
-        Promise.resolve(update)
+        Promise.resolve(update.$set || update)
       );
 
       const res = await request(app)
@@ -487,11 +487,13 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(200);
       expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
         {},
-        expect.objectContaining({
-          name: "Shibraj Das",
-          jobTitles: ["Core Engineer", "Graphics Dev"],
-          resumeDriveUrl: "https://drive.google.com/resume",
-        }),
+        {
+          $set: expect.objectContaining({
+            name: "Shibraj Das",
+            jobTitles: ["Core Engineer", "Graphics Dev"],
+            resumeDriveUrl: "https://drive.google.com/resume",
+          }),
+        },
         expect.any(Object)
       );
     });
@@ -516,7 +518,14 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
       (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
-        Promise.resolve({ ...existingConfig, ...update })
+        Promise.resolve({
+          ...existingConfig,
+          ...(update.$set || {}),
+          pfpHistory: [
+            ...(update.$push?.pfpHistory?.$each || []),
+            ...existingConfig.pfpHistory,
+          ],
+        })
       );
 
       const fakeImage = Buffer.from("fake-avatar-data");
@@ -547,21 +556,26 @@ describe("about-core API & Middleware Integration Tests", () => {
       // Verify previous image was NOT deleted from Cloudinary
       expect(mockDestroy).not.toHaveBeenCalled();
 
-      // Verify update in database preserves history and adds new avatar
+      // Verify update in database preserves history and adds new avatar via atomic operators
       expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
         {},
-        expect.objectContaining({
-          pfpUrl: expect.stringContaining("portfolio/site_config/test_file"),
-          pfpPublicId: expect.stringContaining("portfolio/site_config/pfp_"),
-          pfpHistory: expect.arrayContaining([
-            expect.objectContaining({
-              publicId: "portfolio/site_config/pfp_old",
-            }),
-            expect.objectContaining({
-              publicId: expect.stringContaining("portfolio/site_config/pfp_"),
-            }),
-          ]),
-        }),
+        {
+          $set: expect.objectContaining({
+            pfpUrl: expect.stringContaining("portfolio/site_config/test_file"),
+            pfpPublicId: expect.stringContaining("portfolio/site_config/pfp_"),
+          }),
+          $push: {
+            pfpHistory: {
+              $each: [
+                expect.objectContaining({
+                  url: expect.stringContaining("portfolio/site_config/test_file"),
+                  publicId: expect.stringContaining("portfolio/site_config/pfp_"),
+                }),
+              ],
+              $position: 0,
+            },
+          },
+        },
         expect.any(Object)
       );
     });
@@ -591,7 +605,7 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
       (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
-        Promise.resolve({ ...existingConfig, ...update })
+        Promise.resolve({ ...existingConfig, ...(update.$set || {}) })
       );
 
       const res = await request(app)
@@ -611,16 +625,154 @@ describe("about-core API & Middleware Integration Tests", () => {
       // Verify active pfp was switched to selected past history item
       expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
         {},
-        expect.objectContaining({
-          pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_past",
-          pfpPublicId: "portfolio/site_config/pfp_past",
-          pfpHistory: existingConfig.pfpHistory,
-        }),
+        {
+          $set: expect.objectContaining({
+            pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_past",
+            pfpPublicId: "portfolio/site_config/pfp_past",
+          }),
+        },
         expect.any(Object)
       );
 
       // Verify no Cloudinary destroy was triggered
       expect(mockDestroy).not.toHaveBeenCalled();
+    });
+
+    it("PUT /api/v1/config rejects selection when pfpPublicId and pfpUrl are mismatched", async () => {
+      const existingConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeDriveUrl: "https://drive.google.com/resume",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+        pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+        pfpPublicId: "portfolio/site_config/pfp_1",
+        pfpHistory: [
+          {
+            url: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+            publicId: "portfolio/site_config/pfp_1",
+            uploadedAt: new Date(),
+          },
+          {
+            url: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_2",
+            publicId: "portfolio/site_config/pfp_2",
+            uploadedAt: new Date(),
+          },
+        ],
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          name: "Shibraj Das",
+          jobTitles: ["Full-Stack Developer"],
+          resumeDriveUrl: "https://drive.google.com/resume",
+          statusMessage: "Building systems...",
+          bioSummary: "Full stack engineer",
+          pfpPublicId: "portfolio/site_config/pfp_1",
+          pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_2",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Selected profile picture does not match history or is mismatched");
+    });
+
+    it("PUT /api/v1/config rejects selection when raw pfpUrl is not found in pfpHistory", async () => {
+      const existingConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeDriveUrl: "https://drive.google.com/resume",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+        pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+        pfpPublicId: "portfolio/site_config/pfp_1",
+        pfpHistory: [
+          {
+            url: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+            publicId: "portfolio/site_config/pfp_1",
+            uploadedAt: new Date(),
+          },
+        ],
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          name: "Shibraj Das",
+          jobTitles: ["Full-Stack Developer"],
+          resumeDriveUrl: "https://drive.google.com/resume",
+          statusMessage: "Building systems...",
+          bioSummary: "Full stack engineer",
+          pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/unknown_pfp",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Raw profile picture URL without valid publicId is not allowed");
+    });
+
+    it("PUT /api/v1/config rejects selection when pfpPublicId is not found in pfpHistory", async () => {
+      const existingConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeDriveUrl: "https://drive.google.com/resume",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+        pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+        pfpPublicId: "portfolio/site_config/pfp_1",
+        pfpHistory: [
+          {
+            url: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+            publicId: "portfolio/site_config/pfp_1",
+            uploadedAt: new Date(),
+          },
+        ],
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          name: "Shibraj Das",
+          jobTitles: ["Full-Stack Developer"],
+          resumeDriveUrl: "https://drive.google.com/resume",
+          statusMessage: "Building systems...",
+          bioSummary: "Full stack engineer",
+          pfpPublicId: "portfolio/site_config/unknown_id",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Profile picture publicId not found in history");
+    });
+
+    it("POST /api/v1/config rejects when only one of pfpUrl or pfpPublicId is provided", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+
+      const res = await request(app)
+        .post("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          name: "Shibraj Das",
+          jobTitles: ["Full-Stack Developer"],
+          resumeDriveUrl: "https://drive.google.com/resume",
+          statusMessage: "Building systems...",
+          bioSummary: "Full stack engineer",
+          pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Both pfpUrl and pfpPublicId must be provided together");
     });
   });
 
