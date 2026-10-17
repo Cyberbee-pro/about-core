@@ -45,20 +45,16 @@ app.use(
       // Allow non-browser requests (Postman, curl, server-to-server)
       if (!origin) return callback(null, true);
 
-      const rawEnv = process.env.CLIENT_ORIGIN || "*";
+      const rawEnv = process.env.CLIENT_ORIGIN || "";
       const allowedOrigins = rawEnv
         .split(",")
-        .map((o) => o.trim().replace(/\/+$/, ""));
-      
+        .map((o) => o.trim().replace(/\/+$/, ""))
+        .filter(Boolean);
+
       const cleanOrigin = origin.trim().replace(/\/+$/, "");
 
-      // Debug logs for Vercel deployment telemetry
-      console.log("[CORS Debug] Incoming Origin Header:", JSON.stringify(origin));
-      console.log("[CORS Debug] Cleaned Incoming Origin:", JSON.stringify(cleanOrigin));
-      console.log("[CORS Debug] Parsed Allowed List:", JSON.stringify(allowedOrigins));
-
-      if (allowedOrigins.includes("*") || allowedOrigins.includes(cleanOrigin)) {
-        callback(null, true);
+      if (allowedOrigins.includes(cleanOrigin)) {
+        callback(null, cleanOrigin);
       } else {
         console.warn(`[CORS Blocked] Origin "${origin}" not found in allowed list.`);
         callback(new Error("Not allowed by CORS"));
