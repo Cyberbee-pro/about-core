@@ -1,275 +1,994 @@
-# about-core API and frontend handoff
+# about-core API and Frontend Handoff Specification
 
-This document is for developers building or maintaining the portfolio's public viewer and admin frontends against `about-core`. It describes the API implemented in this repository. The repository contains the backend only; frontend routes, components, and deployment configuration live elsewhere.
+This document serves as the authoritative, comprehensive API reference for developers building or maintaining the portfolio's public viewer (web/Android) and administrative frontends against `about-core`. It reflects the full implemented backend surface including all routes, parameters, data models, file uploads, authentication rules, and error behaviors.
 
-## What this service does
+---
 
-`about-core` is an Express + strict TypeScript API backed by MongoDB/Mongoose. It supplies project content and site configuration to the public portfolio and Android client, accepts protected CMS changes from the admin UI, stores uploaded media in Cloudinary, and records completed HTTP requests in MongoDB. Vercel's `api/index.ts` exports the Express app; local development starts through `src/server.ts`.
+## 1. Architecture & Service Overview
 
-The main flow is:
+`about-core` is an Express + strict TypeScript REST API backed by MongoDB/Mongoose and Cloudinary. It provides portfolio content and configuration to client applications, accepts authenticated administrative mutations, handles multi-format file uploads (images, videos, and raw 3D models), and records request telemetry in MongoDB.
 
-1. CORS, JSON/form parsers, and request logging middleware run for every request.
-2. Health checks or `/api/v1` routes handle the request.
-3. Admin mutations pass `authMiddleware`; uploads additionally pass Multer and Cloudinary processing.
-4. Controllers read/write MongoDB and return JSON. Errors flow through centralized 404/error handlers.
-5. On response finish, logging middleware attempts to save request metadata and status in `LogEntry`. Logging failures do not replace the response.
+### High-Level Request Pipeline
 
-## Base URL and conventions
-
-Use the deployed API origin configured for the frontend, followed by `/api/v1`. Local default is `http://localhost:5000`.
-
-Successful resource responses generally use `{ "success": true, "data": ... }`; list responses also include `count`. Failures use `{ "success": false, "message": "..." }`, with validation errors optionally in `errors`. Dates serialize as ISO strings. Project IDs are MongoDB ObjectIds and project slugs are stable URL-safe strings.
-
-Public reads are intended for viewer clients. Admin reads/mutations should be called by the admin app with the admin credential. Do not embed `ADMIN_SECRET` in a publicly delivered viewer bundle.
-
-## Endpoint reference
-
-### Health & Dashboard
-
-| Method and path | Access | Purpose / response |
-| --- | --- | --- |
-| `GET /`, `GET /index.html` | Public | Evangelion / MAGI System (EVA-0) styled HTML Health Dashboard served statically from `public/` (Vercel Edge CDN in production, Express static in development). |
-| `GET /health` | Public | Liveness: `{ status, uptime, timestamp }`. |
-| `GET /api/v1/health` | Public | Pure JSON service health metadata: `{ status, service, version, timestamp, dbStatus, memoryUsageMB, nodeVersion, env }`. |
-
-### Projects
-
-| Method and path | Access | Purpose |
-| --- | --- | --- |
-| `GET /api/v1/projects` | Public | List visible projects; accepts `category`, `featured`, and `tag` query filters. |
-| `GET /api/v1/projects/categories` | Public | Distinct categories from visible projects. Register this literal path before slug matching in clients. |
-| `GET /api/v1/projects/:slug` | Public, with admin-auth bypass for invisible items | Fetch one project by slug. Invisible projects return 404 to unauthenticated callers. |
-| `POST /api/v1/projects` | Admin | Create a project. JSON or multipart form; multipart can upload media. |
-| `PUT /api/v1/projects/:id` | Admin | Update supplied project fields by MongoDB ObjectId. Omitted fields remain unchanged. |
-| `DELETE /api/v1/projects/:id` | Admin | Delete by MongoDB ObjectId. This does not delete Cloudinary assets. |
-| `POST /api/v1/projects/:slug/versions` | Admin | Append a version to a project found by slug. Multipart upload fields are accepted. |
-
-#### List and detail behavior
-
-`GET /projects` excludes records whose status is `invisible`, sorts featured first and then by `startDate` descending, and returns:
-
-```json
-{ "success": true, "count": 1, "data": [{ "_id": "...", "title": "...", "slug": "..." }] }
+```
+HTTP Request
+  │
+  ▼
+[cors() - Dynamic Multi-Origin Validator from CLIENT_ORIGIN]
+  │
+  ▼
+[express.json() & express.urlencoded()]
+  │
+  ▼
+[express.static('public')]  ──► Evangelion / MAGI Dashboard (GET /, GET /index.html)
+  │
+  ▼
+[dbLoggerMiddleware]        ──► Intercepts all requests, persists metadata to LogEntry
+  │
+  ▼
+[Routing Layer]             ──► /health, /api/v1/*
+  │
+  ├── [authMiddleware]       ──► Protected routes verify ADMIN_SECRET
+  ├── [uploadMiddleware]     ──► Multer memory storage + Cloudinary upload streaming
+  └── [Controllers]          ──► Mongoose queries & business logic
+  │
+  ▼
+[notFoundMiddleware (404)]  ──► Unmatched endpoints
+  │
+  ▼
+[errorMiddleware (500/400/403/409)] ──► Centralized error, CORS, CastError, and Duplicate Key handling
 ```
 
-Filters:
+---
 
-- `category=<value>`: lowercased and trimmed exact category match.
-- `featured=true|false`: when present, matches the boolean interpretation (`true` only matches the string `true`).
-- `tag=<value>`: lowercased and trimmed tag match.
+## 2. Base URL & Common Conventions
 
-There is no pagination on the project list currently. Categories returns `{ success, count, data: string[] }`, also omitting invisible projects. Detail returns `{ success, data: project }`. A missing slug, including an invisible project for a public caller, returns 404. The detail route itself does not require auth; when a valid admin token is supplied the middleware marks the request so an invisible project can be fetched.
+- **Base URL**: Deploy domain origin followed by `/api/v1` (e.g., `https://api.yourdomain.com/api/v1` or `http://localhost:5000/api/v1`).
+- **CORS & Allowed Origins**:
+  - Validated via a dynamic validator function. Requests without an `Origin` header (such as curl, mobile apps, Postman, or server-to-server) are allowed.
+  - Allowed origins are parsed from the `CLIENT_ORIGIN` environment variable (comma-separated, e.g., `http://localhost:3000,https://core.shibraj.dev,https://client.shibraj.dev,https://shibraj.dev`).
+  - Defaults to `["https://core.shibraj.dev", "https://client.shibraj.dev", "https://shibraj.dev", "http://localhost:3000"]` if `CLIENT_ORIGIN` is not configured.
+  - Wildcard `*` in `CLIENT_ORIGIN` dynamically reflects the requesting origin with credentials enabled.
+  - Trailing slashes in origins are normalized automatically.
+  - **Allowed Methods**: `GET`, `POST`, `PUT`, `DELETE`, `OPTIONS`.
+  - **Allowed Headers**: `Content-Type`, `Authorization`, `x-admin-token`.
+  - **Credentials**: `true` (`Access-Control-Allow-Credentials: true`).
+  - **Rejected Origins**: Return HTTP `403 Forbidden` with `{ "success": false, "message": "Not allowed by CORS" }`.
+- **Response Format**: All responses are JSON.
+  - **Success (Single Resource)**:
+    ```json
+    { "success": true, "data": { ... } }
+    ```
+  - **Success (List / Collection)**:
+    ```json
+    { "success": true, "count": 2, "data": [ ... ] }
+    ```
+  - **Success with Mutation Message**:
+    ```json
+    { "success": true, "message": "...", "data": { ... } }
+    ```
+  - **Paginated Collection** (e.g., Logs):
+    ```json
+    { "success": true, "count": 50, "total": 120, "page": 1, "totalPages": 3, "data": [ ... ] }
+    ```
+  - **Error Response**:
+    ```json
+    { "success": false, "message": "Descriptive error message", "errors": { ... } }
+    ```
+- **Identifiers**: Resources are identified by MongoDB `ObjectId` (24 hex characters) or unique URL-safe `slug` strings (for projects) and lowercase strings (for experience organizations).
+- **Date Format**: ISO 8601 strings (e.g., `"2026-10-17T09:42:00.000Z"`).
 
-#### Create/update project fields
+---
 
-The `Project` document includes:
+## 3. Complete Endpoint Reference Table
 
-- `title` (required string), `slug` (required unique string; create derives it from title when omitted), `category` (required, lowercased/trimmed), `description` (required string), `image` (required URL or uploaded image URL).
-- `featured` boolean (default false), `tags` string array, `startDate` (defaults to now on create), optional `endDate`.
-- `status`: `invisible`, `planning`, `work_in_progress`, `delay_hold`, or `active` (default `planning`). All except `invisible` appear in public list/category results.
-- `contributors`: `{ name, profilePicUrl, profileLink? }[]`.
-- `socialLinks`: `{ platform, url }[]`.
-- Optional `videoDemo`, `deployedLink`, `githubLink`.
-- Optional `threeDModel`: `{ fileUrl, initialRotation: [number, number, number], enableExplodedView }`.
-- `versions`: `{ versionTag, releaseDate, changelog: string[], image?, videoDemo?, demoUrl?, threeDFileUrl?, isLatest }[]`.
-- Mongoose timestamps `createdAt` and `updatedAt`.
+| Method | Path | Access | Content-Type | Summary / Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Health & Dashboard** | | | | |
+| `GET` | `/` or `/index.html` | Public | `text/html` | Evangelion / MAGI System (EVA-0) styled HTML Health Dashboard. |
+| `GET` | `/health` | Public | `application/json` | Basic service liveness check (`status`, `uptime`, `timestamp`). |
+| `GET` | `/api/v1/health` | Public | `application/json` | Pure JSON service telemetry: DB state, heap memory, version, and env. |
+| **Projects** | | | | |
+| `GET` | `/api/v1/projects` | Public | `application/json` | List visible projects (`status != 'invisible'`). Supports category, featured, and tag filters. |
+| `GET` | `/api/v1/projects/categories` | Public | `application/json` | Distinct categories across all visible projects. |
+| `GET` | `/api/v1/projects/:slug` | Public* | `application/json` | Get single project by slug. Invisible items return 404 unless admin authenticated. |
+| `POST` | `/api/v1/projects` | Admin | JSON / Multipart | Create a new project. Accepts file uploads for `image`, `videoDemo`, and `threeDModel`. |
+| `PUT` | `/api/v1/projects/:id` | Admin | JSON / Multipart | Update project fields by MongoDB ObjectId. Accepts file uploads. |
+| `DELETE` | `/api/v1/projects/:id` | Admin | `application/json` | Delete project by MongoDB ObjectId. |
+| `POST` | `/api/v1/projects/:slug/versions` | Admin | JSON / Multipart | Append a version release to a project found by slug. Accepts file uploads. |
+| **Skills** | | | | |
+| `GET` | `/api/v1/skills` | Public | `application/json` | List all skills sorted by `{ weight: 1, name: 1 }`. |
+| `GET` | `/api/v1/skills/:id` | Public | `application/json` | Get single skill by MongoDB ObjectId. |
+| `POST` | `/api/v1/skills` | Admin | JSON / Multipart | Create a skill. Accepts image upload on `logoUrl`. Unique name. |
+| `PUT` | `/api/v1/skills/:id` | Admin | JSON / Multipart | Update skill by MongoDB ObjectId. Accepts image upload on `logoUrl`. |
+| `DELETE` | `/api/v1/skills/:id` | Admin | `application/json` | Delete skill by MongoDB ObjectId. |
+| **Certificates** | | | | |
+| `GET` | `/api/v1/certificates` | Public | `application/json` | List all certificates sorted by `{ weight: 1, title: 1 }`. |
+| `GET` | `/api/v1/certificates/:id` | Public | `application/json` | Get single certificate by MongoDB ObjectId. |
+| `POST` | `/api/v1/certificates` | Admin | JSON / Multipart | Create a certificate. Accepts media upload on `mediaUrl`. Unique title. |
+| `PUT` | `/api/v1/certificates/:id` | Admin | JSON / Multipart | Update certificate by MongoDB ObjectId. Accepts media upload on `mediaUrl`. |
+| `DELETE` | `/api/v1/certificates/:id` | Admin | `application/json` | Delete certificate by MongoDB ObjectId. |
+| **Achievements** | | | | |
+| `GET` | `/api/v1/achievements` | Public | `application/json` | List all achievements sorted by `{ weight: 1, title: 1 }`. |
+| `GET` | `/api/v1/achievements/:id` | Public | `application/json` | Get single achievement by MongoDB ObjectId. |
+| `POST` | `/api/v1/achievements` | Admin | `application/json` | Create an achievement. Unique title. |
+| `PUT` | `/api/v1/achievements/:id` | Admin | `application/json` | Update achievement by MongoDB ObjectId. |
+| `DELETE` | `/api/v1/achievements/:id` | Admin | `application/json` | Delete achievement by MongoDB ObjectId. |
+| **Experiences** | | | | |
+| `GET` | `/api/v1/experiences` | Public | `application/json` | List all experience organizations sorted by `{ weight: 1, organization: 1 }`. |
+| `GET` | `/api/v1/experiences/:id` | Public | `application/json` | Get single experience by MongoDB ObjectId. |
+| `POST` | `/api/v1/experiences` | Admin | JSON / Multipart | Create an experience organization. Accepts uploads for `iconUrl`, `mediaUrls`, `certificateUrls`. |
+| `POST` | `/api/v1/experiences/:organization/positions` | Admin | JSON / Multipart | Append a promotion/role position to an organization. Supports file uploads and single-truth `isCurrent`. |
+| `PUT` | `/api/v1/experiences/:id` | Admin | JSON / Multipart | Update experience by MongoDB ObjectId. Accepts uploads. |
+| `DELETE` | `/api/v1/experiences/:id` | Admin | `application/json` | Delete experience by MongoDB ObjectId. |
+| **Site Configuration** | | | | |
+| `GET` | `/api/v1/config` | Public | `application/json` | Get global site config (name, profile picture, history, job titles, bio, resume). |
+| `POST` | `/api/v1/config` | Admin | JSON / Multipart | Create initial site config. Accepts image upload on `pfp`, `pfpUrl`, or `image`. |
+| `PUT` | `/api/v1/config` | Admin | JSON / Multipart | Update or upsert site config. Handles new avatar uploads (appends to history) or reusing historical avatars. |
+| **Admin Request Logs** | | | | |
+| `GET` | `/api/v1/admin/logs` | Admin | `application/json` | Query and filter persisted HTTP request logs with date/level filters and pagination. |
 
-For JSON, send arrays/objects as JSON values. For multipart form data, send nested arrays/objects as JSON-encoded strings (e.g. `contributors`, `socialLinks`, `versions`, `threeDModel`). `tags` may be a JSON array string or comma-separated string. The create controller requires title, image, category, and description. On update, only recognized supplied fields are changed; send an empty string for `endDate` to clear it. Update takes the database `_id`, while detail and version creation use `slug`.
+---
 
-#### Version creation
+## 4. Detailed API Specifications by Resource
 
-Send `versionTag` (required; e.g. `v1.0.0`), and optional `releaseDate`, `changelog` array, `image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `isLatest`; `threeDModel` may alternatively contain `fileUrl`. If `isLatest` is true, existing versions are marked not latest before append. The route appends rather than replacing a version. A multipart model upload is processed into `threeDModel.fileUrl`; the controller uses that URL as `threeDFileUrl` if the explicit field was not supplied. Response is `201 { success, message, data: updatedProject }`.
+### 4.1 Health & Dashboard
 
-### Skills
+#### `GET /` and `GET /index.html`
+- **Access**: Public
+- **Description**: Serves static HTML Evangelion MAGI system dashboard directly from `public/index.html`.
 
-| Method and path | Access | Purpose |
-| --- | --- | --- |
-| `GET /api/v1/skills` | Public | List all skills, sorted by `{ weight: 1, name: 1 }`. Returns `{ success, count, data: Skill[] }`. |
-| `GET /api/v1/skills/:id` | Public | Fetch one skill by MongoDB ObjectId. Missing ID returns 404. |
-| `POST /api/v1/skills` | Admin | Create a skill. Duplicate name returns 409 Conflict. Returns `201 { success, data: Skill }`. |
-| `PUT /api/v1/skills/:id` | Admin | Update skill by MongoDB ObjectId. Duplicate name check excludes current ID. Returns 404 if missing, 200 on success. |
-| `DELETE /api/v1/skills/:id` | Admin | Delete skill by MongoDB ObjectId. Returns 404 if missing, 200 on success. |
+#### `GET /health`
+- **Access**: Public
+- **Response**: `200 OK`
+```json
+{
+  "status": "healthy",
+  "uptime": 124.52,
+  "timestamp": "2026-10-17T09:42:00.000Z"
+}
+```
 
-Fields:
-- `name` (required unique string, trimmed).
-- `logoUrl` (required string; Cloudinary path e.g. `portfolio/skills/{name}/{name}.jpg`).
-- `featured` (boolean, default `false`).
-- `weight` (number, default `0`).
+#### `GET /api/v1/health`
+- **Access**: Public
+- **Response**: `200 OK`
+```json
+{
+  "status": "healthy",
+  "service": "about-core",
+  "version": "1.0.0",
+  "timestamp": "2026-10-17T09:42:00.000Z",
+  "dbStatus": "connected",
+  "memoryUsageMB": 38,
+  "nodeVersion": "v20.18.0",
+  "env": "production"
+}
+```
 
-### Certificates
+---
 
-| Method and path | Access | Purpose |
-| --- | --- | --- |
-| `GET /api/v1/certificates` | Public | List all certificates, sorted by `{ weight: 1, title: 1 }`. Returns `{ success, count, data: Certificate[] }`. |
-| `GET /api/v1/certificates/:id` | Public | Fetch one certificate by MongoDB ObjectId. Missing ID returns 404. |
-| `POST /api/v1/certificates` | Admin | Create a certificate. Duplicate title returns 409 Conflict. Returns `201 { success, data: Certificate }`. |
-| `PUT /api/v1/certificates/:id` | Admin | Update certificate by MongoDB ObjectId. Returns 404 if missing, 409 if duplicate title, 200 on success. |
-| `DELETE /api/v1/certificates/:id` | Admin | Delete certificate by MongoDB ObjectId. Returns 404 if missing, 200 on success. |
+### 4.2 Projects (`/api/v1/projects`)
 
-Fields:
-- `title` (required string, trimmed).
-- `description` (required string).
-- `link` (optional string URL).
-- `mediaUrl` (required string; Cloudinary path e.g. `portfolio/certificate/{org_title_year}.jpg`).
-- `organization` (required string, trimmed).
-- `weight` (number, default `0`).
+#### `GET /api/v1/projects`
+- **Access**: Public
+- **Query Parameters**:
+  - `category` (optional, string): Case-insensitive exact match.
+  - `featured` (optional, `"true"` | `"false"`): Strict boolean comparison (`true` matches only `"true"`).
+  - `tag` (optional, string): Case-insensitive match against elements in `tags`.
+- **Sorting**: Featured items first (`featured: -1`), then newest start date descending (`startDate: -1`).
+- **Behavior**: Excludes all projects where `status == "invisible"`.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "_id": "670fa123456789abcdef0001",
+      "title": "Portfolio Core",
+      "slug": "portfolio-core",
+      "category": "backend",
+      "description": "Headless portfolio CMS API",
+      "featured": true,
+      "tags": ["express", "typescript", "mongodb"],
+      "skills": ["670fa123456789abcdef0010"],
+      "startDate": "2026-01-01T00:00:00.000Z",
+      "status": "active",
+      "image": "https://res.cloudinary.com/.../image_1.jpg",
+      "videoDemo": "https://res.cloudinary.com/.../video_1.mp4",
+      "contributors": [
+        {
+          "name": "Cyberbee",
+          "profilePicUrl": "https://res.cloudinary.com/.../pfp.jpg",
+          "profileLink": "https://github.com/cyberbee"
+        }
+      ],
+      "socialLinks": [
+        { "platform": "GitHub", "url": "https://github.com/cyberbee/about-core" }
+      ],
+      "threeDModel": {
+        "fileUrl": "https://res.cloudinary.com/.../model_1.glb",
+        "initialRotation": [0, 0, 0],
+        "enableExplodedView": false
+      },
+      "versions": [],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
+```
 
-### Achievements
+#### `GET /api/v1/projects/categories`
+- **Access**: Public
+- **Description**: Returns all distinct category names among visible projects.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "count": 3,
+  "data": ["backend", "frontend", "mobile"]
+}
+```
 
-| Method and path | Access | Purpose |
-| --- | --- | --- |
-| `GET /api/v1/achievements` | Public | List all achievements, sorted by `{ weight: 1, title: 1 }`. Returns `{ success, count, data: Achievement[] }`. |
-| `GET /api/v1/achievements/:id` | Public | Fetch one achievement by MongoDB ObjectId. Missing ID returns 404. |
-| `POST /api/v1/achievements` | Admin | Create an achievement. Duplicate title returns 409 Conflict. Returns `201 { success, data: Achievement }`. |
-| `PUT /api/v1/achievements/:id` | Admin | Update achievement by MongoDB ObjectId. Returns 404 if missing, 409 if duplicate title, 200 on success. |
-| `DELETE /api/v1/achievements/:id` | Admin | Delete achievement by MongoDB ObjectId. Returns 404 if missing, 200 on success. |
+#### `GET /api/v1/projects/:slug`
+- **Access**: Public (with admin bypass)
+- **Path Parameters**: `:slug` (string, case-insensitive)
+- **Auth Bypass**: If project has `status: "invisible"`:
+  - Calling without admin auth returns `404 Not Found`.
+  - Calling with valid `Authorization: Bearer <ADMIN_SECRET>` or `x-admin-token: <ADMIN_SECRET>` returns `200 OK` with the project document.
+- **Response**: `200 OK` `{ "success": true, "data": { ...project } }`
 
-Fields:
-- `title` (required string, trimmed).
-- `date` (required string, e.g. `"Month Year"`).
-- `detail` (required string).
-- `weight` (number, default `0`).
+#### `POST /api/v1/projects`
+- **Access**: Admin (Requires `ADMIN_SECRET`)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Fields**:
+  - `image` (max 1 file, image MIME): Uploaded to `portfolio/projects/<slug>/images/<slug>_<n>`
+  - `videoDemo` (max 1 file, video MIME): Uploaded to `portfolio/projects/<slug>/videos/<slug>_<n>`
+  - `threeDModel` (max 1 file, `.glb`/`.gltf`/octet-stream): Uploaded to `portfolio/projects/<slug>/models/<slug>_<n>`
+- **Fields**:
+  - `title` (required, string)
+  - `category` (required, string)
+  - `description` (required, string)
+  - `image` (required, string URL or file upload)
+  - `slug` (optional string; auto-derived from `title` if omitted)
+  - `featured` (optional boolean, default `false`)
+  - `status` (optional enum: `"invisible"` | `"planning"` | `"work_in_progress"` | `"delay_hold"` | `"active"`, default `"planning"`)
+  - `startDate` (optional Date/ISO string, default `Date.now()`)
+  - `endDate` (optional Date/ISO string)
+  - `tags` (optional string array, JSON string array, or comma-separated string)
+  - `skills` (optional array of `Skill` ObjectIds, JSON array string, or comma-separated string)
+  - `contributors` (optional array of `{ name, profilePicUrl, profileLink? }`, JSON string in multipart)
+  - `socialLinks` (optional array of `{ platform, url }`, JSON string in multipart)
+  - `videoDemo` (optional string URL or file upload)
+  - `deployedLink` (optional string URL)
+  - `githubLink` (optional string URL)
+  - `threeDModel` (optional object `{ fileUrl, initialRotation: [x,y,z], enableExplodedView }`, JSON string in multipart, or file upload)
+  - `versions` (optional array of `IProjectVersion`, JSON string in multipart)
+- **Response**: `201 Created`
+```json
+{
+  "success": true,
+  "message": "Project created successfully",
+  "data": { ...createdProject }
+}
+```
 
-### Experiences
+#### `PUT /api/v1/projects/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Upload Fields**: `image`, `videoDemo`, `threeDModel`
+- **Behavior**: Partial update of supplied fields. Empty string for `endDate` clears the date.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Project updated successfully",
+  "data": { ...updatedProject }
+}
+```
 
-| Method and path | Access | Purpose |
-| --- | --- | --- |
-| `GET /api/v1/experiences` | Public | List all experience organizations, sorted by `{ weight: 1, organization: 1 }`. Returns `{ success, count, data: Experience[] }`. |
-| `GET /api/v1/experiences/:id` | Public | Fetch one experience by MongoDB ObjectId. Missing ID returns 404. |
-| `POST /api/v1/experiences` | Admin | Create an experience document. Duplicate organization returns 409 Conflict. Returns `201 { success, data: Experience }`. |
-| `POST /api/v1/experiences/:organization/positions` | Admin | Append a single position/promotion to an existing experience without overwriting existing history. Looks up experience via case-insensitive organization regex. Supports multipart uploads for `mediaUrls` and `certificateUrls`. Returns `200 { success, message, data: Experience }`. |
-| `PUT /api/v1/experiences/:id` | Admin | Update experience by MongoDB ObjectId. Returns 404 if missing, 409 if duplicate organization, 200 on success. |
-| `DELETE /api/v1/experiences/:id` | Admin | Delete experience by MongoDB ObjectId. Returns 404 if missing, 200 on success. |
+#### `DELETE /api/v1/projects/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Project deleted successfully"
+}
+```
 
-Fields:
-- `organization` (required string, trimmed).
-- `tag` (required enum: `"focus"` | `"extracurricular"`).
-- `type` (required enum: `"internship"` | `"contract"` | `"freelance"` | `"full_time"` | `"part_time"` | `"club"` | `"volunteering"`).
-- `iconUrl` (required string).
-- `skills` (ObjectId array, ref to `Skill`).
-- `weight` (number, default `0`).
-- `positions` (array of position subdocuments):
-  - `positionTag` (required string, e.g. `"Initial Hire"`, `"Senior Role Promotion"`).
-  - `title` (required string).
-  - `description` (required string).
-  - `startDate` (required Date/ISO string).
-  - `endDate` (optional Date/ISO string).
-  - `mediaUrls` (optional string array).
-  - `certificateUrls` (optional string array).
-  - `isCurrent` (boolean, default `false`).
+#### `POST /api/v1/projects/:slug/versions`
+- **Access**: Admin
+- **Path Parameters**: `:slug` (string)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Fields**: `image`, `videoDemo`, `threeDModel`
+- **Folder Structure**: `portfolio/projects/<slug>/<sanitized-version-tag>/[images|videos|models]/`
+- **Body Fields**:
+  - `versionTag` (required, string, e.g. `"v1.2.0"`)
+  - `releaseDate` (optional Date/ISO string, default `Date.now()`)
+  - `changelog` (optional string array, default `[]`)
+  - `image` (optional string URL or file upload)
+  - `videoDemo` (optional string URL or file upload)
+  - `demoUrl` (optional string URL)
+  - `threeDFileUrl` (optional string URL or file upload on `threeDModel`)
+  - `isLatest` (optional boolean, default `false`)
+- **Single-Truth**: If `isLatest` is `true`, all previous versions in this project are automatically updated to `isLatest: false`.
+- **Response**: `201 Created`
+```json
+{
+  "success": true,
+  "message": "Version added successfully",
+  "data": { ...updatedProject }
+}
+```
 
-#### Appending Positions (`POST /api/v1/experiences/:organization/positions`)
-- Path parameter: `:organization` (case-insensitive string matching the unique organization name, e.g. `/experiences/gcsrm/positions` or `/experiences/Tech%20Corp/positions`).
-- Accepts `req.body.position` formatted as JSON object, JSON-stringified object, or directly at top level of `req.body`.
-- Accepts multipart files on fields `mediaUrls` and `certificateUrls`. These are streamed to Cloudinary folders:
-  - Media: `portfolio/experiences/{tag}/{organization}/media/experience_media_{num}`
-  - Certificates: `portfolio/experiences/{tag}/{organization}/certificates/experience_certificate_{num}`
-- **Active Role Single-Truth**: When `isCurrent` is `true` on the new position, all existing positions within the experience document are automatically updated to `isCurrent: false`.
-- Appends the new position using `$push` without overwriting earlier career positions.
-- Missing organization returns `404 Not Found` with `{ success: false, message: "Experience not found for organization: <organization>" }`. Unauthenticated access returns `401 Unauthorized`.
+---
 
-### Site configuration
+### 4.3 Skills (`/api/v1/skills`)
 
-| Method and path | Access | Purpose |
-| --- | --- | --- |
-| `GET /api/v1/config` | Public | Get site-wide resume link, status message, and bio summary. Creates a default record on first read if none exists. |
-| `PUT /api/v1/config` | Admin | Update any supplied config fields. |
+#### `GET /api/v1/skills`
+- **Access**: Public
+- **Sorting**: `{ weight: 1, name: 1 }`
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "_id": "670fa123456789abcdef0010",
+      "name": "TypeScript",
+      "logoUrl": "https://res.cloudinary.com/.../typescript.jpg",
+      "featured": true,
+      "weight": 1,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
+```
 
-Fields: `resumeDriveUrl`, `statusMessage`, and `bioSummary`, all strings. GET returns `{ success: true, data: config }`. PUT returns `{ success, message, data }`; it upserts if there is no record.
+#### `GET /api/v1/skills/:id`
+- **Access**: Public
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Response**: `200 OK` `{ "success": true, "data": { ...skill } }`
 
-### Admin request logs
+#### `POST /api/v1/skills`
+- **Access**: Admin
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Field**: `logoUrl` (max 1 file)
+  - Streamed to `portfolio/skills/<derived-skill-name>/<derived-skill-name>`
+- **Fields**:
+  - `name` (required, string, trimmed; unique case-insensitive)
+  - `logoUrl` (string URL or file upload)
+  - `featured` (optional boolean, default `false`)
+  - `weight` (optional number, default `0`)
+- **Response**: `201 Created` `{ "success": true, "data": { ...createdSkill } }`
+- **Errors**: `400` if name missing; `409` if duplicate name exists.
 
-| Method and path | Access | Purpose |
-| --- | --- | --- |
-| `GET /api/v1/admin/logs` | Admin | Browse persisted request logs with date/level filters and pagination. |
+#### `PUT /api/v1/skills/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Field**: `logoUrl`
+- **Fields**: Partial update of `name`, `logoUrl`, `featured`, `weight`. Unique name check excludes current `:id`.
+- **Response**: `200 OK` `{ "success": true, "data": { ...updatedSkill } }`
 
-Query parameters:
+#### `DELETE /api/v1/skills/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Response**: `200 OK` `{ "success": true, "message": "Skill deleted successfully" }`
 
-- `date=YYYY-MM-DD`, or `month=YYYY-MM`, or `year=YYYY` (date takes precedence over month, month over year).
-- `level=INFO|WARN|ERROR`.
-- `page` defaults to `1`; `limit` defaults to `50`, is clamped to `1..500`.
+---
 
-Returns `{ success, count, total, page, totalPages, data: LogEntry[] }`, newest first. Logs have timestamp, level, method, endpoint, statusCode, ip, message, optional metadata and stack. Levels are INFO for 2xx/3xx, WARN for 4xx, ERROR for 5xx. Every request is eligible for logging, including health and admin requests.
+### 4.4 Certificates (`/api/v1/certificates`)
 
-## Authentication
+#### `GET /api/v1/certificates`
+- **Access**: Public
+- **Sorting**: `{ weight: 1, title: 1 }`
+- **Response**: `200 OK` `{ "success": true, "count": 1, "data": [ ...certificates ] }`
 
-All protected routes use the same static secret configured as `ADMIN_SECRET`. Provide exactly one of:
+#### `GET /api/v1/certificates/:id`
+- **Access**: Public
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Response**: `200 OK` `{ "success": true, "data": { ...certificate } }`
+
+#### `POST /api/v1/certificates`
+- **Access**: Admin
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Field**: `mediaUrl` (max 1 file)
+  - Streamed to `portfolio/certificate/<org>_<title>_<year>`
+- **Fields**:
+  - `title` (required, string, trimmed; unique case-insensitive)
+  - `description` (optional string, default `""`)
+  - `organization` (required, string, trimmed)
+  - `mediaUrl` (string URL or file upload)
+  - `link` (optional string URL)
+  - `weight` (optional number, default `0`)
+- **Response**: `201 Created` `{ "success": true, "data": { ...createdCert } }`
+- **Errors**: `400` if title missing; `409` if duplicate title exists.
+
+#### `PUT /api/v1/certificates/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Field**: `mediaUrl`
+- **Fields**: Partial update of `title`, `description`, `organization`, `mediaUrl`, `link`, `weight`.
+- **Response**: `200 OK` `{ "success": true, "data": { ...updatedCert } }`
+
+#### `DELETE /api/v1/certificates/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Response**: `200 OK` `{ "success": true, "message": "Certificate deleted successfully" }`
+
+---
+
+### 4.5 Achievements (`/api/v1/achievements`)
+
+#### `GET /api/v1/achievements`
+- **Access**: Public
+- **Sorting**: `{ weight: 1, title: 1 }`
+- **Response**: `200 OK` `{ "success": true, "count": 1, "data": [ ...achievements ] }`
+
+#### `GET /api/v1/achievements/:id`
+- **Access**: Public
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Response**: `200 OK` `{ "success": true, "data": { ...achievement } }`
+
+#### `POST /api/v1/achievements`
+- **Access**: Admin
+- **Content-Type**: `application/json`
+- **Fields**:
+  - `title` (required, string, trimmed; unique case-insensitive)
+  - `detail` (required, string)
+  - `date` (required, string, e.g. `"October 2024"`)
+  - `weight` (optional number, default `0`)
+- **Response**: `201 Created` `{ "success": true, "data": { ...createdAchievement } }`
+
+#### `PUT /api/v1/achievements/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Content-Type**: `application/json`
+- **Fields**: Partial update of `title`, `detail`, `date`, `weight`.
+- **Response**: `200 OK` `{ "success": true, "data": { ...updatedAchievement } }`
+
+#### `DELETE /api/v1/achievements/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Response**: `200 OK` `{ "success": true, "message": "Achievement deleted successfully" }`
+
+---
+
+### 4.6 Experiences (`/api/v1/experiences`)
+
+#### `GET /api/v1/experiences`
+- **Access**: Public
+- **Sorting**: `{ weight: 1, organization: 1 }`
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "_id": "670fa123456789abcdef0020",
+      "organization": "Google Developer Student Clubs",
+      "tag": "focus",
+      "type": "club",
+      "iconUrl": "https://res.cloudinary.com/.../experience_icon.jpg",
+      "skills": ["670fa123456789abcdef0010"],
+      "weight": 1,
+      "positions": [
+        {
+          "_id": "670fa123456789abcdef0021",
+          "position": "Tech Lead",
+          "description": "Leading technical workshops and projects",
+          "startDate": "2025-08-01T00:00:00.000Z",
+          "isCurrent": true,
+          "mediaUrls": ["https://res.cloudinary.com/.../experience_media_1.jpg"],
+          "certificateUrls": []
+        }
+      ],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+#### `GET /api/v1/experiences/:id`
+- **Access**: Public
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Response**: `200 OK` `{ "success": true, "data": { ...experience } }`
+
+#### `POST /api/v1/experiences`
+- **Access**: Admin
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Fields**:
+  - `iconUrl` (max 1 file) ──► `portfolio/experiences/<tag>/<orgSlug>/icons/experience_icon`
+  - `mediaUrls` (max 10 files) ──► `portfolio/experiences/<tag>/<orgSlug>/media/experience_media_<n>`
+  - `certificateUrls` (max 10 files) ──► `portfolio/experiences/<tag>/<orgSlug>/certificates/experience_certificate_<n>`
+- **Fields**:
+  - `organization` (required, string, trimmed; unique case-insensitive)
+  - `tag` (required enum: `"focus"` | `"extracurricular"`, default `"focus"`)
+  - `type` (required enum: `"internship"` | `"contract"` | `"freelance"` | `"full_time"` | `"part_time"` | `"club"` | `"volunteering"`, default `"full_time"`)
+  - `iconUrl` (string URL or file upload)
+  - `skills` (optional array of `Skill` ObjectIds, JSON string array, or comma-separated string)
+  - `weight` (optional number, default `0`)
+  - `positions` (optional array of `IExperiencePosition`, JSON string in multipart):
+    - `position` (required string)
+    - `description` (required string)
+    - `startDate` (required Date/ISO string)
+    - `endDate` (optional Date/ISO string)
+    - `isCurrent` (boolean, default `false`)
+    - `mediaUrls` (optional string array)
+    - `certificateUrls` (optional string array)
+  - *Note*: Uploaded `mediaUrls` and `certificateUrls` attach to `positions[0]`, or automatically construct an initial position if none is provided.
+- **Response**: `201 Created` `{ "success": true, "data": { ...createdExperience } }`
+
+#### `POST /api/v1/experiences/:organization/positions`
+- **Access**: Admin
+- **Path Parameters**: `:organization` (case-insensitive string matching organization name, URL decoded)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Fields**: `mediaUrls` (max 10), `certificateUrls` (max 10)
+- **Position Payload**: Accepts `req.body.position` (object or JSON string) or flat top-level properties:
+  - `position` (or `title` / `positionTag`): string (required, default `"Role"`)
+  - `description`: string (default `""`)
+  - `startDate`: Date/ISO string (default `Date.now()`)
+  - `endDate`: optional Date/ISO string
+  - `isCurrent`: boolean (default `false`)
+  - `mediaUrls`: string array (plus any uploaded `mediaUrls` files)
+  - `certificateUrls`: string array (plus any uploaded `certificateUrls` files)
+- **Active Role Single-Truth**: When `isCurrent` is `true`, all existing positions in this organization are automatically set to `isCurrent: false`.
+- **Behavior**: Appends the new position using `$push` without overwriting historical positions.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Position added successfully",
+  "data": { ...updatedExperience }
+}
+```
+- **Errors**: `404 Not Found` if organization does not exist.
+
+#### `PUT /api/v1/experiences/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Upload Fields**: `iconUrl`, `mediaUrls`, `certificateUrls`
+- **Fields**: Partial update of `organization`, `tag`, `type`, `iconUrl`, `skills`, `weight`, `positions`.
+- **Response**: `200 OK` `{ "success": true, "data": { ...updatedExperience } }`
+
+#### `DELETE /api/v1/experiences/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId)
+- **Response**: `200 OK` `{ "success": true, "message": "Experience deleted successfully" }`
+
+---
+
+### 4.7 Site Configuration (`/api/v1/config`)
+
+#### `GET /api/v1/config`
+- **Access**: Public
+- **Behavior**: Fetches the global configuration document.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "670fa123456789abcdef0030",
+    "name": "Cyberbee",
+    "pfpUrl": "https://res.cloudinary.com/.../pfp_1729000000000.jpg",
+    "pfpPublicId": "portfolio/site_config/pfp_1729000000000",
+    "pfpHistory": [
+      {
+        "url": "https://res.cloudinary.com/.../pfp_1729000000000.jpg",
+        "publicId": "portfolio/site_config/pfp_1729000000000",
+        "uploadedAt": "2026-10-17T09:42:00.000Z"
+      }
+    ],
+    "jobTitles": ["Full Stack Engineer", "Systems Architect"],
+    "resumeDriveUrl": "https://drive.google.com/file/d/.../view",
+    "statusMessage": "Building next-gen systems",
+    "bioSummary": "Software engineer passionate about scalable architectures and 3D web experiences.",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-10-17T09:42:00.000Z"
+  }
+}
+```
+- **Uninitialized State**: Returns `404 Not Found` with `{ "success": false, "message": "Site configuration not found" }` if no config has been created yet.
+
+#### `POST /api/v1/config`
+- **Access**: Admin
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Fields**: `pfp`, `pfpUrl`, or `image` (max 1 file)
+  - Streamed to `portfolio/site_config/pfp_<timestamp>`
+- **Fields**:
+  - `name` (required, string, trimmed)
+  - `jobTitles` (required, string array, JSON array string, or comma-separated string; min 1 item)
+  - `resumeDriveUrl` (required, string, trimmed)
+  - `statusMessage` (required, string, trimmed)
+  - `bioSummary` (required, string, trimmed)
+  - `pfpUrl` and `pfpPublicId`: Optional strings; if provided directly without file upload, both must be supplied together.
+- **Behavior**:
+  - Rejects with `409 Conflict` if site configuration already exists (advises using `PUT`).
+  - If a profile picture is supplied, initializes `pfpHistory` with `[{ url, publicId, uploadedAt }]`.
+- **Response**: `201 Created`
+```json
+{
+  "success": true,
+  "message": "Site configuration created successfully",
+  "data": { ...createdConfig }
+}
+```
+
+#### `PUT /api/v1/config`
+- **Access**: Admin
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Fields**: `pfp`, `pfpUrl`, or `image` (max 1 file)
+- **Fields**:
+  - `name` (required, string, trimmed)
+  - `jobTitles` (required, string array, JSON array string, or comma-separated string; min 1 item)
+  - `resumeDriveUrl` (required, string, trimmed)
+  - `statusMessage` (required, string, trimmed)
+  - `bioSummary` (required, string, trimmed)
+- **Profile Picture Workflows**:
+  - **Option 1: Upload New Avatar** (Multipart):
+    - Upload on `pfp`, `pfpUrl`, or `image`.
+    - Uploaded to `portfolio/site_config/pfp_<timestamp>`.
+    - Automatically prepends the new avatar item to `pfpHistory` at index 0 (`$position: 0`).
+    - Updates active `pfpUrl` and `pfpPublicId`.
+  - **Option 2: Revert to / Select Historical Avatar** (JSON or Multipart without file):
+    - Supply `pfpPublicId` (and optionally `pfpUrl`) matching an entry in `pfpHistory`.
+    - The server validates against existing `pfpHistory`.
+    - Updates active `pfpUrl` and `pfpPublicId` without duplicating history entries.
+  - **Option 3: Retain Current Avatar**:
+    - Omit file and avatar fields; current avatar is preserved.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Site configuration updated successfully",
+  "data": { ...updatedConfig }
+}
+```
+
+---
+
+### 4.8 Admin Request Logs (`/api/v1/admin/logs`)
+
+#### `GET /api/v1/admin/logs`
+- **Access**: Admin
+- **Query Parameters**:
+  - `date` (optional, `"YYYY-MM-DD"`): Exact UTC day range filter (`00:00:00.000` to `23:59:59.999`).
+  - `month` (optional, `"YYYY-MM"`): UTC month range filter (`date` takes precedence).
+  - `year` (optional, `"YYYY"`): UTC full year range filter (`month` takes precedence).
+  - `level` (optional, `"INFO"` | `"WARN"` | `"ERROR"`):
+    - `INFO`: 2xx and 3xx responses
+    - `WARN`: 4xx responses
+    - `ERROR`: 5xx responses
+  - `page` (optional number, default `1`): 1-indexed page.
+  - `limit` (optional number, default `50`, clamped `1..500`).
+- **Sorting**: Newest first (`timestamp: -1`).
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "count": 50,
+  "total": 120,
+  "page": 1,
+  "totalPages": 3,
+  "data": [
+    {
+      "_id": "670fa123456789abcdef0090",
+      "timestamp": "2026-10-17T09:42:00.000Z",
+      "level": "INFO",
+      "method": "GET",
+      "endpoint": "/api/v1/projects",
+      "statusCode": 200,
+      "ip": "::1",
+      "message": "GET /api/v1/projects 200 - 15ms",
+      "metadata": {},
+      "stack": null
+    }
+  ]
+}
+```
+
+---
+
+## 5. Authentication
+
+All admin endpoints (mutations and log queries) are protected by a shared static secret:
 
 ```http
 Authorization: Bearer <ADMIN_SECRET>
 ```
-
 or
-
 ```http
 x-admin-token: <ADMIN_SECRET>
 ```
 
-Missing/incorrect credentials return 401. If the server has no `ADMIN_SECRET`, protected routes return 500. The API has no login/session/OAuth exchange endpoint: the admin frontend's authentication mechanism must obtain/store this secret outside the public viewer client and attach it to protected calls. Never expose it in client-side environment variables that are bundled into public JavaScript.
+### Security Rules
+- If `ADMIN_SECRET` is not set on the server, protected routes return `500 Internal Server Error`.
+- Requests missing or supplying an invalid secret return `401 Unauthorized` with `{ "success": false, "message": "Unauthorized: Invalid or missing admin credentials" }`.
+- The `GET /api/v1/projects/:slug` endpoint is accessible publicly, but will dynamically check for admin credentials. If valid credentials are supplied, it allows viewing `invisible` draft projects.
+- **Frontend Security**: Never bundle `ADMIN_SECRET` in client-facing viewer code or public environment variables. Only the administrative dashboard may supply this token.
 
-## Media uploads
+---
 
-Create, update, and version routes accept multipart fields named `image`, `videoDemo`, and `threeDModel`, one file per field. The server buffers each upload in memory (100 MB per file limit), validates media MIME/extensions, then uploads to Cloudinary as image, video, or raw respectively. The returned secure Cloudinary URL is written into request data before the controller saves it.
+## 6. Media Uploads & Cloudinary Directory Structure
 
-For project routes, folders follow `portfolio/projects/<slug>/images`, `videos`, or `models`; version uploads include a sanitized version-tag directory. Asset public IDs are sequential per folder when Cloudinary search succeeds and timestamp-based if search fails. Do not assume a replaced/deleted asset is automatically removed from Cloudinary. For an admin edit that keeps existing media, omit that file field and preserve its URL in the data if sending a full representation is needed.
+All media uploads are buffered in memory (100 MB file size limit) via Multer, validated for MIME types/extensions, and uploaded to Cloudinary:
 
-The upload middleware also has a profile-folder fallback for `/profile` paths, but this repository does not currently mount profile routes. Do not treat that as a supported endpoint.
+- **Allowed Images**: `image/jpeg`, `image/jpg`, `image/png`, `image/webp`, `image/gif`, `image/svg+xml`.
+- **Allowed Videos**: `video/mp4`, `video/webm`, `video/quicktime`, `video/x-matroska`.
+- **Allowed 3D Models**: Extension `.glb` or `.gltf`, MIME `model/gltf-binary`, `model/gltf+json`, `application/octet-stream`.
 
-## Frontend integration guidance
+### Cloudinary Folder Mapping
 
-### Public viewer site
+| Resource / Route | Multipart Field(s) | Destination Cloudinary Folder | Public ID Format |
+| :--- | :--- | :--- | :--- |
+| **Projects** | `image` | `portfolio/projects/<slug>/images` | `<slug>_<n>` (e.g., `portfolio-core_1`) |
+| | `videoDemo` | `portfolio/projects/<slug>/videos` | `<slug>_<n>` |
+| | `threeDModel` | `portfolio/projects/<slug>/models` | `<slug>_<n>` |
+| **Project Versions** | `image`, `videoDemo`, `threeDModel` | `portfolio/projects/<slug>/<sanitizedVersionTag>/[images\|videos\|models]` | `<slug>_<n>` |
+| **Skills** | `logoUrl` | `portfolio/skills/<derivedSkillName>` | `<derivedSkillName>` |
+| **Certificates** | `mediaUrl` | `portfolio/certificate` | `<org>_<title>_<year>` |
+| **Experiences** | `iconUrl` | `portfolio/experiences/<tag>/<orgSlug>/icons` | `experience_icon` |
+| | `mediaUrls` | `portfolio/experiences/<tag>/<orgSlug>/media` | `experience_media_<n>` |
+| | `certificateUrls` | `portfolio/experiences/<tag>/<orgSlug>/certificates` | `experience_certificate_<n>` |
+| **Site Config** | `pfp`, `pfpUrl`, `image` | `portfolio/site_config` | `pfp_<timestamp>` |
 
-1. On page/app startup, request `GET /api/v1/config` for global bio/status/resume content.
-2. Request `GET /api/v1/projects` for cards and `GET /api/v1/projects/categories` for category filters. Add `category`, `featured`, or `tag` query parameters as needed.
-3. Request `GET /api/v1/projects/:slug` for a detail page, including media URLs, links, contributors, 3D model options, and version history.
-4. Treat `invisible` as unavailable; it is excluded from list/category APIs and public detail responds 404.
-5. Use `threeDModel.fileUrl`, `initialRotation`, and `enableExplodedView` to configure the 3D viewer. The backend stores these values; rendering is client responsibility.
+- **Sequential Naming**: Assets using `<base>_<n>` query existing files via the Cloudinary Search API and pick `<base>_<max+1>` (cached per request). If the Search API is unavailable, it falls back to timestamp-based naming (`<base>_<timestamp>`).
 
-### Admin site
+---
 
-1. Use the same public read APIs for project/config views; include auth on detail reads when inspecting invisible projects.
-2. Add the admin header to create/update/delete, version, config update, and log requests.
-3. Use `_id` for project update/delete and `slug` for detail/version routes. Refresh list/detail data after mutations from the returned `data`.
-4. Use multipart requests when uploading files; do not manually set the multipart `Content-Type` boundary in browser `fetch` calls. Send JSON when no file is uploaded.
-5. Use the logs endpoint to build the request log screen; paginate using returned page metadata and avoid requesting limits above 500.
+## 7. Data Models & TypeScript Types
 
-Example browser request:
-
+### 7.1 Project (`Project`)
 ```ts
-const response = await fetch(`${API_ORIGIN}/api/v1/projects?category=web`, {
-  headers: { Accept: "application/json" },
-});
-if (!response.ok) throw new Error(`API request failed: ${response.status}`);
-const result = await response.json();
+export type ProjectStatus = "invisible" | "planning" | "work_in_progress" | "delay_hold" | "active";
+
+export interface IContributor {
+  name: string;
+  profilePicUrl: string;
+  profileLink?: string;
+}
+
+export interface ISocialLink {
+  platform: string;
+  url: string;
+}
+
+export interface IProjectVersion {
+  versionTag: string;
+  releaseDate: Date;
+  changelog: string[];
+  image?: string;
+  videoDemo?: string;
+  demoUrl?: string;
+  threeDFileUrl?: string;
+  isLatest: boolean;
+}
+
+export interface IProject {
+  _id: string;
+  title: string;
+  slug: string;
+  category: string;
+  description: string;
+  featured: boolean;
+  tags: string[];
+  skills: string[]; // ObjectId ref to Skill
+  startDate: Date;
+  endDate?: Date;
+  contributors: IContributor[];
+  status: ProjectStatus;
+  image: string;
+  videoDemo?: string;
+  socialLinks: ISocialLink[];
+  threeDModel?: {
+    fileUrl: string;
+    initialRotation?: [number, number, number];
+    enableExplodedView: boolean;
+  };
+  deployedLink?: string;
+  githubLink?: string;
+  versions: IProjectVersion[];
+  createdAt: Date;
+  updatedAt: Date;
+}
 ```
 
-For an admin request, add `Authorization: Bearer ${adminSecret}`. For `FormData`, append scalar values and JSON-stringify nested fields; append files under the exact field names above.
+### 7.2 Skill (`Skill`)
+```ts
+export interface ISkill {
+  _id: string;
+  name: string;
+  logoUrl: string;
+  featured: boolean;
+  weight: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
 
-## Errors and operational notes
+### 7.3 Certificate (`Certificate`)
+```ts
+export interface ICertificate {
+  _id: string;
+  title: string;
+  description: string;
+  link?: string;
+  mediaUrl: string;
+  organization: string;
+  weight: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
 
-- `400`: missing required input, invalid project ID, or Mongoose validation/cast failure.
-- `401`: missing or invalid admin secret.
-- `404`: unknown route/resource, missing project, or public attempt to read an invisible project.
-- `409`: duplicate key (e.g. duplicate slug, skill name, cert/achievement title, or experience organization).
-- `500`: unexpected/server configuration errors.
+### 7.4 Achievement (`Achievement`)
+```ts
+export interface IAchievement {
+  _id: string;
+  title: string;
+  date: string; // e.g. "Month Year"
+  detail: string;
+  weight: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
 
-All responses are JSON. Frontends should check `response.ok` and parse the error `message`; do not assume all failures share the same exact message. CORS origins are controlled by comma-separated `CLIENT_ORIGIN`; unset currently permits `*`. MongoDB (`MONGO_URI`) is required. Cloudinary credentials are required for media uploads. Local development uses `npm install`, configure environment variables, then `npm run dev`; `npm run build` compiles TypeScript.
+### 7.5 Experience (`Experience`)
+```ts
+export type ExperienceTag = "focus" | "extracurricular";
+export type ExperienceType =
+  | "internship"
+  | "contract"
+  | "freelance"
+  | "full_time"
+  | "part_time"
+  | "club"
+  | "volunteering";
 
-## Data model / ownership summary
+export interface IExperiencePosition {
+  _id?: string;
+  position: string;
+  description: string;
+  startDate: Date;
+  endDate?: Date;
+  mediaUrls?: string[];
+  certificateUrls?: string[];
+  isCurrent: boolean;
+}
 
-- MongoDB is authoritative for projects, skills, certificates, achievements, experiences, site config, and API logs.
-- Cloudinary stores media bytes; MongoDB stores secure URLs and presentation metadata.
-- `Project.versions` is embedded in its project; there is no independent version endpoint for listing/editing.
-- There is no user/role collection or OAuth callback route implemented here despite historical references to an OAuth gatekeeper.
-- The backend serves both the web portfolio and Kotlin app; client-specific presentation and caching belong to those clients.
+export interface IExperience {
+  _id: string;
+  organization: string;
+  tag: ExperienceTag;
+  type: ExperienceType;
+  iconUrl: string;
+  skills: string[]; // ObjectId ref to Skill
+  weight: number;
+  positions: IExperiencePosition[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
 
-## Source map for follow-up work
+### 7.6 Site Configuration (`SiteConfig`)
+```ts
+export interface IPfpItem {
+  url: string;
+  publicId: string;
+  uploadedAt: Date;
+}
 
-- App and route mounting: `src/server.ts`
-- Route definitions: `src/routes/`
-- Request/business behavior: `src/controllers/`
-- Schemas: `src/models/`
-- Authentication, upload, logging, errors: `src/middlewares/`
-- Utilities (e.g. `escapeRegex`): `src/utils/`
-- Mongo and Cloudinary setup: `src/config/`
-- API integration coverage: `tests/`
+export interface ISiteConfig {
+  _id: string;
+  name: string;
+  pfpUrl?: string;
+  pfpPublicId?: string;
+  pfpHistory: IPfpItem[];
+  jobTitles: string[];
+  resumeDriveUrl: string;
+  statusMessage: string;
+  bioSummary: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+### 7.7 Log Entry (`LogEntry`)
+```ts
+export type LogLevel = "INFO" | "WARN" | "ERROR";
+
+export interface ILogEntry {
+  _id: string;
+  timestamp: Date;
+  level: LogLevel;
+  method: string;
+  endpoint: string;
+  statusCode: number;
+  ip: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+  stack?: string;
+}
+```
+
+---
+
+## 8. Errors & HTTP Status Codes
+
+| Status Code | Meaning | Common Triggers |
+| :--- | :--- | :--- |
+| `200 OK` | Success | Successful read, update, or delete. |
+| `201 Created` | Created | Successful project, skill, certificate, achievement, experience, version, or config creation. |
+| `400 Bad Request` | Client Error | Missing required fields; malformed ObjectId format (`CastError`); invalid JSON; missing version tag; mismatched `pfpUrl` and `pfpPublicId`. |
+| `401 Unauthorized` | Auth Failure | Missing or incorrect `ADMIN_SECRET` via `Authorization: Bearer` or `x-admin-token`. |
+| `403 Forbidden` | Origin Forbidden | Request origin not allowed by CORS policy. |
+| `404 Not Found` | Not Found | Route does not exist; resource ID does not exist; project slug not found; unauthenticated attempt to read an `invisible` project. |
+| `409 Conflict` | Duplicate Key | Duplicate project slug; duplicate skill name; duplicate cert title; duplicate achievement title; duplicate experience organization; attempting to `POST /api/v1/config` when config already exists. |
+| `500 Server Error` | Server Fault | Unconfigured `ADMIN_SECRET`; database connection failure; unhandled controller crash. |
+
+---
+
+## 9. Frontend Integration Guidance & Recipes
+
+### 9.1 Public Viewer Client (Web / Android)
+
+1. **Bootstrap**:
+   - Call `GET /api/v1/config` to retrieve user name, avatar (`pfpUrl`), job titles, status message, and resume URL.
+   - Call `GET /api/v1/health` if a connectivity/status banner is needed.
+2. **Projects Grid & Filter**:
+   - Fetch category tabs via `GET /api/v1/projects/categories`.
+   - Fetch project cards via `GET /api/v1/projects`. Add query parameters (`?category=...&featured=true&tag=...`) based on user selection.
+3. **Project Detail Page**:
+   - Call `GET /api/v1/projects/:slug`.
+   - Render 3D model using `threeDModel.fileUrl`, passing `initialRotation` and `enableExplodedView` to Three.js / `@react-three/fiber`.
+   - Render version history list from `versions` array (sorted by `releaseDate` descending; highlight the item with `isLatest: true`).
+4. **Skills & Badges**:
+   - Call `GET /api/v1/skills` to populate the skills section or filter tags.
+5. **Timeline / Experience**:
+   - Call `GET /api/v1/experiences` to render career progression. Group roles by organization and sort nested `positions` by `startDate` descending.
+
+### 9.2 Admin Dashboard
+
+1. **Authentication Header**: Store `ADMIN_SECRET` in a secure session or storage outside of public code and include it on all mutation requests:
+   ```ts
+   const headers = {
+     "Authorization": `Bearer ${adminSecret}`,
+     "Accept": "application/json",
+   };
+   ```
+2. **Submitting Multipart Data**:
+   - When uploading files, do not manually specify `Content-Type: multipart/form-data`; let the browser or HTTP client supply the boundary.
+   - Append simple fields as string scalars.
+   - Stringify complex fields (arrays/objects like `tags`, `skills`, `contributors`, `socialLinks`, `positions`):
+   ```ts
+   const formData = new FormData();
+   formData.append("title", "Next Gen UI");
+   formData.append("category", "frontend");
+   formData.append("description", "A modern dashboard");
+   formData.append("tags", JSON.stringify(["react", "vite"]));
+   formData.append("image", fileInput.files[0]);
+
+   const res = await fetch(`${API_BASE}/projects`, {
+     method: "POST",
+     headers: { Authorization: `Bearer ${adminSecret}` },
+     body: formData,
+   });
+   ```
+3. **Site Config Management**:
+   - To upload a new profile picture: send file in `pfp` or `image` field via `PUT /api/v1/config`.
+   - To select an older profile picture from history: send JSON with `pfpPublicId` (and optionally `pfpUrl`) matching an entry in `pfpHistory`.
+4. **Inspecting Server Logs**:
+   - Paginate request logs with `GET /api/v1/admin/logs?page=1&limit=50`.
+   - Filter errors using `?level=ERROR` or date ranges using `?date=2026-10-17`.

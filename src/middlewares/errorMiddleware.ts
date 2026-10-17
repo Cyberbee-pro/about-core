@@ -34,6 +34,8 @@ export const errorMiddleware = (
 
     if (typeof customErr.statusCode === "number") {
       statusCode = customErr.statusCode;
+    } else if (customErr.message === "Not allowed by CORS") {
+      statusCode = 403;
     }
 
     // Handle Mongoose duplicate key error (code 11000)
