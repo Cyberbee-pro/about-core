@@ -6,7 +6,7 @@ import express, { Application, Request, Response } from "express";
 import cors from "cors";
 import { connectDB } from "./config/db";
 import { dbLoggerMiddleware } from "./middlewares/dbLoggerMiddleware";
-import { notFoundMiddleware, errorMiddleware } from "./middlewares/errorMiddleware";
+import { notFoundMiddleware, errorMiddleware, CustomError } from "./middlewares/errorMiddleware";
 import { getHealth } from "./controllers/configController";
 import projectRoutes from "./routes/projectRoutes";
 import skillRoutes from "./routes/skillRoutes";
@@ -18,11 +18,52 @@ import logRoutes from "./routes/logRoutes";
 
 const app: Application = express();
 
+const defaultAllowedOrigins = [
+  "https://core.shibraj.dev",
+  "https://client.shibraj.dev",
+  "https://shibraj.dev",
+  "http://localhost:3000",
+];
+
+export const getAllowedOrigins = (): string[] => {
+  const envOrigins = process.env.CLIENT_ORIGIN;
+  if (!envOrigins) {
+    return defaultAllowedOrigins;
+  }
+  const parsed = envOrigins
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return parsed.length > 0 ? parsed : defaultAllowedOrigins;
+};
+
 // Global Middlewares
 app.use(
   cors({
-    origin: process.env.CLIENT_ORIGIN ? process.env.CLIENT_ORIGIN.split(",") : "*",
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, Postman, or server-to-server)
+      if (!origin) return callback(null, true);
+
+      const allowedOrigins = getAllowedOrigins();
+      const isAllowed =
+        allowedOrigins.includes("*") ||
+        allowedOrigins.indexOf(origin) !== -1 ||
+        allowedOrigins.some(
+          (allowed) => allowed.replace(/\/+$/, "") === origin.replace(/\/+$/, "")
+        );
+
+      if (isAllowed) {
+        callback(null, true);
+      } else {
+        const corsError: CustomError = new Error("Not allowed by CORS");
+        corsError.statusCode = 403;
+        callback(corsError);
+      }
+    },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-admin-token"],
   })
 );
 app.use(express.json());
