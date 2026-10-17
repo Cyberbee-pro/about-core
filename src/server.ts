@@ -6,7 +6,7 @@ import express, { Application, Request, Response } from "express";
 import cors from "cors";
 import { connectDB } from "./config/db";
 import { dbLoggerMiddleware } from "./middlewares/dbLoggerMiddleware";
-import { notFoundMiddleware, errorMiddleware, CustomError } from "./middlewares/errorMiddleware";
+import { notFoundMiddleware, errorMiddleware } from "./middlewares/errorMiddleware";
 import { getHealth } from "./controllers/configController";
 import projectRoutes from "./routes/projectRoutes";
 import skillRoutes from "./routes/skillRoutes";
@@ -42,23 +42,26 @@ export const getAllowedOrigins = (): string[] => {
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, Postman, or server-to-server)
+      // Allow non-browser requests (Postman, curl, server-to-server)
       if (!origin) return callback(null, true);
 
-      const allowedOrigins = getAllowedOrigins();
-      const isAllowed =
-        allowedOrigins.includes("*") ||
-        allowedOrigins.indexOf(origin) !== -1 ||
-        allowedOrigins.some(
-          (allowed) => allowed.replace(/\/+$/, "") === origin.replace(/\/+$/, "")
-        );
+      const rawEnv = process.env.CLIENT_ORIGIN || "*";
+      const allowedOrigins = rawEnv
+        .split(",")
+        .map((o) => o.trim().replace(/\/+$/, ""));
+      
+      const cleanOrigin = origin.trim().replace(/\/+$/, "");
 
-      if (isAllowed) {
+      // Debug logs for Vercel deployment telemetry
+      console.log("[CORS Debug] Incoming Origin Header:", JSON.stringify(origin));
+      console.log("[CORS Debug] Cleaned Incoming Origin:", JSON.stringify(cleanOrigin));
+      console.log("[CORS Debug] Parsed Allowed List:", JSON.stringify(allowedOrigins));
+
+      if (allowedOrigins.includes("*") || allowedOrigins.includes(cleanOrigin)) {
         callback(null, true);
       } else {
-        const corsError: CustomError = new Error("Not allowed by CORS");
-        corsError.statusCode = 403;
-        callback(corsError);
+        console.warn(`[CORS Blocked] Origin "${origin}" not found in allowed list.`);
+        callback(new Error("Not allowed by CORS"));
       }
     },
     credentials: true,
