@@ -943,6 +943,169 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(mockUploadCalls.filter((c) => c.folder === "portfolio/site_config/resume")).toHaveLength(0);
       expect(SiteConfig.findOneAndUpdate).not.toHaveBeenCalled();
     });
+
+    it("POST /api/v1/config cleans up uploaded resume PDF if config already exists (409)", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue({ name: "Existing Config" });
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(409);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("POST /api/v1/config cleans up uploaded resume PDF if payload validation fails (400)", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        // Missing "name" to trigger validation failure
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(400);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("POST /api/v1/config does NOT call mockDestroy when validation fails without an uploaded file (safety guard)", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+
+      const res = await request(app)
+        .post("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          // Missing "name" to trigger validation failure
+          resumePublicId: "portfolio/site_config/resume/pre_existing_resume.pdf",
+          resumeUrl: "https://example.com/resume.pdf",
+          jobTitles: ["Dev"],
+        });
+
+      expect(res.status).toBe(400);
+      expect(mockDestroy).not.toHaveBeenCalled();
+    });
+
+    it("POST /api/v1/config cleans up uploaded resume PDF if database creation throws (500)", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+      (SiteConfig.create as jest.Mock).mockRejectedValue(new Error("Database connection dropped"));
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(500);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("PUT /api/v1/config cleans up uploaded resume PDF if payload validation fails (400)", async () => {
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        // Missing "name" to trigger validation failure
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(400);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("PUT /api/v1/config cleans up uploaded resume PDF if database update throws (500)", async () => {
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockRejectedValue(new Error("Write collision"));
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(500);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("POST /api/v1/config/resume cleans up uploaded resume PDF and propagates error if database update throws (500)", async () => {
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockRejectedValue(new Error("Mongo network error"));
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(500);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("POST /api/v1/config/resume swallows destroy cleanup errors so original error is not masked", async () => {
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockResolvedValue(null);
+      mockDestroy.mockRejectedValueOnce(new Error("Cloudinary API unavailable"));
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.message).toContain("Site configuration not found");
+      expect(mockDestroy).toHaveBeenCalled();
+    });
   });
 
 
