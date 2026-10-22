@@ -55,4 +55,69 @@ const SiteConfigSchema = new Schema<ISiteConfig>(
   { timestamps: true }
 );
 
+/**
+ * Migration hook: For existing SiteConfig documents in MongoDB created prior to
+ * standardizing on resumeUrl, copy legacy resumeDriveUrl into resumeUrl upon
+ * document initialization so GET /api/v1/config preserves the resume link.
+ */
+SiteConfigSchema.pre("init", function (rawDoc: Record<string, unknown>) {
+  if (rawDoc && typeof rawDoc === "object") {
+    if (!rawDoc.resumeUrl && typeof rawDoc.resumeDriveUrl === "string" && rawDoc.resumeDriveUrl) {
+      rawDoc.resumeUrl = rawDoc.resumeDriveUrl;
+      delete rawDoc.resumeDriveUrl;
+    }
+  }
+});
+
 export const SiteConfig = model<ISiteConfig>("SiteConfig", SiteConfigSchema);
+
+/**
+ * Migrates existing SiteConfig documents in MongoDB by copying `resumeDriveUrl`
+ * into `resumeUrl` if `resumeUrl` is missing or empty, preserving the resume link
+ * before removing the legacy field.
+ */
+export const migrateSiteConfigResumeUrl = async (): Promise<{ modifiedCount: number }> => {
+  if (!SiteConfig.collection) {
+    return { modifiedCount: 0 };
+  }
+
+  try {
+    const result = await SiteConfig.collection.updateMany(
+      {
+        $or: [{ resumeUrl: { $exists: false } }, { resumeUrl: null }, { resumeUrl: "" }],
+        resumeDriveUrl: { $exists: true, $ne: "" },
+      },
+      [
+        {
+          $set: {
+            resumeUrl: "$resumeDriveUrl",
+          },
+        },
+        {
+          $unset: "resumeDriveUrl",
+        },
+      ]
+    );
+    return { modifiedCount: result.modifiedCount };
+  } catch {
+    const cursor = SiteConfig.collection.find({
+      $or: [{ resumeUrl: { $exists: false } }, { resumeUrl: null }, { resumeUrl: "" }],
+      resumeDriveUrl: { $exists: true, $ne: "" },
+    });
+    let modifiedCount = 0;
+    while (await cursor.hasNext()) {
+      const doc = await cursor.next();
+      if (doc && doc._id && doc.resumeDriveUrl) {
+        await SiteConfig.collection.updateOne(
+          { _id: doc._id },
+          {
+            $set: { resumeUrl: doc.resumeDriveUrl },
+            $unset: { resumeDriveUrl: "" },
+          }
+        );
+        modifiedCount++;
+      }
+    }
+    return { modifiedCount };
+  }
+};

@@ -428,6 +428,23 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(SiteConfig.create).not.toHaveBeenCalled();
     });
 
+    it("GET /api/v1/config preserves resume link from legacy resumeDriveUrl when resumeUrl is absent", async () => {
+      const legacyConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Engineer"],
+        resumeDriveUrl: "https://drive.google.com/file/d/legacy-resume-link/view",
+        statusMessage: "Building systems...",
+        bioSummary: "Engineer bio",
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(legacyConfig);
+
+      const res = await request(app).get("/api/v1/config");
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.resumeUrl).toBe("https://drive.google.com/file/d/legacy-resume-link/view");
+    });
+
     it("PUT /api/v1/config updates configuration when authenticated with complete payload", async () => {
       const updatedConfig = {
         name: "Shibraj D.",

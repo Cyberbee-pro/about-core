@@ -54,6 +54,12 @@ export const getSiteConfig = async (
       return;
     }
 
+    // Safety fallback for legacy or mocked documents: ensure resumeUrl is populated
+    const legacyDoc = config as unknown as Record<string, unknown>;
+    if (!config.resumeUrl && typeof legacyDoc.resumeDriveUrl === "string" && legacyDoc.resumeDriveUrl) {
+      config.resumeUrl = legacyDoc.resumeDriveUrl;
+    }
+
     res.status(200).json({
       success: true,
       data: config,
