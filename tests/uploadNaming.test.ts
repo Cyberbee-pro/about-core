@@ -13,7 +13,7 @@ jest.mock("@/config/cloudinary", () => {
   return { __esModule: true, default: cloudinary, cloudinary };
 });
 
-import { getNextPublicId } from "@/middlewares/uploadMiddleware";
+import { getNextPublicId, getNextResumePublicId } from "@/middlewares/uploadMiddleware";
 
 interface CloudinarySearchTestDouble {
   search: {
@@ -105,5 +105,69 @@ describe("getNextPublicId", () => {
     await getNextPublicId(cache, "portfolio/projects/fail/images", "fail");
 
     expect(mockExecute).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("getNextResumePublicId", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockSearch.expression.mockReturnValue(mockSearch);
+    mockSearch.max_results.mockReturnValue(mockSearch);
+  });
+
+  it("returns resume_date_1.pdf when resume folder is empty", async () => {
+    mockExecute.mockResolvedValue({ resources: [], total_count: 0 });
+    const cache: Map<string, string[] | null> = new Map();
+
+    const id = await getNextResumePublicId(cache, "portfolio/site_config/resume");
+    expect(id).toBe("resume_date_1.pdf");
+    expect(mockSearch.expression).toHaveBeenCalledWith("folder:portfolio/site_config/resume");
+  });
+
+  it("returns resume_date_3.pdf when resume_date_1.pdf and resume_date_2.pdf exist", async () => {
+    mockExecute.mockResolvedValue({
+      resources: [
+        { public_id: "portfolio/site_config/resume/resume_date_1.pdf", folder: "portfolio/site_config/resume", resource_type: "raw" },
+        { public_id: "portfolio/site_config/resume/resume_date_2.pdf", folder: "portfolio/site_config/resume", resource_type: "raw" },
+      ],
+      total_count: 2,
+    });
+    const cache: Map<string, string[] | null> = new Map();
+
+    const id = await getNextResumePublicId(cache, "portfolio/site_config/resume");
+    expect(id).toBe("resume_date_3.pdf");
+  });
+
+  it("returns resume_date_2.pdf when existing file has no extension (resume_date_1)", async () => {
+    mockExecute.mockResolvedValue({
+      resources: [
+        { public_id: "portfolio/site_config/resume/resume_date_1", folder: "portfolio/site_config/resume", resource_type: "raw" },
+      ],
+      total_count: 1,
+    });
+    const cache: Map<string, string[] | null> = new Map();
+
+    const id = await getNextResumePublicId(cache, "portfolio/site_config/resume");
+    expect(id).toBe("resume_date_2.pdf");
+  });
+
+  it("increments within the same request cache without re-querying Search API", async () => {
+    mockExecute.mockResolvedValue({ resources: [], total_count: 0 });
+    const cache: Map<string, string[] | null> = new Map();
+
+    const id1 = await getNextResumePublicId(cache, "portfolio/site_config/resume");
+    const id2 = await getNextResumePublicId(cache, "portfolio/site_config/resume");
+
+    expect(id1).toBe("resume_date_1.pdf");
+    expect(id2).toBe("resume_date_2.pdf");
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to timestamp naming when Search API fails", async () => {
+    mockExecute.mockRejectedValue(new Error("Search API unavailable"));
+    const cache: Map<string, string[] | null> = new Map();
+
+    const id = await getNextResumePublicId(cache, "portfolio/site_config/resume");
+    expect(id).toMatch(/^resume_date_\d{13,}\.pdf$/);
   });
 });

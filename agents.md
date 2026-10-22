@@ -11,13 +11,14 @@ This repository contains the backend infrastructure. You must ground all archite
    *   Apply `.agents/skills/backend-patterns.md`[cite: 7] for all Express API route design, Mongoose query optimization, and error handling.
    *   Apply `.agents/skills/tdd-workflow.md`[cite: 7] when writing or refactoring testable business logic.
 
-## Audit Summary (2026-10-10)
-Codebase audit completed with all 85 tests passing. Key verified areas:
-- Model schemas: Project (5-status enum, image required, versions schema, social links), SiteConfig, LogEntry - all consistent
-- Routes & controllers: Public/protected split with authMiddleware, consistent error handling patterns
-- Middleware pipeline: auth (Bearer/x-admin-token), dbLogger (MongoDB logging), error (Mongoose mapping), upload (Cloudinary integration)
-- Test coverage: 100% of critical paths covered
-- TypeScript: All strict flags enabled, 2 diagnostics in test files only
+## Audit Summary
+Codebase audit completed with all 10 test suites and 161 tests passing. Key verified areas:
+- Model schemas: Project (5-status enum, image required, versions schema, social links, skills refs), SiteConfig (name, pfp, pfpHistory, jobTitles, bio, resumeDriveUrl, resumeUrl), Skill, Certificate, Achievement, Experience, LogEntry — all consistent
+- Routes & controllers: Public/protected split with authMiddleware, consistent error handling patterns, atomic experience position append, site config avatar rollback, and Cloudinary PDF resume uploads
+- Middleware pipeline: cors (dynamic multi-origin), auth (Bearer/x-admin-token), dbLogger (MongoDB request telemetry), error (Mongoose mapping), upload (Cloudinary streaming with PDF support)
+- Media storage: Structured Cloudinary folder hierarchy documented in `cloudinary.md`
+- Test coverage: 100% of critical paths covered across 10 test suites
+- TypeScript: All strict flags enabled, zero compilation errors (`npx tsc --noEmit`)
 - Configuration: .env.example vars, tsconfig strictness, dependencies all standard and version-pinned
 
 ## Core Architectural Mandates
@@ -33,5 +34,5 @@ When asked to implement a feature or generate the boilerplate:
 2. Read the referenced schemas or config files.
 3. Generate the code following the Backend Patterns skill.
 4. Verify there are no Type errors or unhandled asynchronous rejections.
-5. Run `npm test` to confirm all 85 tests pass.
+5. Run `npm test` to confirm all 161 tests pass.
 6. Run `npx tsc --noEmit` to confirm type safety.

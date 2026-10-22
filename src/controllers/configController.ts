@@ -26,11 +26,16 @@ const validateSiteConfigPayload = (
   parsedJobTitles: string[] | undefined
 ): string[] => {
   const missing: string[] = [];
-  const { name, resumeDriveUrl, statusMessage, bioSummary } = body;
+  const { name, resumeDriveUrl, resumeUrl, statusMessage, bioSummary } = body;
 
   if (typeof name !== "string" || !name.trim()) missing.push("name");
   if (!Array.isArray(parsedJobTitles) || parsedJobTitles.length === 0) missing.push("jobTitles");
-  if (typeof resumeDriveUrl !== "string" || !resumeDriveUrl.trim()) missing.push("resumeDriveUrl");
+
+  const hasResume =
+    (typeof resumeDriveUrl === "string" && Boolean(resumeDriveUrl.trim())) ||
+    (typeof resumeUrl === "string" && Boolean(resumeUrl.trim()));
+
+  if (!hasResume) missing.push("resumeDriveUrl");
   if (typeof statusMessage !== "string" || !statusMessage.trim()) missing.push("statusMessage");
   if (typeof bioSummary !== "string" || !bioSummary.trim()) missing.push("bioSummary");
 
@@ -120,13 +125,26 @@ export const createSiteConfig = async (
       });
     }
 
+    const effectiveResumeDriveUrl =
+      typeof resumeDriveUrl === "string" && resumeDriveUrl.trim()
+        ? (resumeDriveUrl as string).trim()
+        : typeof req.body.resumeUrl === "string" && req.body.resumeUrl.trim()
+        ? (req.body.resumeUrl as string).trim()
+        : "";
+
     const config = await SiteConfig.create({
       name: (name as string).trim(),
       ...(typeof pfpUrl === "string" ? { pfpUrl: pfpUrl.trim() } : {}),
       ...(typeof pfpPublicId === "string" ? { pfpPublicId: pfpPublicId.trim() } : {}),
+      ...(typeof req.body.resumeUrl === "string" && req.body.resumeUrl.trim()
+        ? { resumeUrl: (req.body.resumeUrl as string).trim() }
+        : {}),
+      ...(typeof req.body.resumePublicId === "string" && req.body.resumePublicId.trim()
+        ? { resumePublicId: (req.body.resumePublicId as string).trim() }
+        : {}),
       pfpHistory: initialHistory,
       jobTitles: parsedJobTitles!,
-      resumeDriveUrl: (resumeDriveUrl as string).trim(),
+      resumeDriveUrl: effectiveResumeDriveUrl,
       statusMessage: (statusMessage as string).trim(),
       bioSummary: (bioSummary as string).trim(),
     });
@@ -168,13 +186,27 @@ export const updateSiteConfig = async (
       return;
     }
 
+    const effectiveResumeDriveUrl =
+      typeof resumeDriveUrl === "string" && resumeDriveUrl.trim()
+        ? (resumeDriveUrl as string).trim()
+        : typeof req.body.resumeUrl === "string" && req.body.resumeUrl.trim()
+        ? (req.body.resumeUrl as string).trim()
+        : "";
+
     const setFields: Record<string, unknown> = {
       name: (name as string).trim(),
       jobTitles: parsedJobTitles!,
-      resumeDriveUrl: (resumeDriveUrl as string).trim(),
+      resumeDriveUrl: effectiveResumeDriveUrl,
       statusMessage: (statusMessage as string).trim(),
       bioSummary: (bioSummary as string).trim(),
     };
+
+    if (typeof req.body.resumeUrl === "string" && req.body.resumeUrl.trim()) {
+      setFields.resumeUrl = (req.body.resumeUrl as string).trim();
+    }
+    if (typeof req.body.resumePublicId === "string" && req.body.resumePublicId.trim()) {
+      setFields.resumePublicId = (req.body.resumePublicId as string).trim();
+    }
 
     const hasUploadedFile = Boolean(
       req.files &&
@@ -304,5 +336,45 @@ export const getHealth = async (_req: Request, res: Response): Promise<void> => 
     nodeVersion: process.version,
     env: process.env.NODE_ENV || "development",
   });
+};
+
+export const uploadResume = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.body.resumeUrl) {
+      res.status(400).json({
+        success: false,
+        message: "No resume PDF file uploaded. Accepted multipart fields: resume, resumeFile, resumePdf, pdf",
+      });
+      return;
+    }
+
+    const setFields: Record<string, unknown> = {
+      resumeUrl: req.body.resumeUrl,
+      resumeDriveUrl: req.body.resumeUrl,
+    };
+    if (req.body.resumePublicId) {
+      setFields.resumePublicId = req.body.resumePublicId;
+    }
+
+    const updatedConfig = await SiteConfig.findOneAndUpdate(
+      {},
+      { $set: setFields },
+      { new: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Resume PDF uploaded successfully",
+      data: updatedConfig,
+      resumeUrl: req.body.resumeUrl,
+      resumePublicId: req.body.resumePublicId,
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 

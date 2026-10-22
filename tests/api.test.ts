@@ -774,6 +774,106 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.body.success).toBe(false);
       expect(res.body.message).toContain("Both pfpUrl and pfpPublicId must be provided together");
     });
+
+    it("PUT /api/v1/config uploads resume PDF to portfolio/site_config/resume, saves resumeUrl, and returns updated document", async () => {
+      const existingConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeDriveUrl: "https://drive.google.com/resume",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
+        Promise.resolve({
+          ...existingConfig,
+          ...(update.$set || {}),
+        })
+      );
+
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Full-Stack Developer"]))
+        .field("resumeDriveUrl", "https://drive.google.com/resume")
+        .field("statusMessage", "Building systems...")
+        .field("bioSummary", "Full stack engineer")
+        .attach("resume", fakePdf, {
+          filename: "my-resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+
+      // Verify Cloudinary upload folder, resource_type, and naming convention
+      const resumeUploadCall = mockUploadCalls.find(
+        (call) => call.folder === "portfolio/site_config/resume"
+      );
+      expect(resumeUploadCall).toBeDefined();
+      expect(resumeUploadCall?.resource_type).toBe("auto");
+      expect(resumeUploadCall?.public_id).toBe("resume_date_1.pdf");
+
+      // Verify MongoDB was updated with resumeUrl
+      expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            resumeUrl: expect.stringContaining("portfolio/site_config/resume"),
+          }),
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it("POST /api/v1/config/resume uploads resume PDF directly and updates configuration", async () => {
+      const updatedConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeDriveUrl: "https://drive.google.com/resume",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+        resumeUrl: "https://res.cloudinary.com/demo/auto/portfolio/site_config/resume/resume_date_1.pdf",
+      };
+
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockResolvedValue(updatedConfig);
+
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain("Resume PDF uploaded");
+      expect(res.body.resumeUrl).toBeDefined();
+
+      const resumeUploadCall = mockUploadCalls.find(
+        (call) => call.folder === "portfolio/site_config/resume"
+      );
+      expect(resumeUploadCall).toBeDefined();
+      expect(resumeUploadCall?.resource_type).toBe("auto");
+      expect(resumeUploadCall?.public_id).toBe("resume_date_1.pdf");
+    });
+
+    it("POST /api/v1/config/resume rejects with 400 when no resume file is attached", async () => {
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token");
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("No resume PDF file uploaded");
+    });
   });
 
 

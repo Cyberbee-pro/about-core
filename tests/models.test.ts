@@ -462,6 +462,20 @@ describe("SiteConfig Model", () => {
     expect(config.pfpPublicId).toBe("portfolio/site_config/pfp_123456");
   });
 
+  it("accepts optional resumeUrl and resumePublicId", () => {
+    const config = new SiteConfig({
+      ...validConfigData,
+      resumeUrl: "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf",
+      resumePublicId: "portfolio/site_config/resume/resume_date_1.pdf",
+    });
+
+    expect(config.validateSync()).toBeUndefined();
+    expect(config.resumeUrl).toBe(
+      "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf"
+    );
+    expect(config.resumePublicId).toBe("portfolio/site_config/resume/resume_date_1.pdf");
+  });
+
   it("defaults pfpHistory to an empty array", () => {
     const config = new SiteConfig(validConfigData);
     expect(config.pfpHistory).toBeDefined();

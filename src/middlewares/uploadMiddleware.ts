@@ -35,8 +35,11 @@ const fileFilter = (
     file.mimetype === "model/gltf-binary" ||
     file.mimetype === "model/gltf+json" ||
     file.mimetype === "application/octet-stream";
+  const isPdf =
+    file.mimetype === "application/pdf" ||
+    /\.pdf$/i.test(file.originalname);
 
-  if (isImage || isVideo || is3DModel) {
+  if (isImage || isVideo || is3DModel || isPdf) {
     cb(null, true);
   } else {
     cb(new Error(`Unsupported file type: ${file.mimetype} (${file.originalname})`));
@@ -75,6 +78,10 @@ export const siteConfigUploadFields = upload.fields([
   { name: "pfp", maxCount: 1 },
   { name: "pfpUrl", maxCount: 1 },
   { name: "image", maxCount: 1 },
+  { name: "resume", maxCount: 1 },
+  { name: "resumeFile", maxCount: 1 },
+  { name: "resumePdf", maxCount: 1 },
+  { name: "pdf", maxCount: 1 },
 ]);
 
 
@@ -215,6 +222,58 @@ export const getNextPublicId = async (
 
   // Fallback: timestamp‑based name (search errored)
   return `${base}_${Date.now()}`;
+};
+
+/**
+ * Determine the next sequential public_id for a resume PDF in portfolio/site_config/resume.
+ * Naming convention: resume_date_{num}.pdf where {num} increments based on existing files,
+ * or falls back to resume_date_{timestamp}.pdf on search failure / error.
+ */
+export const getNextResumePublicId = async (
+  cache: FolderCache,
+  folder: string = "portfolio/site_config/resume"
+): Promise<string> => {
+  if (!cache.has(folder)) {
+    try {
+      const result: CloudinarySearchResult = (await cloudinary.search
+        .expression(`folder:${folder}`)
+        .max_results(500)
+        .execute()) as CloudinarySearchResult;
+
+      cache.set(
+        folder,
+        result.resources.map((r) => r.public_id)
+      );
+    } catch {
+      cache.set(folder, null);
+    }
+  }
+
+  const existing = cache.get(folder);
+
+  if (Array.isArray(existing)) {
+    const prefix = `${folder}/resume_date_`;
+    const numbers = existing
+      .filter((id) => id.startsWith(prefix) || id.includes("/resume_date_"))
+      .map((id) => {
+        const lastPart = id.split("/").pop() || "";
+        const match = lastPart.match(/^resume_date_(\d+)(?:\.pdf)?$/i);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          return Number.isNaN(num) ? 0 : num;
+        }
+        return 0;
+      });
+
+    const next = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+    const publicId = `resume_date_${next}.pdf`;
+
+    existing.push(`${folder}/${publicId}`);
+
+    return publicId;
+  }
+
+  return `resume_date_${Date.now()}.pdf`;
 };
 
 // ---------------------------------------------------------------------------
@@ -577,6 +636,9 @@ export const processSiteConfigUploads = async (
     }
 
     const files = req.files as MulterFilesMap;
+    const cache: FolderCache = new Map();
+
+    // 1. Process Profile Picture upload
     const pfpFile =
       (files.pfp && files.pfp[0]) ||
       (files.pfpUrl && files.pfpUrl[0]) ||
@@ -592,6 +654,25 @@ export const processSiteConfigUploads = async (
       });
       req.body.pfpUrl = result.secure_url;
       req.body.pfpPublicId = result.public_id;
+    }
+
+    // 2. Process Resume PDF upload
+    const resumeFile =
+      (files.resume && files.resume[0]) ||
+      (files.resumeFile && files.resumeFile[0]) ||
+      (files.resumePdf && files.resumePdf[0]) ||
+      (files.pdf && files.pdf[0]);
+
+    if (resumeFile) {
+      const folder = "portfolio/site_config/resume";
+      const publicId = await getNextResumePublicId(cache, folder);
+      const result = await uploadBufferToCloudinary(resumeFile.buffer, {
+        folder,
+        resource_type: "auto",
+        public_id: publicId,
+      });
+      req.body.resumeUrl = result.secure_url;
+      req.body.resumePublicId = result.public_id;
     }
 
     next();

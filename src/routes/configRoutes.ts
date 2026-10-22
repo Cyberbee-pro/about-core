@@ -3,6 +3,7 @@ import {
   getSiteConfig,
   createSiteConfig,
   updateSiteConfig,
+  uploadResume,
 } from "../controllers/configController";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import {
@@ -26,6 +27,13 @@ router.put(
   siteConfigUploadFields,
   processSiteConfigUploads,
   updateSiteConfig
+);
+router.post(
+  "/resume",
+  authMiddleware,
+  siteConfigUploadFields,
+  processSiteConfigUploads,
+  uploadResume
 );
 
 export default router;

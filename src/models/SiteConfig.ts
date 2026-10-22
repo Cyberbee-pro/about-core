@@ -13,6 +13,8 @@ export interface ISiteConfig extends Document {
   pfpHistory?: IPfpItem[];
   jobTitles: string[];
   resumeDriveUrl: string;
+  resumeUrl?: string;
+  resumePublicId?: string;
   statusMessage: string;
   bioSummary: string;
   createdAt?: Date;
@@ -46,6 +48,8 @@ const SiteConfigSchema = new Schema<ISiteConfig>(
       },
     },
     resumeDriveUrl: { type: String, required: true },
+    resumeUrl: { type: String },
+    resumePublicId: { type: String },
     statusMessage: { type: String, required: true },
 
     bioSummary: { type: String, required: true },
