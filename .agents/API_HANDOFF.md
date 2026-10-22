@@ -591,7 +591,8 @@ HTTP Request
       }
     ],
     "jobTitles": ["Full Stack Engineer", "Systems Architect"],
-    "resumeDriveUrl": "https://drive.google.com/file/d/.../view",
+    "resumeUrl": "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf",
+    "resumePublicId": "portfolio/site_config/resume/resume_date_1.pdf",
     "statusMessage": "Building next-gen systems",
     "bioSummary": "Software engineer passionate about scalable architectures and 3D web experiences.",
     "createdAt": "2026-01-01T00:00:00.000Z",
@@ -609,7 +610,7 @@ HTTP Request
 - **Fields**:
   - `name` (required, string, trimmed)
   - `jobTitles` (required, string array, JSON array string, or comma-separated string; min 1 item)
-  - `resumeDriveUrl` (required, string, trimmed)
+  - `resumeUrl` (required, string, trimmed, or uploaded via multipart `resume`/`resumeFile`/`resumePdf`/`pdf`)
   - `statusMessage` (required, string, trimmed)
   - `bioSummary` (required, string, trimmed)
   - `pfpUrl` and `pfpPublicId`: Optional strings; if provided directly without file upload, both must be supplied together.
@@ -632,7 +633,7 @@ HTTP Request
 - **Fields**:
   - `name` (required, string, trimmed)
   - `jobTitles` (required, string array, JSON array string, or comma-separated string; min 1 item)
-  - `resumeDriveUrl` (required, string, trimmed)
+  - `resumeUrl` (required, string, trimmed, or uploaded via multipart `resume`/`resumeFile`/`resumePdf`/`pdf`)
   - `statusMessage` (required, string, trimmed)
   - `bioSummary` (required, string, trimmed)
 - **Profile Picture Workflows**:
@@ -897,7 +898,8 @@ export interface ISiteConfig {
   pfpPublicId?: string;
   pfpHistory: IPfpItem[];
   jobTitles: string[];
-  resumeDriveUrl: string;
+  resumeUrl: string;
+  resumePublicId?: string;
   statusMessage: string;
   bioSummary: string;
   createdAt: Date;

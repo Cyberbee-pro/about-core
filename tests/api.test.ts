@@ -401,7 +401,7 @@ describe("about-core API & Middleware Integration Tests", () => {
         pfpUrl: "https://res.cloudinary.com/demo/image/upload/pfp.jpg",
         pfpPublicId: "portfolio/site_config/pfp_123456",
         jobTitles: ["Full-Stack Developer", "Low-Level Developer"],
-        resumeDriveUrl: "https://drive.google.com/resume",
+        resumeUrl: "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf",
         statusMessage: "Building systems...",
         bioSummary: "Full Stack Engineer",
       };
@@ -415,7 +415,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.body.data.pfpUrl).toBe("https://res.cloudinary.com/demo/image/upload/pfp.jpg");
       expect(res.body.data.pfpPublicId).toBe("portfolio/site_config/pfp_123456");
       expect(res.body.data.jobTitles).toEqual(["Full-Stack Developer", "Low-Level Developer"]);
-      expect(res.body.data.resumeDriveUrl).toBe("https://drive.google.com/resume");
+      expect(res.body.data.resumeUrl).toBe("https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf");
     });
 
     it("GET /api/v1/config returns 404 when no configuration exists", async () => {
@@ -428,11 +428,28 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(SiteConfig.create).not.toHaveBeenCalled();
     });
 
+    it("GET /api/v1/config preserves resume link from legacy resumeDriveUrl when resumeUrl is absent", async () => {
+      const legacyConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Engineer"],
+        resumeDriveUrl: "https://drive.google.com/file/d/legacy-resume-link/view",
+        statusMessage: "Building systems...",
+        bioSummary: "Engineer bio",
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(legacyConfig);
+
+      const res = await request(app).get("/api/v1/config");
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.resumeUrl).toBe("https://drive.google.com/file/d/legacy-resume-link/view");
+    });
+
     it("PUT /api/v1/config updates configuration when authenticated with complete payload", async () => {
       const updatedConfig = {
         name: "Shibraj D.",
         jobTitles: ["Lead Architect", "Systems Engineer"],
-        resumeDriveUrl: "https://drive.google.com/new-resume",
+        resumeUrl: "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/new-resume.pdf",
         statusMessage: "Shipping features...",
         bioSummary: "Updated bio",
       };
@@ -466,7 +483,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.body.success).toBe(false);
       expect(res.body.message).toContain("Missing required fields");
       expect(res.body.message).toContain("jobTitles");
-      expect(res.body.message).toContain("resumeDriveUrl");
+      expect(res.body.message).toContain("resumeUrl");
     });
 
     it("PUT /api/v1/config parses stringified jobTitles from multipart requests with all required fields", async () => {
@@ -480,7 +497,7 @@ describe("about-core API & Middleware Integration Tests", () => {
         .set("x-admin-token", "test-secret-token")
         .field("name", "Shibraj Das")
         .field("jobTitles", JSON.stringify(["Core Engineer", "Graphics Dev"]))
-        .field("resumeDriveUrl", "https://drive.google.com/resume")
+        .field("resumeUrl", "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf")
         .field("statusMessage", "Building systems...")
         .field("bioSummary", "Full stack engineer");
 
@@ -491,7 +508,7 @@ describe("about-core API & Middleware Integration Tests", () => {
           $set: expect.objectContaining({
             name: "Shibraj Das",
             jobTitles: ["Core Engineer", "Graphics Dev"],
-            resumeDriveUrl: "https://drive.google.com/resume",
+            resumeUrl: "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf",
           }),
         },
         expect.any(Object)
@@ -502,7 +519,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       const existingConfig = {
         name: "Shibraj Das",
         jobTitles: ["Full-Stack Developer"],
-        resumeDriveUrl: "https://drive.google.com/resume",
+        resumeUrl: "https://example.com/resume.pdf",
         statusMessage: "Building systems...",
         bioSummary: "Full stack engineer",
         pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_old",
@@ -535,7 +552,7 @@ describe("about-core API & Middleware Integration Tests", () => {
         .set("x-admin-token", "test-secret-token")
         .field("name", "Shibraj Das")
         .field("jobTitles", JSON.stringify(["Full-Stack Developer"]))
-        .field("resumeDriveUrl", "https://drive.google.com/resume")
+        .field("resumeUrl", "https://example.com/resume.pdf")
         .field("statusMessage", "Building systems...")
         .field("bioSummary", "Full stack engineer")
         .attach("pfp", fakeImage, {
@@ -584,7 +601,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       const existingConfig = {
         name: "Shibraj Das",
         jobTitles: ["Full-Stack Developer"],
-        resumeDriveUrl: "https://drive.google.com/resume",
+        resumeUrl: "https://example.com/resume.pdf",
         statusMessage: "Building systems...",
         bioSummary: "Full stack engineer",
         pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_current",
@@ -614,7 +631,7 @@ describe("about-core API & Middleware Integration Tests", () => {
         .send({
           name: "Shibraj Das",
           jobTitles: ["Full-Stack Developer"],
-          resumeDriveUrl: "https://drive.google.com/resume",
+          resumeUrl: "https://example.com/resume.pdf",
           statusMessage: "Building systems...",
           bioSummary: "Full stack engineer",
           pfpPublicId: "portfolio/site_config/pfp_past",
@@ -642,7 +659,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       const existingConfig = {
         name: "Shibraj Das",
         jobTitles: ["Full-Stack Developer"],
-        resumeDriveUrl: "https://drive.google.com/resume",
+        resumeUrl: "https://example.com/resume.pdf",
         statusMessage: "Building systems...",
         bioSummary: "Full stack engineer",
         pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
@@ -669,7 +686,7 @@ describe("about-core API & Middleware Integration Tests", () => {
         .send({
           name: "Shibraj Das",
           jobTitles: ["Full-Stack Developer"],
-          resumeDriveUrl: "https://drive.google.com/resume",
+          resumeUrl: "https://example.com/resume.pdf",
           statusMessage: "Building systems...",
           bioSummary: "Full stack engineer",
           pfpPublicId: "portfolio/site_config/pfp_1",
@@ -685,7 +702,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       const existingConfig = {
         name: "Shibraj Das",
         jobTitles: ["Full-Stack Developer"],
-        resumeDriveUrl: "https://drive.google.com/resume",
+        resumeUrl: "https://example.com/resume.pdf",
         statusMessage: "Building systems...",
         bioSummary: "Full stack engineer",
         pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
@@ -707,7 +724,7 @@ describe("about-core API & Middleware Integration Tests", () => {
         .send({
           name: "Shibraj Das",
           jobTitles: ["Full-Stack Developer"],
-          resumeDriveUrl: "https://drive.google.com/resume",
+          resumeUrl: "https://example.com/resume.pdf",
           statusMessage: "Building systems...",
           bioSummary: "Full stack engineer",
           pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/unknown_pfp",
@@ -722,7 +739,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       const existingConfig = {
         name: "Shibraj Das",
         jobTitles: ["Full-Stack Developer"],
-        resumeDriveUrl: "https://drive.google.com/resume",
+        resumeUrl: "https://example.com/resume.pdf",
         statusMessage: "Building systems...",
         bioSummary: "Full stack engineer",
         pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
@@ -744,7 +761,7 @@ describe("about-core API & Middleware Integration Tests", () => {
         .send({
           name: "Shibraj Das",
           jobTitles: ["Full-Stack Developer"],
-          resumeDriveUrl: "https://drive.google.com/resume",
+          resumeUrl: "https://example.com/resume.pdf",
           statusMessage: "Building systems...",
           bioSummary: "Full stack engineer",
           pfpPublicId: "portfolio/site_config/unknown_id",
@@ -764,7 +781,7 @@ describe("about-core API & Middleware Integration Tests", () => {
         .send({
           name: "Shibraj Das",
           jobTitles: ["Full-Stack Developer"],
-          resumeDriveUrl: "https://drive.google.com/resume",
+          resumeUrl: "https://example.com/resume.pdf",
           statusMessage: "Building systems...",
           bioSummary: "Full stack engineer",
           pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
@@ -773,6 +790,321 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toContain("Both pfpUrl and pfpPublicId must be provided together");
+    });
+
+    it("PUT /api/v1/config uploads resume PDF to portfolio/site_config/resume, saves resumeUrl, and returns updated document", async () => {
+      const existingConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeUrl: "https://example.com/resume.pdf",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
+        Promise.resolve({
+          ...existingConfig,
+          ...(update.$set || {}),
+        })
+      );
+
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Full-Stack Developer"]))
+        .field("resumeUrl", "https://example.com/resume.pdf")
+        .field("statusMessage", "Building systems...")
+        .field("bioSummary", "Full stack engineer")
+        .attach("resume", fakePdf, {
+          filename: "my-resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+
+      // Verify Cloudinary upload folder, resource_type, and naming convention
+      const resumeUploadCall = mockUploadCalls.find(
+        (call) => call.folder === "portfolio/site_config/resume"
+      );
+      expect(resumeUploadCall).toBeDefined();
+      expect(resumeUploadCall?.resource_type).toBe("auto");
+      expect(resumeUploadCall?.public_id).toBe("resume_date_1.pdf");
+
+      // Verify MongoDB was updated with resumeUrl
+      expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            resumeUrl: expect.stringContaining("portfolio/site_config/resume"),
+          }),
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it("POST /api/v1/config/resume uploads resume PDF directly and updates configuration", async () => {
+      const updatedConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeUrl: "https://res.cloudinary.com/demo/auto/portfolio/site_config/resume/resume_date_1.pdf",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+      };
+
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockResolvedValue(updatedConfig);
+
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain("Resume PDF uploaded");
+      expect(res.body.resumeUrl).toBeDefined();
+
+      const resumeUploadCall = mockUploadCalls.find(
+        (call) => call.folder === "portfolio/site_config/resume"
+      );
+      expect(resumeUploadCall).toBeDefined();
+      expect(resumeUploadCall?.resource_type).toBe("auto");
+      expect(resumeUploadCall?.public_id).toBe("resume_date_1.pdf");
+    });
+
+    it("POST /api/v1/config/resume rejects with 400 when no resume file is attached", async () => {
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token");
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("No resume PDF file uploaded");
+    });
+
+    it("POST /api/v1/config/resume rejects with 400 when resumeUrl is in body but no file is attached", async () => {
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          resumeUrl: "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_spoofed.pdf",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("No resume PDF file uploaded");
+      expect(SiteConfig.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("POST /api/v1/config/resume cleans up uploaded Cloudinary asset and returns 404 when configuration does not exist", async () => {
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockResolvedValue(null);
+
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Site configuration not found");
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("POST /api/v1/config/resume rejects with 400 when uploaded file buffer is not a valid PDF", async () => {
+      const fakeInvalidFile = Buffer.from("Not a real PDF file content");
+
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token")
+        .attach("resume", fakeInvalidFile, {
+          filename: "not_a_pdf.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Invalid file content: only PDF files are allowed for resume upload");
+      expect(mockUploadCalls.filter((c) => c.folder === "portfolio/site_config/resume")).toHaveLength(0);
+      expect(SiteConfig.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("POST /api/v1/config cleans up uploaded resume PDF if config already exists (409)", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue({ name: "Existing Config" });
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(409);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("POST /api/v1/config cleans up uploaded resume PDF if payload validation fails (400)", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        // Missing "name" to trigger validation failure
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(400);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("POST /api/v1/config does NOT call mockDestroy when validation fails without an uploaded file (safety guard)", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+
+      const res = await request(app)
+        .post("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          // Missing "name" to trigger validation failure
+          resumePublicId: "portfolio/site_config/resume/pre_existing_resume.pdf",
+          resumeUrl: "https://example.com/resume.pdf",
+          jobTitles: ["Dev"],
+        });
+
+      expect(res.status).toBe(400);
+      expect(mockDestroy).not.toHaveBeenCalled();
+    });
+
+    it("POST /api/v1/config cleans up uploaded resume PDF if database creation throws (500)", async () => {
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+      (SiteConfig.create as jest.Mock).mockRejectedValue(new Error("Database connection dropped"));
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(500);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("PUT /api/v1/config cleans up uploaded resume PDF if payload validation fails (400)", async () => {
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        // Missing "name" to trigger validation failure
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(400);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("PUT /api/v1/config cleans up uploaded resume PDF if database update throws (500)", async () => {
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockRejectedValue(new Error("Write collision"));
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .field("name", "Shibraj Das")
+        .field("jobTitles", JSON.stringify(["Dev"]))
+        .field("statusMessage", "Building...")
+        .field("bioSummary", "Bio...")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(500);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("POST /api/v1/config/resume cleans up uploaded resume PDF and propagates error if database update throws (500)", async () => {
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockRejectedValue(new Error("Mongo network error"));
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(500);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        "portfolio/site_config/resume/resume_date_1.pdf"
+      );
+    });
+
+    it("POST /api/v1/config/resume swallows destroy cleanup errors so original error is not masked", async () => {
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockResolvedValue(null);
+      mockDestroy.mockRejectedValueOnce(new Error("Cloudinary API unavailable"));
+      const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+      const res = await request(app)
+        .post("/api/v1/config/resume")
+        .set("x-admin-token", "test-secret-token")
+        .attach("resume", fakePdf, {
+          filename: "resume.pdf",
+          contentType: "application/pdf",
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.message).toContain("Site configuration not found");
+      expect(mockDestroy).toHaveBeenCalled();
     });
   });
 

@@ -5,6 +5,7 @@ dotenv.config();
 import express, { Application, Request, Response } from "express";
 import cors from "cors";
 import { connectDB } from "./config/db";
+import { migrateSiteConfigResumeUrl } from "./models/SiteConfig";
 import { dbLoggerMiddleware } from "./middlewares/dbLoggerMiddleware";
 import { notFoundMiddleware, errorMiddleware } from "./middlewares/errorMiddleware";
 import { getHealth } from "./controllers/configController";
@@ -103,7 +104,10 @@ const PORT = process.env.PORT || 5000;
 
 if (process.env.NODE_ENV !== "test") {
   connectDB()
-    .then(() => {
+    .then(async () => {
+      await migrateSiteConfigResumeUrl().catch((err) => {
+        process.stderr.write(`SiteConfig migration warning: ${String(err)}\n`);
+      });
       app.listen(PORT, () => {
         // LogEntry middleware is used for request logging; avoid standard console.log per rule
       });

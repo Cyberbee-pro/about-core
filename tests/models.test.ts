@@ -4,7 +4,7 @@ import { Achievement } from "@/models/Achievement";
 import { Experience } from "@/models/Experience";
 import { Certificate } from "@/models/Certificate";
 import { Project } from "@/models/Project";
-import { SiteConfig } from "@/models/SiteConfig";
+import { SiteConfig, migrateSiteConfigResumeUrl } from "@/models/SiteConfig";
 
 /**
  * These tests validate Mongoose schema definitions using `document.validate()`
@@ -428,7 +428,7 @@ describe("SiteConfig Model", () => {
   const validConfigData = {
     name: "Shibraj Das",
     jobTitles: ["Full-Stack Developer", "Low-Level Developer", "Game Developer"],
-    resumeDriveUrl: "https://drive.google.com/resume",
+    resumeUrl: "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf",
     statusMessage: "Building systems...",
     bioSummary: "Full stack engineer specializing in distributed systems.",
   };
@@ -443,11 +443,12 @@ describe("SiteConfig Model", () => {
       "Low-Level Developer",
       "Game Developer",
     ]);
-    expect(config.resumeDriveUrl).toBe("https://drive.google.com/resume");
+    expect(config.resumeUrl).toBe("https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf");
     expect(config.statusMessage).toBe("Building systems...");
     expect(config.bioSummary).toBe("Full stack engineer specializing in distributed systems.");
     expect(config.pfpUrl).toBeUndefined();
     expect(config.pfpPublicId).toBeUndefined();
+    expect(config.resumePublicId).toBeUndefined();
   });
 
   it("accepts optional pfpUrl and pfpPublicId", () => {
@@ -460,6 +461,19 @@ describe("SiteConfig Model", () => {
     expect(config.validateSync()).toBeUndefined();
     expect(config.pfpUrl).toBe("https://res.cloudinary.com/demo/image/upload/pfp.png");
     expect(config.pfpPublicId).toBe("portfolio/site_config/pfp_123456");
+  });
+
+  it("accepts optional resumePublicId", () => {
+    const config = new SiteConfig({
+      ...validConfigData,
+      resumePublicId: "portfolio/site_config/resume/resume_date_1.pdf",
+    });
+
+    expect(config.validateSync()).toBeUndefined();
+    expect(config.resumeUrl).toBe(
+      "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf"
+    );
+    expect(config.resumePublicId).toBe("portfolio/site_config/resume/resume_date_1.pdf");
   });
 
   it("defaults pfpHistory to an empty array", () => {
@@ -494,7 +508,7 @@ describe("SiteConfig Model", () => {
     expect(error).toBeDefined();
     expect(error!.errors.name).toBeDefined();
     expect(error!.errors.jobTitles).toBeDefined();
-    expect(error!.errors.resumeDriveUrl).toBeDefined();
+    expect(error!.errors.resumeUrl).toBeDefined();
     expect(error!.errors.statusMessage).toBeDefined();
     expect(error!.errors.bioSummary).toBeDefined();
   });
@@ -515,12 +529,12 @@ describe("SiteConfig Model", () => {
     expect(error!.errors.jobTitles).toBeDefined();
   });
 
-  it("fails validation when resumeDriveUrl is missing", () => {
-    const { resumeDriveUrl: _r, ...noResume } = validConfigData;
+  it("fails validation when resumeUrl is missing", () => {
+    const { resumeUrl: _r, ...noResume } = validConfigData;
     const doc = new SiteConfig(noResume);
     const error = doc.validateSync();
     expect(error).toBeDefined();
-    expect(error!.errors.resumeDriveUrl).toBeDefined();
+    expect(error!.errors.resumeUrl).toBeDefined();
   });
 
   it("fails validation when statusMessage is missing", () => {
@@ -541,6 +555,75 @@ describe("SiteConfig Model", () => {
 
   it("sets the correct model name", () => {
     expect(SiteConfig.modelName).toBe("SiteConfig");
+  });
+
+  it("migrates resumeDriveUrl into resumeUrl when hydrating legacy document", () => {
+    const rawLegacyData = {
+      _id: new mongoose.Types.ObjectId(),
+      name: "Legacy Shibraj",
+      jobTitles: ["Engineer"],
+      resumeDriveUrl: "https://drive.google.com/file/d/legacy-resume/view",
+      statusMessage: "Legacy status",
+      bioSummary: "Legacy bio",
+    };
+
+    const hydrated = SiteConfig.hydrate(rawLegacyData);
+    expect(hydrated.resumeUrl).toBe("https://drive.google.com/file/d/legacy-resume/view");
+    expect(hydrated.validateSync()).toBeUndefined();
+    const serialized = hydrated.toJSON();
+    expect(serialized.resumeUrl).toBe("https://drive.google.com/file/d/legacy-resume/view");
+    expect((serialized as Record<string, unknown>).resumeDriveUrl).toBeUndefined();
+  });
+
+  it("does not overwrite existing resumeUrl with resumeDriveUrl during hydration", () => {
+    const rawData = {
+      _id: new mongoose.Types.ObjectId(),
+      name: "Updated Shibraj",
+      jobTitles: ["Engineer"],
+      resumeUrl: "https://res.cloudinary.com/demo/raw/upload/resume.pdf",
+      resumeDriveUrl: "https://drive.google.com/old",
+      statusMessage: "Status",
+      bioSummary: "Bio",
+    };
+
+    const hydrated = SiteConfig.hydrate(rawData);
+    expect(hydrated.resumeUrl).toBe("https://res.cloudinary.com/demo/raw/upload/resume.pdf");
+    expect(hydrated.validateSync()).toBeUndefined();
+  });
+
+  it("migrateSiteConfigResumeUrl runs updateMany with pipeline query", async () => {
+    const mockUpdateMany = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    const originalCollection = SiteConfig.collection;
+    Object.defineProperty(SiteConfig, "collection", {
+      value: { updateMany: mockUpdateMany },
+      configurable: true,
+    });
+
+    try {
+      const result = await migrateSiteConfigResumeUrl();
+      expect(result.modifiedCount).toBe(1);
+      expect(mockUpdateMany).toHaveBeenCalledWith(
+        {
+          $or: [{ resumeUrl: { $exists: false } }, { resumeUrl: null }, { resumeUrl: "" }],
+          resumeDriveUrl: { $exists: true, $ne: "" },
+        },
+        [
+          {
+            $set: {
+              resumeUrl: "$resumeDriveUrl",
+            },
+          },
+          {
+            $unset: "resumeDriveUrl",
+          },
+        ]
+      );
+    } finally {
+      Object.defineProperty(SiteConfig, "collection", {
+        value: originalCollection,
+        configurable: true,
+      });
+    }
   });
 });
 
@@ -577,9 +660,10 @@ describe("Models barrel export (src/models/index.ts)", () => {
     expect(barrel.Certificate.modelName).toBe("Certificate");
   });
 
-  it("exports SiteConfig model", () => {
+  it("exports SiteConfig model and migration helper", () => {
     expect(barrel.SiteConfig).toBeDefined();
     expect(barrel.SiteConfig.modelName).toBe("SiteConfig");
+    expect(typeof barrel.migrateSiteConfigResumeUrl).toBe("function");
   });
 
   it("exports LogEntry model", () => {

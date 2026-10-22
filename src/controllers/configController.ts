@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { Request, Response, NextFunction } from "express";
 import { SiteConfig, IPfpItem } from "../models/SiteConfig";
+import cloudinary from "../config/cloudinary";
 
 const parseJobTitles = (input: unknown): string[] | undefined => {
   if (typeof input === "string") {
@@ -26,15 +27,40 @@ const validateSiteConfigPayload = (
   parsedJobTitles: string[] | undefined
 ): string[] => {
   const missing: string[] = [];
-  const { name, resumeDriveUrl, statusMessage, bioSummary } = body;
+  const { name, resumeUrl, statusMessage, bioSummary } = body;
 
   if (typeof name !== "string" || !name.trim()) missing.push("name");
   if (!Array.isArray(parsedJobTitles) || parsedJobTitles.length === 0) missing.push("jobTitles");
-  if (typeof resumeDriveUrl !== "string" || !resumeDriveUrl.trim()) missing.push("resumeDriveUrl");
+  if (typeof resumeUrl !== "string" || !resumeUrl.trim()) missing.push("resumeUrl");
   if (typeof statusMessage !== "string" || !statusMessage.trim()) missing.push("statusMessage");
   if (typeof bioSummary !== "string" || !bioSummary.trim()) missing.push("bioSummary");
 
   return missing;
+};
+
+export const hasUploadedResumeFile = (req: Request): boolean => {
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+  return Boolean(
+    files &&
+      ((Array.isArray(files.resume) && files.resume.length > 0) ||
+        (Array.isArray(files.resumeFile) && files.resumeFile.length > 0) ||
+        (Array.isArray(files.resumePdf) && files.resumePdf.length > 0) ||
+        (Array.isArray(files.pdf) && files.pdf.length > 0))
+  );
+};
+
+export const cleanupUploadedResume = async (req: Request): Promise<void> => {
+  try {
+    if (
+      hasUploadedResumeFile(req) &&
+      typeof req.body.resumePublicId === "string" &&
+      req.body.resumePublicId.trim()
+    ) {
+      await cloudinary.uploader.destroy(req.body.resumePublicId.trim());
+    }
+  } catch {
+    // Best-effort cleanup: safely swallow error so original API response or error is preserved
+  }
 };
 
 export const getSiteConfig = async (
@@ -51,6 +77,12 @@ export const getSiteConfig = async (
         message: "Site configuration not found",
       });
       return;
+    }
+
+    // Safety fallback for legacy or mocked documents: ensure resumeUrl is populated
+    const legacyDoc = config as unknown as Record<string, unknown>;
+    if (!config.resumeUrl && typeof legacyDoc.resumeDriveUrl === "string" && legacyDoc.resumeDriveUrl) {
+      config.resumeUrl = legacyDoc.resumeDriveUrl;
     }
 
     res.status(200).json({
@@ -70,6 +102,7 @@ export const createSiteConfig = async (
   try {
     const existing = await SiteConfig.findOne();
     if (existing) {
+      await cleanupUploadedResume(req);
       res.status(409).json({
         success: false,
         message: "Site configuration already exists. Use PUT to update.",
@@ -82,7 +115,8 @@ export const createSiteConfig = async (
       pfpUrl,
       pfpPublicId,
       jobTitles,
-      resumeDriveUrl,
+      resumeUrl,
+      resumePublicId,
       statusMessage,
       bioSummary,
     } = req.body;
@@ -91,6 +125,7 @@ export const createSiteConfig = async (
     const missingFields = validateSiteConfigPayload(req.body, parsedJobTitles);
 
     if (missingFields.length > 0) {
+      await cleanupUploadedResume(req);
       res.status(400).json({
         success: false,
         message: `Missing required fields: ${missingFields.join(", ")}`,
@@ -99,6 +134,7 @@ export const createSiteConfig = async (
     }
 
     if ((pfpUrl && !pfpPublicId) || (!pfpUrl && pfpPublicId)) {
+      await cleanupUploadedResume(req);
       res.status(400).json({
         success: false,
         message: "Both pfpUrl and pfpPublicId must be provided together",
@@ -124,9 +160,10 @@ export const createSiteConfig = async (
       name: (name as string).trim(),
       ...(typeof pfpUrl === "string" ? { pfpUrl: pfpUrl.trim() } : {}),
       ...(typeof pfpPublicId === "string" ? { pfpPublicId: pfpPublicId.trim() } : {}),
+      resumeUrl: (resumeUrl as string).trim(),
+      ...(typeof resumePublicId === "string" ? { resumePublicId: resumePublicId.trim() } : {}),
       pfpHistory: initialHistory,
       jobTitles: parsedJobTitles!,
-      resumeDriveUrl: (resumeDriveUrl as string).trim(),
       statusMessage: (statusMessage as string).trim(),
       bioSummary: (bioSummary as string).trim(),
     });
@@ -137,6 +174,7 @@ export const createSiteConfig = async (
       data: config,
     });
   } catch (error) {
+    await cleanupUploadedResume(req);
     next(error);
   }
 };
@@ -152,7 +190,8 @@ export const updateSiteConfig = async (
       pfpUrl,
       pfpPublicId,
       jobTitles,
-      resumeDriveUrl,
+      resumeUrl,
+      resumePublicId,
       statusMessage,
       bioSummary,
     } = req.body;
@@ -161,6 +200,7 @@ export const updateSiteConfig = async (
     const missingFields = validateSiteConfigPayload(req.body, parsedJobTitles);
 
     if (missingFields.length > 0) {
+      await cleanupUploadedResume(req);
       res.status(400).json({
         success: false,
         message: `Missing required fields: ${missingFields.join(", ")}`,
@@ -171,10 +211,14 @@ export const updateSiteConfig = async (
     const setFields: Record<string, unknown> = {
       name: (name as string).trim(),
       jobTitles: parsedJobTitles!,
-      resumeDriveUrl: (resumeDriveUrl as string).trim(),
+      resumeUrl: (resumeUrl as string).trim(),
       statusMessage: (statusMessage as string).trim(),
       bioSummary: (bioSummary as string).trim(),
     };
+
+    if (typeof resumePublicId === "string" && resumePublicId.trim()) {
+      setFields.resumePublicId = resumePublicId.trim();
+    }
 
     const hasUploadedFile = Boolean(
       req.files &&
@@ -225,6 +269,7 @@ export const updateSiteConfig = async (
           (item) => item.publicId === incomingPublicId && item.url === incomingUrl
         );
         if (!matchedItem) {
+          await cleanupUploadedResume(req);
           res.status(400).json({
             success: false,
             message: "Selected profile picture does not match history or is mismatched",
@@ -238,6 +283,7 @@ export const updateSiteConfig = async (
           (item) => item.publicId === incomingPublicId
         );
         if (!matchedItem) {
+          await cleanupUploadedResume(req);
           res.status(400).json({
             success: false,
             message: "Profile picture publicId not found in history",
@@ -249,6 +295,7 @@ export const updateSiteConfig = async (
       } else if (!incomingPublicId && incomingUrl) {
         const matchedItem = existingHistory.find((item) => item.url === incomingUrl);
         if (!matchedItem) {
+          await cleanupUploadedResume(req);
           res.status(400).json({
             success: false,
             message: "Raw profile picture URL without valid publicId is not allowed",
@@ -286,6 +333,7 @@ export const updateSiteConfig = async (
       data: updatedConfig,
     });
   } catch (error) {
+    await cleanupUploadedResume(req);
     next(error);
   }
 };
@@ -304,5 +352,57 @@ export const getHealth = async (_req: Request, res: Response): Promise<void> => 
     nodeVersion: process.version,
     env: process.env.NODE_ENV || "development",
   });
+};
+
+export const uploadResume = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const hasUploadedResume = hasUploadedResumeFile(req);
+
+    if (!hasUploadedResume || !req.body.resumeUrl) {
+      await cleanupUploadedResume(req);
+      res.status(400).json({
+        success: false,
+        message: "No resume PDF file uploaded. Accepted multipart fields: resume, resumeFile, resumePdf, pdf",
+      });
+      return;
+    }
+
+    const setFields: Record<string, unknown> = {
+      resumeUrl: req.body.resumeUrl,
+    };
+    if (req.body.resumePublicId) {
+      setFields.resumePublicId = req.body.resumePublicId;
+    }
+
+    const updatedConfig = await SiteConfig.findOneAndUpdate(
+      {},
+      { $set: setFields },
+      { new: true }
+    );
+
+    if (!updatedConfig) {
+      await cleanupUploadedResume(req);
+      res.status(404).json({
+        success: false,
+        message: "Site configuration not found. Create configuration before uploading a resume.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Resume PDF uploaded successfully",
+      data: updatedConfig,
+      resumeUrl: req.body.resumeUrl,
+      resumePublicId: req.body.resumePublicId,
+    });
+  } catch (error) {
+    await cleanupUploadedResume(req);
+    next(error);
+  }
 };
 
