@@ -53,7 +53,7 @@ Protected requests accept either `Authorization: Bearer <ADMIN_SECRET>` or
   looking up the experience by case-insensitive organization name and automatically toggling
   older positions to `isCurrent: false` when the new position is active.
 - `SiteConfig` stores `name`, active `pfpUrl`, `pfpPublicId`, `pfpHistory` (`[{ url, publicId, uploadedAt }]`),
-  `jobTitles` array, `resumeDriveUrl`, optional Cloudinary `resumeUrl`, optional `resumePublicId`, `statusMessage`, and `bioSummary`.
+  `jobTitles` array, `resumeUrl`, optional `resumePublicId`, `statusMessage`, and `bioSummary`.
 - `LogEntry` stores every completed request in MongoDB. Statuses map to
   `INFO` (2xx/3xx), `WARN` (4xx), or `ERROR` (5xx), with timing and optional error data.
 - Media is accepted in memory via Multer fields `image`, `videoDemo`, `threeDModel`,

@@ -625,6 +625,18 @@ export const processExperienceUploads = async (
   }
 };
 
+/**
+ * Validate that a buffer contains genuine PDF content by checking for the
+ * %PDF- magic bytes signature within the header (per ISO 32000-1 specification).
+ */
+export const isPdfBuffer = (buffer: Buffer): boolean => {
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 5) {
+    return false;
+  }
+  const headerSlice = buffer.subarray(0, Math.min(buffer.length, 1024));
+  return headerSlice.indexOf("%PDF-") !== -1;
+};
+
 export const processSiteConfigUploads = async (
   req: Request,
   _res: Response,
@@ -664,6 +676,14 @@ export const processSiteConfigUploads = async (
       (files.pdf && files.pdf[0]);
 
     if (resumeFile) {
+      if (!isPdfBuffer(resumeFile.buffer)) {
+        const err = new Error(
+          "Invalid file content: only PDF files are allowed for resume upload"
+        ) as Error & { statusCode?: number };
+        err.statusCode = 400;
+        return next(err);
+      }
+
       const folder = "portfolio/site_config/resume";
       const publicId = await getNextResumePublicId(cache, folder);
       const result = await uploadBufferToCloudinary(resumeFile.buffer, {

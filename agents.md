@@ -13,7 +13,7 @@ This repository contains the backend infrastructure. You must ground all archite
 
 ## Audit Summary
 Codebase audit completed with all 10 test suites and 161 tests passing. Key verified areas:
-- Model schemas: Project (5-status enum, image required, versions schema, social links, skills refs), SiteConfig (name, pfp, pfpHistory, jobTitles, bio, resumeDriveUrl, resumeUrl), Skill, Certificate, Achievement, Experience, LogEntry — all consistent
+- Model schemas: Project (5-status enum, image required, versions schema, social links, skills refs), SiteConfig (name, pfp, pfpHistory, jobTitles, bio, resumeUrl), Skill, Certificate, Achievement, Experience, LogEntry — all consistent
 - Routes & controllers: Public/protected split with authMiddleware, consistent error handling patterns, atomic experience position append, site config avatar rollback, and Cloudinary PDF resume uploads
 - Middleware pipeline: cors (dynamic multi-origin), auth (Bearer/x-admin-token), dbLogger (MongoDB request telemetry), error (Mongoose mapping), upload (Cloudinary streaming with PDF support)
 - Media storage: Structured Cloudinary folder hierarchy documented in `cloudinary.md`

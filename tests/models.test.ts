@@ -428,7 +428,7 @@ describe("SiteConfig Model", () => {
   const validConfigData = {
     name: "Shibraj Das",
     jobTitles: ["Full-Stack Developer", "Low-Level Developer", "Game Developer"],
-    resumeDriveUrl: "https://drive.google.com/resume",
+    resumeUrl: "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf",
     statusMessage: "Building systems...",
     bioSummary: "Full stack engineer specializing in distributed systems.",
   };
@@ -443,11 +443,12 @@ describe("SiteConfig Model", () => {
       "Low-Level Developer",
       "Game Developer",
     ]);
-    expect(config.resumeDriveUrl).toBe("https://drive.google.com/resume");
+    expect(config.resumeUrl).toBe("https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf");
     expect(config.statusMessage).toBe("Building systems...");
     expect(config.bioSummary).toBe("Full stack engineer specializing in distributed systems.");
     expect(config.pfpUrl).toBeUndefined();
     expect(config.pfpPublicId).toBeUndefined();
+    expect(config.resumePublicId).toBeUndefined();
   });
 
   it("accepts optional pfpUrl and pfpPublicId", () => {
@@ -462,10 +463,9 @@ describe("SiteConfig Model", () => {
     expect(config.pfpPublicId).toBe("portfolio/site_config/pfp_123456");
   });
 
-  it("accepts optional resumeUrl and resumePublicId", () => {
+  it("accepts optional resumePublicId", () => {
     const config = new SiteConfig({
       ...validConfigData,
-      resumeUrl: "https://res.cloudinary.com/demo/raw/upload/portfolio/site_config/resume/resume_date_1.pdf",
       resumePublicId: "portfolio/site_config/resume/resume_date_1.pdf",
     });
 
@@ -508,7 +508,7 @@ describe("SiteConfig Model", () => {
     expect(error).toBeDefined();
     expect(error!.errors.name).toBeDefined();
     expect(error!.errors.jobTitles).toBeDefined();
-    expect(error!.errors.resumeDriveUrl).toBeDefined();
+    expect(error!.errors.resumeUrl).toBeDefined();
     expect(error!.errors.statusMessage).toBeDefined();
     expect(error!.errors.bioSummary).toBeDefined();
   });
@@ -529,12 +529,12 @@ describe("SiteConfig Model", () => {
     expect(error!.errors.jobTitles).toBeDefined();
   });
 
-  it("fails validation when resumeDriveUrl is missing", () => {
-    const { resumeDriveUrl: _r, ...noResume } = validConfigData;
+  it("fails validation when resumeUrl is missing", () => {
+    const { resumeUrl: _r, ...noResume } = validConfigData;
     const doc = new SiteConfig(noResume);
     const error = doc.validateSync();
     expect(error).toBeDefined();
-    expect(error!.errors.resumeDriveUrl).toBeDefined();
+    expect(error!.errors.resumeUrl).toBeDefined();
   });
 
   it("fails validation when statusMessage is missing", () => {

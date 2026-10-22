@@ -117,8 +117,7 @@ export interface ISiteConfig extends Document {
   pfpPublicId?: string;
   pfpHistory?: IPfpItem[];
   jobTitles: string[];
-  resumeDriveUrl: string;
-  resumeUrl?: string;
+  resumeUrl: string;
   resumePublicId?: string;
   statusMessage: string;
   bioSummary: string;
@@ -150,8 +149,7 @@ const SiteConfigSchema = new Schema<ISiteConfig>(
         message: "jobTitles must have at least one entry",
       },
     },
-    resumeDriveUrl: { type: String, required: true },
-    resumeUrl: { type: String },
+    resumeUrl: { type: String, required: true },
     resumePublicId: { type: String },
     statusMessage: { type: String, required: true },
     bioSummary: { type: String, required: true },

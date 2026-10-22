@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { Request, Response, NextFunction } from "express";
 import { SiteConfig, IPfpItem } from "../models/SiteConfig";
+import cloudinary from "../config/cloudinary";
 
 const parseJobTitles = (input: unknown): string[] | undefined => {
   if (typeof input === "string") {
@@ -26,16 +27,11 @@ const validateSiteConfigPayload = (
   parsedJobTitles: string[] | undefined
 ): string[] => {
   const missing: string[] = [];
-  const { name, resumeDriveUrl, resumeUrl, statusMessage, bioSummary } = body;
+  const { name, resumeUrl, statusMessage, bioSummary } = body;
 
   if (typeof name !== "string" || !name.trim()) missing.push("name");
   if (!Array.isArray(parsedJobTitles) || parsedJobTitles.length === 0) missing.push("jobTitles");
-
-  const hasResume =
-    (typeof resumeDriveUrl === "string" && Boolean(resumeDriveUrl.trim())) ||
-    (typeof resumeUrl === "string" && Boolean(resumeUrl.trim()));
-
-  if (!hasResume) missing.push("resumeDriveUrl");
+  if (typeof resumeUrl !== "string" || !resumeUrl.trim()) missing.push("resumeUrl");
   if (typeof statusMessage !== "string" || !statusMessage.trim()) missing.push("statusMessage");
   if (typeof bioSummary !== "string" || !bioSummary.trim()) missing.push("bioSummary");
 
@@ -87,7 +83,8 @@ export const createSiteConfig = async (
       pfpUrl,
       pfpPublicId,
       jobTitles,
-      resumeDriveUrl,
+      resumeUrl,
+      resumePublicId,
       statusMessage,
       bioSummary,
     } = req.body;
@@ -125,26 +122,14 @@ export const createSiteConfig = async (
       });
     }
 
-    const effectiveResumeDriveUrl =
-      typeof resumeDriveUrl === "string" && resumeDriveUrl.trim()
-        ? (resumeDriveUrl as string).trim()
-        : typeof req.body.resumeUrl === "string" && req.body.resumeUrl.trim()
-        ? (req.body.resumeUrl as string).trim()
-        : "";
-
     const config = await SiteConfig.create({
       name: (name as string).trim(),
       ...(typeof pfpUrl === "string" ? { pfpUrl: pfpUrl.trim() } : {}),
       ...(typeof pfpPublicId === "string" ? { pfpPublicId: pfpPublicId.trim() } : {}),
-      ...(typeof req.body.resumeUrl === "string" && req.body.resumeUrl.trim()
-        ? { resumeUrl: (req.body.resumeUrl as string).trim() }
-        : {}),
-      ...(typeof req.body.resumePublicId === "string" && req.body.resumePublicId.trim()
-        ? { resumePublicId: (req.body.resumePublicId as string).trim() }
-        : {}),
+      resumeUrl: (resumeUrl as string).trim(),
+      ...(typeof resumePublicId === "string" ? { resumePublicId: resumePublicId.trim() } : {}),
       pfpHistory: initialHistory,
       jobTitles: parsedJobTitles!,
-      resumeDriveUrl: effectiveResumeDriveUrl,
       statusMessage: (statusMessage as string).trim(),
       bioSummary: (bioSummary as string).trim(),
     });
@@ -170,7 +155,8 @@ export const updateSiteConfig = async (
       pfpUrl,
       pfpPublicId,
       jobTitles,
-      resumeDriveUrl,
+      resumeUrl,
+      resumePublicId,
       statusMessage,
       bioSummary,
     } = req.body;
@@ -186,26 +172,16 @@ export const updateSiteConfig = async (
       return;
     }
 
-    const effectiveResumeDriveUrl =
-      typeof resumeDriveUrl === "string" && resumeDriveUrl.trim()
-        ? (resumeDriveUrl as string).trim()
-        : typeof req.body.resumeUrl === "string" && req.body.resumeUrl.trim()
-        ? (req.body.resumeUrl as string).trim()
-        : "";
-
     const setFields: Record<string, unknown> = {
       name: (name as string).trim(),
       jobTitles: parsedJobTitles!,
-      resumeDriveUrl: effectiveResumeDriveUrl,
+      resumeUrl: (resumeUrl as string).trim(),
       statusMessage: (statusMessage as string).trim(),
       bioSummary: (bioSummary as string).trim(),
     };
 
-    if (typeof req.body.resumeUrl === "string" && req.body.resumeUrl.trim()) {
-      setFields.resumeUrl = (req.body.resumeUrl as string).trim();
-    }
-    if (typeof req.body.resumePublicId === "string" && req.body.resumePublicId.trim()) {
-      setFields.resumePublicId = (req.body.resumePublicId as string).trim();
+    if (typeof resumePublicId === "string" && resumePublicId.trim()) {
+      setFields.resumePublicId = resumePublicId.trim();
     }
 
     const hasUploadedFile = Boolean(
@@ -344,7 +320,16 @@ export const uploadResume = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    if (!req.body.resumeUrl) {
+    const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+    const hasUploadedResumeFile = Boolean(
+      files &&
+        ((files.resume && files.resume.length > 0) ||
+          (files.resumeFile && files.resumeFile.length > 0) ||
+          (files.resumePdf && files.resumePdf.length > 0) ||
+          (files.pdf && files.pdf.length > 0))
+    );
+
+    if (!hasUploadedResumeFile || !req.body.resumeUrl) {
       res.status(400).json({
         success: false,
         message: "No resume PDF file uploaded. Accepted multipart fields: resume, resumeFile, resumePdf, pdf",
@@ -354,7 +339,6 @@ export const uploadResume = async (
 
     const setFields: Record<string, unknown> = {
       resumeUrl: req.body.resumeUrl,
-      resumeDriveUrl: req.body.resumeUrl,
     };
     if (req.body.resumePublicId) {
       setFields.resumePublicId = req.body.resumePublicId;
@@ -365,6 +349,21 @@ export const uploadResume = async (
       { $set: setFields },
       { new: true }
     );
+
+    if (!updatedConfig) {
+      if (req.body.resumePublicId) {
+        try {
+          await cloudinary.uploader.destroy(req.body.resumePublicId as string);
+        } catch {
+          // ignore cleanup error
+        }
+      }
+      res.status(404).json({
+        success: false,
+        message: "Site configuration not found. Create configuration before uploading a resume.",
+      });
+      return;
+    }
 
     res.status(200).json({
       success: true,
