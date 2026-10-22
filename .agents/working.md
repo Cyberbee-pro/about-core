@@ -36,9 +36,9 @@
 │   │   ├── Project.ts                       # Core project schema (slug, tags, skills refs, 3D model, versions)
 │   │   ├── SiteConfig.ts                    # Global configuration (name, pfp, pfpHistory, jobTitles, resume, bio)
 │   │   ├── Skill.ts                         # Tech stack skills (name, logoUrl, featured, weight)
-│   │   ├── Certificate.ts                   # Accreditations & certificates (title, org, mediaUrl, weight)
+│   │   ├── Certificate.ts                   # Accreditations & certificates (title, organization, mediaUrl, weight)
 │   │   ├── Achievement.ts                   # Milestones & honors (title, date, detail, weight)
-│   │   ├── Experience.ts                    # Work history (org, tag, type, iconUrl, skills, positions[])
+│   │   ├── Experience.ts                    # Work history (organization, tag, type, iconUrl, skills, positions[])
 │   │   ├── LogEntry.ts                      # Centralized MongoDB request log telemetry
 │   │   └── index.ts                         # Barrel export for all 7 Mongoose models
 │   ├── controllers/                         # Route handler controllers (business logic & validation)

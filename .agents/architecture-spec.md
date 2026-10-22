@@ -376,7 +376,7 @@ export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
 | --- | --- | --- | --- | --- |
 | **GET** | `/api/v1/certificates` | No | None | Fetch all certificates sorted by `{ weight: 1, title: 1 }`. |
 | **GET** | `/api/v1/certificates/:id` | No | Params: `id` | Fetch single certificate by ObjectId. |
-| **POST** | `/api/v1/certificates` | Yes | Multipart / JSON: `title`, `org`, `mediaUrl` | Create certificate with unique title validation and media upload. |
+| **POST** | `/api/v1/certificates` | Yes | Multipart / JSON: `title`, `organization`, `mediaUrl` | Create certificate with unique title validation and media upload. |
 | **PUT** | `/api/v1/certificates/:id` | Yes | Multipart / JSON: partial fields | Update certificate by ObjectId. |
 | **DELETE** | `/api/v1/certificates/:id` | Yes | Params: `id` | Delete certificate by ObjectId. |
 
