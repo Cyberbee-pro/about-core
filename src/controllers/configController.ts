@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { Request, Response, NextFunction } from "express";
 import { SiteConfig, IPfpItem } from "../models/SiteConfig";
 import cloudinary from "../config/cloudinary";
+import { sanitizeResumeUrl, sanitizeResumePublicId } from "../middlewares/uploadMiddleware";
 
 const parseJobTitles = (input: unknown): string[] | undefined => {
   if (typeof input === "string") {
@@ -56,7 +57,7 @@ export const cleanupUploadedResume = async (req: Request): Promise<void> => {
       typeof req.body.resumePublicId === "string" &&
       req.body.resumePublicId.trim()
     ) {
-      await cloudinary.uploader.destroy(req.body.resumePublicId.trim());
+      await cloudinary.uploader.destroy(sanitizeResumePublicId(req.body.resumePublicId.trim()));
     }
   } catch {
     // Best-effort cleanup: safely swallow error so original API response or error is preserved
@@ -160,8 +161,8 @@ export const createSiteConfig = async (
       name: (name as string).trim(),
       ...(typeof pfpUrl === "string" ? { pfpUrl: pfpUrl.trim() } : {}),
       ...(typeof pfpPublicId === "string" ? { pfpPublicId: pfpPublicId.trim() } : {}),
-      resumeUrl: (resumeUrl as string).trim(),
-      ...(typeof resumePublicId === "string" ? { resumePublicId: resumePublicId.trim() } : {}),
+      resumeUrl: sanitizeResumeUrl((resumeUrl as string).trim()),
+      ...(typeof resumePublicId === "string" ? { resumePublicId: sanitizeResumePublicId(resumePublicId.trim()) } : {}),
       pfpHistory: initialHistory,
       jobTitles: parsedJobTitles!,
       statusMessage: (statusMessage as string).trim(),
@@ -211,13 +212,13 @@ export const updateSiteConfig = async (
     const setFields: Record<string, unknown> = {
       name: (name as string).trim(),
       jobTitles: parsedJobTitles!,
-      resumeUrl: (resumeUrl as string).trim(),
+      resumeUrl: sanitizeResumeUrl((resumeUrl as string).trim()),
       statusMessage: (statusMessage as string).trim(),
       bioSummary: (bioSummary as string).trim(),
     };
 
     if (typeof resumePublicId === "string" && resumePublicId.trim()) {
-      setFields.resumePublicId = resumePublicId.trim();
+      setFields.resumePublicId = sanitizeResumePublicId(resumePublicId.trim());
     }
 
     const hasUploadedFile = Boolean(
@@ -371,11 +372,18 @@ export const uploadResume = async (
       return;
     }
 
+    const cleanResumeUrl = typeof req.body.resumeUrl === "string"
+      ? sanitizeResumeUrl(req.body.resumeUrl.trim())
+      : req.body.resumeUrl;
+    const cleanResumePublicId = typeof req.body.resumePublicId === "string"
+      ? sanitizeResumePublicId(req.body.resumePublicId.trim())
+      : req.body.resumePublicId;
+
     const setFields: Record<string, unknown> = {
-      resumeUrl: req.body.resumeUrl,
+      resumeUrl: cleanResumeUrl,
     };
-    if (req.body.resumePublicId) {
-      setFields.resumePublicId = req.body.resumePublicId;
+    if (cleanResumePublicId) {
+      setFields.resumePublicId = cleanResumePublicId;
     }
 
     const updatedConfig = await SiteConfig.findOneAndUpdate(
@@ -397,8 +405,8 @@ export const uploadResume = async (
       success: true,
       message: "Resume PDF uploaded successfully",
       data: updatedConfig,
-      resumeUrl: req.body.resumeUrl,
-      resumePublicId: req.body.resumePublicId,
+      resumeUrl: cleanResumeUrl,
+      resumePublicId: cleanResumePublicId,
     });
   } catch (error) {
     await cleanupUploadedResume(req);
