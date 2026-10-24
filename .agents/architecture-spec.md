@@ -164,8 +164,12 @@ export const SiteConfig = model<ISiteConfig>("SiteConfig", SiteConfigSchema);
 ```typescript
 import { Schema, model, Document } from "mongoose";
 
+export type SkillType = "tool" | "language" | "framework";
+export const SKILL_TYPES: SkillType[] = ["tool", "language", "framework"];
+
 export interface ISkill extends Document {
   name: string;
+  type: SkillType;
   logoUrl: string; // Cloudinary path: portfolio/skills/{skill_name}/{skill_name}.jpg
   featured: boolean;
   weight: number;
@@ -173,12 +177,26 @@ export interface ISkill extends Document {
   updatedAt: Date;
 }
 
-const SkillSchema = new Schema<ISkill>({
-  name: { type: String, required: true, unique: true, trim: true },
-  logoUrl: { type: String, required: true },
-  featured: { type: Boolean, default: false },
-  weight: { type: Number, default: 0 },
-}, { timestamps: true });
+const SkillSchema = new Schema<ISkill>(
+  {
+    name: { type: String, required: true, unique: true, trim: true },
+    type: {
+      type: String,
+      enum: {
+        values: SKILL_TYPES,
+        message: "Invalid skill type: `{VALUE}` is not supported. Allowed values: tool, language, framework",
+      },
+      default: "tool",
+      required: true,
+      trim: true,
+      lowercase: true,
+    },
+    logoUrl: { type: String, required: true },
+    featured: { type: Boolean, default: false },
+    weight: { type: Number, default: 0 },
+  },
+  { timestamps: true }
+);
 
 export const Skill = model<ISkill>("Skill", SkillSchema);
 ```
@@ -365,10 +383,10 @@ export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
 ### 2.3 Skills (`/api/v1/skills`)
 | Method | Route | Auth | Payload / Params | Purpose |
 | --- | --- | --- | --- | --- |
-| **GET** | `/api/v1/skills` | No | None | Fetch all skills sorted by `{ weight: 1, name: 1 }`. |
+| **GET** | `/api/v1/skills` | No | Query: `type` (optional) | Fetch all skills sorted by `{ weight: 1, name: 1 }`, optionally filtered by type. |
 | **GET** | `/api/v1/skills/:id` | No | Params: `id` | Fetch single skill by ObjectId. |
-| **POST** | `/api/v1/skills` | Yes | Multipart / JSON: `name`, `logoUrl`, `weight` | Create skill with unique name validation and logo upload. |
-| **PUT** | `/api/v1/skills/:id` | Yes | Multipart / JSON: partial fields | Update skill by ObjectId. |
+| **POST** | `/api/v1/skills` | Yes | Multipart / JSON: `name`, `type`, `logoUrl`, `weight` | Create skill with unique name validation and logo upload. |
+| **PUT** | `/api/v1/skills/:id` | Yes | Multipart / JSON: partial fields (`name`, `type`, `logoUrl`, `featured`, `weight`) | Update skill by ObjectId. |
 | **DELETE** | `/api/v1/skills/:id` | Yes | Params: `id` | Delete skill by ObjectId. |
 
 ### 2.4 Certificates (`/api/v1/certificates`)

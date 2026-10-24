@@ -35,7 +35,7 @@
 │   ├── models/                              # Mongoose schemas & TypeScript interfaces
 │   │   ├── Project.ts                       # Core project schema (slug, tags, skills refs, 3D model, versions)
 │   │   ├── SiteConfig.ts                    # Global configuration (name, pfp, pfpHistory, jobTitles, resume, bio)
-│   │   ├── Skill.ts                         # Tech stack skills (name, logoUrl, featured, weight)
+│   │   ├── Skill.ts                         # Tech stack skills (name, type, logoUrl, featured, weight)
 │   │   ├── Certificate.ts                   # Accreditations & certificates (title, organization, mediaUrl, weight)
 │   │   ├── Achievement.ts                   # Milestones & honors (title, date, detail, weight)
 │   │   ├── Experience.ts                    # Work history (organization, tag, type, iconUrl, skills, positions[])

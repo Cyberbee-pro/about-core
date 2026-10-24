@@ -1,14 +1,27 @@
 import { Request, Response, NextFunction } from "express";
-import { Skill } from "../models/Skill";
+import { Skill, SkillType, SKILL_TYPES } from "../models/Skill";
 import { escapeRegex } from "../utils/stringUtils";
 
+const ALLOWED_SKILL_TYPES: readonly SkillType[] =
+  Array.isArray(SKILL_TYPES) && SKILL_TYPES.length > 0
+    ? SKILL_TYPES
+    : ["tool", "language", "framework"];
+
 export const getSkills = async (
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const skills = await Skill.find().sort({ weight: 1, name: 1 });
+    const filter: Record<string, unknown> = {};
+    if (req.query.type && typeof req.query.type === "string") {
+      const sanitizedType = req.query.type.trim().toLowerCase();
+      if (ALLOWED_SKILL_TYPES.includes(sanitizedType as SkillType)) {
+        filter.type = sanitizedType;
+      }
+    }
+
+    const skills = await Skill.find(filter).sort({ weight: 1, name: 1 });
     res.status(200).json({
       success: true,
       count: skills.length,
@@ -57,6 +70,19 @@ export const createSkill = async (
       return;
     }
 
+    let type: SkillType = "tool";
+    if (req.body.type !== undefined && req.body.type !== null) {
+      const sanitizedType = String(req.body.type).trim().toLowerCase();
+      if (!ALLOWED_SKILL_TYPES.includes(sanitizedType as SkillType)) {
+        res.status(400).json({
+          success: false,
+          message: `Invalid skill type: must be one of ${ALLOWED_SKILL_TYPES.join(", ")}`,
+        });
+        return;
+      }
+      type = sanitizedType as SkillType;
+    }
+
     const existingSkill = await Skill.findOne({
       name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
     });
@@ -76,6 +102,7 @@ export const createSkill = async (
 
     const skill = await Skill.create({
       name: trimmedName,
+      type,
       logoUrl: req.body.logoUrl || "",
       featured,
       weight,
@@ -112,6 +139,18 @@ export const updateSkill = async (
         return;
       }
       updateData.name = trimmedName;
+    }
+
+    if (req.body.type !== undefined && req.body.type !== null) {
+      const sanitizedType = String(req.body.type).trim().toLowerCase();
+      if (!ALLOWED_SKILL_TYPES.includes(sanitizedType as SkillType)) {
+        res.status(400).json({
+          success: false,
+          message: `Invalid skill type: must be one of ${ALLOWED_SKILL_TYPES.join(", ")}`,
+        });
+        return;
+      }
+      updateData.type = sanitizedType as SkillType;
     }
 
     if (req.body.logoUrl !== undefined) {

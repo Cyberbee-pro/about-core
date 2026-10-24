@@ -38,8 +38,8 @@ Protected requests accept either `Authorization: Bearer <ADMIN_SECRET>` or
   contributors, optional media, 3D-model settings, skills references, and embedded version
   history. Valid statuses are `invisible`, `planning`, `work_in_progress`,
   `delay_hold`, and `active`. References `Skill` via ObjectId array.
-- `Skill` stores skill `name` (unique, trimmed), `logoUrl`, `featured` (boolean),
-  and `weight` (number).
+- `Skill` stores skill `name` (unique, trimmed), `type` (`tool` | `language` | `framework`),
+  `logoUrl`, `featured` (boolean), and `weight` (number).
 - `Certificate` stores `title` (trimmed), `description`, optional `link`,
   `mediaUrl` (Cloudinary path), `organization`, and `weight`.
 - `Achievement` stores `title` (trimmed), `date` (e.g. "Month Year"), `detail`,

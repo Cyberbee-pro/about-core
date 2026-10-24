@@ -30,13 +30,30 @@ describe("Skill Model", () => {
     const skill = new Skill(validSkillData);
     expect(skill.featured).toBe(false);
     expect(skill.weight).toBe(0);
+    expect(skill.type).toBe("tool");
   });
 
-  it("accepts custom featured and weight values", () => {
-    const skill = new Skill({ ...validSkillData, featured: true, weight: 10 });
+  it("accepts custom featured, weight, and type values", () => {
+    const skill = new Skill({ ...validSkillData, featured: true, weight: 10, type: "language" });
     expect(skill.featured).toBe(true);
     expect(skill.weight).toBe(10);
+    expect(skill.type).toBe("language");
     expect(skill.validateSync()).toBeUndefined();
+  });
+
+  it("accepts all valid type values", () => {
+    for (const type of ["tool", "language", "framework"] as const) {
+      const skill = new Skill({ ...validSkillData, type });
+      expect(skill.validateSync()).toBeUndefined();
+      expect(skill.type).toBe(type);
+    }
+  });
+
+  it("rejects invalid type enum value", () => {
+    const skill = new Skill({ ...validSkillData, type: "invalid_type" });
+    const error = skill.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.type).toBeDefined();
   });
 
   it("fails validation when name is missing", () => {
@@ -643,6 +660,7 @@ describe("Models barrel export (src/models/index.ts)", () => {
   it("exports Skill model", () => {
     expect(barrel.Skill).toBeDefined();
     expect(barrel.Skill.modelName).toBe("Skill");
+    expect(barrel.SKILL_TYPES).toEqual(["tool", "language", "framework"]);
   });
 
   it("exports Achievement model", () => {

@@ -21,6 +21,7 @@ interface CloudinaryMockOptions {
   folder: string;
   resource_type: string;
   public_id?: string;
+  access_mode?: string;
 }
 
 type CloudinaryMockCallback = (
@@ -833,7 +834,8 @@ describe("about-core API & Middleware Integration Tests", () => {
       );
       expect(resumeUploadCall).toBeDefined();
       expect(resumeUploadCall?.resource_type).toBe("auto");
-      expect(resumeUploadCall?.public_id).toBe("resume_date_1.pdf");
+      expect(resumeUploadCall?.public_id).toBe("resume_date_1");
+      expect(resumeUploadCall?.access_mode).toBeUndefined();
 
       // Verify MongoDB was updated with resumeUrl
       expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
@@ -841,6 +843,46 @@ describe("about-core API & Middleware Integration Tests", () => {
         expect.objectContaining({
           $set: expect.objectContaining({
             resumeUrl: expect.stringContaining("portfolio/site_config/resume"),
+          }),
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it("PUT /api/v1/config persists submitted resumeUrl completely unchanged without modifying extension", async () => {
+      const existingConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeUrl: "https://example.com/resume.custom-ext?query=1",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
+        Promise.resolve({
+          ...existingConfig,
+          ...(update.$set || {}),
+        })
+      );
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          name: "Shibraj Das",
+          jobTitles: ["Full-Stack Developer"],
+          resumeUrl: "https://example.com/resume.custom-ext?query=1",
+          statusMessage: "Building systems...",
+          bioSummary: "Full stack engineer",
+        });
+
+      expect(res.status).toBe(200);
+      expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            resumeUrl: "https://example.com/resume.custom-ext?query=1",
           }),
         }),
         expect.any(Object)
@@ -871,14 +913,26 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.message).toContain("Resume PDF uploaded");
-      expect(res.body.resumeUrl).toBeDefined();
+      expect(res.body.resumeUrl).toBe("https://res.cloudinary.com/demo/auto/portfolio/site_config/resume/test_file");
+
+      expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
+        {},
+        {
+          $set: {
+            resumeUrl: "https://res.cloudinary.com/demo/auto/portfolio/site_config/resume/test_file",
+            resumePublicId: "portfolio/site_config/resume/resume_date_1",
+          },
+        },
+        { new: true }
+      );
 
       const resumeUploadCall = mockUploadCalls.find(
         (call) => call.folder === "portfolio/site_config/resume"
       );
       expect(resumeUploadCall).toBeDefined();
       expect(resumeUploadCall?.resource_type).toBe("auto");
-      expect(resumeUploadCall?.public_id).toBe("resume_date_1.pdf");
+      expect(resumeUploadCall?.public_id).toBe("resume_date_1");
+      expect(resumeUploadCall?.access_mode).toBeUndefined();
     });
 
     it("POST /api/v1/config/resume rejects with 400 when no resume file is attached", async () => {
@@ -922,7 +976,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.body.success).toBe(false);
       expect(res.body.message).toContain("Site configuration not found");
       expect(mockDestroy).toHaveBeenCalledWith(
-        "portfolio/site_config/resume/resume_date_1.pdf"
+        "portfolio/site_config/resume/resume_date_1"
       );
     });
 
@@ -962,7 +1016,7 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       expect(res.status).toBe(409);
       expect(mockDestroy).toHaveBeenCalledWith(
-        "portfolio/site_config/resume/resume_date_1.pdf"
+        "portfolio/site_config/resume/resume_date_1"
       );
     });
 
@@ -984,7 +1038,7 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       expect(res.status).toBe(400);
       expect(mockDestroy).toHaveBeenCalledWith(
-        "portfolio/site_config/resume/resume_date_1.pdf"
+        "portfolio/site_config/resume/resume_date_1"
       );
     });
 
@@ -1024,7 +1078,7 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       expect(res.status).toBe(500);
       expect(mockDestroy).toHaveBeenCalledWith(
-        "portfolio/site_config/resume/resume_date_1.pdf"
+        "portfolio/site_config/resume/resume_date_1"
       );
     });
 
@@ -1045,7 +1099,7 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       expect(res.status).toBe(400);
       expect(mockDestroy).toHaveBeenCalledWith(
-        "portfolio/site_config/resume/resume_date_1.pdf"
+        "portfolio/site_config/resume/resume_date_1"
       );
     });
 
@@ -1067,7 +1121,7 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       expect(res.status).toBe(500);
       expect(mockDestroy).toHaveBeenCalledWith(
-        "portfolio/site_config/resume/resume_date_1.pdf"
+        "portfolio/site_config/resume/resume_date_1"
       );
     });
 
@@ -1085,7 +1139,7 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       expect(res.status).toBe(500);
       expect(mockDestroy).toHaveBeenCalledWith(
-        "portfolio/site_config/resume/resume_date_1.pdf"
+        "portfolio/site_config/resume/resume_date_1"
       );
     });
 
