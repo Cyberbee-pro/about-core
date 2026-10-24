@@ -50,7 +50,21 @@ jest.mock("@/config/cloudinary", () => {
 });
 
 // Mock models and DB
-jest.mock("@/models/Skill");
+jest.mock("@/models/Skill", () => {
+  const actual = jest.requireActual("@/models/Skill");
+  return {
+    ...actual,
+    Skill: {
+      find: jest.fn(),
+      findById: jest.fn(),
+      findOne: jest.fn(),
+      create: jest.fn(),
+      findByIdAndUpdate: jest.fn(),
+      findByIdAndDelete: jest.fn(),
+      modelName: "Skill",
+    },
+  };
+});
 jest.mock("@/models/LogEntry");
 jest.mock("@/models/Project");
 jest.mock("@/models/SiteConfig");
@@ -65,36 +79,46 @@ describe("Skills API Integration Tests", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUploadCalls.length = 0;
-    (Skill.find as jest.Mock).mockReturnValue({
+    (Skill.find as jest.Mock).mockImplementation((filter?: Record<string, unknown>) => ({
       sort: jest.fn().mockResolvedValue([
-        { _id: "skill-1", name: "TypeScript", logoUrl: "", featured: false, weight: 0 },
+        { _id: "skill-1", name: "TypeScript", type: filter?.type || "language", logoUrl: "", featured: false, weight: 0 },
       ]),
-    });
+    }));
     (Skill.findById as jest.Mock).mockResolvedValue({
       _id: "skill-1",
       name: "TypeScript",
+      type: "language",
       logoUrl: "",
       featured: false,
       weight: 0,
     });
     (Skill.findOne as jest.Mock).mockResolvedValue(null);
-    (Skill.create as jest.Mock).mockResolvedValue({
-      _id: "skill-2",
-      name: "React",
-      logoUrl: "",
-      featured: false,
-      weight: 0,
-    });
-    (Skill.findByIdAndUpdate as jest.Mock).mockResolvedValue({
-      _id: "skill-1",
-      name: "Updated",
-      logoUrl: "",
-      featured: false,
-      weight: 0,
-    });
+    (Skill.create as jest.Mock).mockImplementation((data) =>
+      Promise.resolve({
+        _id: "skill-2",
+        name: "React",
+        type: "tool",
+        logoUrl: "",
+        featured: false,
+        weight: 0,
+        ...data,
+      })
+    );
+    (Skill.findByIdAndUpdate as jest.Mock).mockImplementation((id, data) =>
+      Promise.resolve({
+        _id: id,
+        name: "Updated",
+        type: "tool",
+        logoUrl: "",
+        featured: false,
+        weight: 0,
+        ...data,
+      })
+    );
     (Skill.findByIdAndDelete as jest.Mock).mockResolvedValue({
       _id: "skill-1",
       name: "TypeScript",
+      type: "language",
       logoUrl: "",
       featured: false,
       weight: 0,
@@ -106,6 +130,13 @@ describe("Skills API Integration Tests", () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
+  it("GET /api/v1/skills?type=language filters skills by type", async () => {
+    const res = await request(app).get("/api/v1/skills?type=language");
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Skill.find).toHaveBeenCalledWith({ type: "language" });
   });
 
   it("GET /api/v1/skills/:id returns a single skill", async () => {
@@ -124,6 +155,32 @@ describe("Skills API Integration Tests", () => {
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
     expect(res.body.data.name).toBe("React");
+    expect(res.body.data.type).toBe("tool");
+  });
+
+  it("POST /api/v1/skills creates a skill with explicit type", async () => {
+    (Skill.findOne as jest.Mock).mockResolvedValue(null);
+    const res = await request(app)
+      .post("/api/v1/skills")
+      .set("Authorization", "Bearer test-secret-token")
+      .send({ name: "Go", type: "language", logoUrl: "", featured: true, weight: 5 });
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.name).toBe("Go");
+    expect(res.body.data.type).toBe("language");
+    expect(Skill.create).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Go", type: "language" })
+    );
+  });
+
+  it("POST /api/v1/skills rejects invalid type with 400", async () => {
+    const res = await request(app)
+      .post("/api/v1/skills")
+      .set("Authorization", "Bearer test-secret-token")
+      .send({ name: "InvalidSkill", type: "invalid_type", logoUrl: "" });
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toContain("Invalid skill type");
   });
 
   it("POST /api/v1/skills handles multipart logoUrl image upload to Cloudinary", async () => {
@@ -172,6 +229,7 @@ describe("Skills API Integration Tests", () => {
     (Skill.findByIdAndUpdate as jest.Mock).mockResolvedValue({
       _id: "skill-1",
       name: "Updated",
+      type: "framework",
       logoUrl: "",
       featured: false,
       weight: 0,
@@ -179,10 +237,25 @@ describe("Skills API Integration Tests", () => {
     const res = await request(app)
       .put("/api/v1/skills/skill-1")
       .set("Authorization", "Bearer test-secret-token")
-      .send({ name: "Updated" });
+      .send({ name: "Updated", type: "framework" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.name).toBe("Updated");
+    expect(Skill.findByIdAndUpdate).toHaveBeenCalledWith(
+      "skill-1",
+      expect.objectContaining({ name: "Updated", type: "framework" }),
+      expect.any(Object)
+    );
+  });
+
+  it("PUT /api/v1/skills/:id rejects invalid type with 400", async () => {
+    const res = await request(app)
+      .put("/api/v1/skills/skill-1")
+      .set("Authorization", "Bearer test-secret-token")
+      .send({ type: "invalid_type" });
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toContain("Invalid skill type");
   });
 
   it("DELETE /api/v1/skills/:id deletes a skill (admin protected)", async () => {

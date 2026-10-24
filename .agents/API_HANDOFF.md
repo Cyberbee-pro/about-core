@@ -331,6 +331,7 @@ HTTP Request
 
 #### `GET /api/v1/skills`
 - **Access**: Public
+- **Query Parameters**: `type` (optional filter: `"tool" | "language" | "framework"`)
 - **Sorting**: `{ weight: 1, name: 1 }`
 - **Response**: `200 OK`
 ```json
@@ -341,6 +342,7 @@ HTTP Request
     {
       "_id": "670fa123456789abcdef0010",
       "name": "TypeScript",
+      "type": "language",
       "logoUrl": "https://res.cloudinary.com/.../typescript.jpg",
       "featured": true,
       "weight": 1,
@@ -363,18 +365,19 @@ HTTP Request
   - Streamed to `portfolio/skills/<derived-skill-name>/<derived-skill-name>`
 - **Fields**:
   - `name` (required, string, trimmed; unique case-insensitive)
+  - `type` (optional string, enum: `"tool" | "language" | "framework"`, default `"tool"`)
   - `logoUrl` (string URL or file upload)
   - `featured` (optional boolean, default `false`)
   - `weight` (optional number, default `0`)
 - **Response**: `201 Created` `{ "success": true, "data": { ...createdSkill } }`
-- **Errors**: `400` if name missing; `409` if duplicate name exists.
+- **Errors**: `400` if name missing or invalid type; `409` if duplicate name exists.
 
 #### `PUT /api/v1/skills/:id`
 - **Access**: Admin
 - **Path Parameters**: `:id` (MongoDB ObjectId)
 - **Content-Type**: `application/json` or `multipart/form-data`
 - **Multipart Field**: `logoUrl`
-- **Fields**: Partial update of `name`, `logoUrl`, `featured`, `weight`. Unique name check excludes current `:id`.
+- **Fields**: Partial update of `name`, `type`, `logoUrl`, `featured`, `weight`. Unique name check excludes current `:id`.
 - **Response**: `200 OK` `{ "success": true, "data": { ...updatedSkill } }`
 
 #### `DELETE /api/v1/skills/:id`
@@ -807,9 +810,12 @@ export interface IProject {
 
 ### 7.2 Skill (`Skill`)
 ```ts
+export type SkillType = "tool" | "language" | "framework";
+
 export interface ISkill {
   _id: string;
   name: string;
+  type: SkillType;
   logoUrl: string;
   featured: boolean;
   weight: number;
