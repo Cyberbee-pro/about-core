@@ -128,7 +128,7 @@ graph TD
 | **Experience Media Gallery** | `mediaUrls` (max 10) | `portfolio/experiences/<tag>/<orgSlug>/media` | `experience_media_<n>` | `image` | `portfolio/experiences/focus/google-dsc/media/experience_media_1` |
 | **Experience Certificates** | `certificateUrls` (max 10) | `portfolio/experiences/<tag>/<orgSlug>/certificates` | `experience_certificate_<n>` | `image` | `portfolio/experiences/focus/google-dsc/certificates/experience_certificate_1` |
 | **Site Config Avatar (PFP)** | `pfp` / `pfpUrl` / `image` (max 1) | `portfolio/site_config` | `pfp_<timestamp>` | `image` | `portfolio/site_config/pfp_1729603928123` |
-| **Site Config Resume PDF** | `resume` / `resumeFile` / `resumePdf` / `pdf` (max 1) | `portfolio/site_config/resume` | `resume_date_{num}` | `auto` (public access) | `portfolio/site_config/resume/resume_date_1` |
+| **Site Config Resume PDF** | `resume` / `resumeFile` / `resumePdf` / `pdf` (max 1) | `portfolio/site_config/resume` | `resume_date_{num}` | `auto` | `portfolio/site_config/resume/resume_date_1` |
 | **Misc Fallback** | `image` / `videoDemo` / `threeDModel` | `portfolio/projects/misc/<type>` | `misc_<n>` | `image` / `video` / `raw` | `portfolio/projects/misc/images/misc_1` |
 | **Profile Route Fallback** | `image` / `videoDemo` / `threeDModel` | `portfolio/profile/<type>` | `profile_<n>` | `image` / `video` / `raw` | `portfolio/profile/images/profile_1` |
 
@@ -177,9 +177,8 @@ To prevent accidental asset overwrites without generating long random UUIDs, `ab
      ```ts
      return `resume_date_${Date.now()}`;
      ```
-5. **Access Mode & Database Persistence**:
-   - Cloudinary upload explicitly specifies `access_mode: 'public'` so PDFs are viewable by public client-side viewers without `401 ACL` denial.
-   - The resulting Cloudinary `secure_url` is sanitized (`.pdf.pdf` collapsed to `.pdf`) and saved directly to `resumeUrl` on the `SiteConfig` document in MongoDB.
+5. **Database Persistence**:
+   - The resulting Cloudinary `secure_url` is saved directly to `resumeUrl` on the `SiteConfig` document in MongoDB.
 
 ---
 
@@ -204,7 +203,7 @@ To prevent accidental asset overwrites without generating long random UUIDs, `ab
 - **Certificate Public IDs**: Formatted as `${orgSlug}_${titleSlug}_${year}` where year is extracted via regex `(19\d\d|20\d\d)` from title or date, defaulting to current year.
 - **Experience Organizations**: Case-insensitively matched in MongoDB; the slug is used to namespace experience icon, media, and certificate subdirectories.
 - **Profile Picture History**: Avatar uploads to `portfolio/site_config/` generate a unique `pfp_<timestamp>` public ID, returning both `pfpUrl` and `pfpPublicId`. New uploads are prepended to `pfpHistory` in MongoDB, enabling full avatar rollback and reuse.
-- **Resume Uploads**: PDF files uploaded on `resume`, `resumeFile`, `resumePdf`, or `pdf` are processed under `portfolio/site_config/resume/` using `resume_date_{num}` (or `resume_date_{timestamp}` fallback) with `access_mode: 'public'`. Extensions are excluded from `public_id`, and incoming URLs/values are sanitized to avoid double-extension issues (e.g. `.pdf.pdf`), and saved to `resumeUrl` on `SiteConfig`.
+- **Resume Uploads**: PDF files uploaded on `resume`, `resumeFile`, `resumePdf`, or `pdf` are processed under `portfolio/site_config/resume/` using `resume_date_{num}` (or `resume_date_{timestamp}` fallback). Extensions are excluded from `public_id`, and the provider-returned `secure_url` is saved directly to `resumeUrl` on `SiteConfig`.
 
 ---
 

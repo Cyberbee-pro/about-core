@@ -828,14 +828,14 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
 
-      // Verify Cloudinary upload folder, resource_type, access_mode, and naming convention
+      // Verify Cloudinary upload folder, resource_type, and naming convention
       const resumeUploadCall = mockUploadCalls.find(
         (call) => call.folder === "portfolio/site_config/resume"
       );
       expect(resumeUploadCall).toBeDefined();
       expect(resumeUploadCall?.resource_type).toBe("auto");
       expect(resumeUploadCall?.public_id).toBe("resume_date_1");
-      expect(resumeUploadCall?.access_mode).toBe("public");
+      expect(resumeUploadCall?.access_mode).toBeUndefined();
 
       // Verify MongoDB was updated with resumeUrl
       expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
@@ -932,7 +932,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(resumeUploadCall).toBeDefined();
       expect(resumeUploadCall?.resource_type).toBe("auto");
       expect(resumeUploadCall?.public_id).toBe("resume_date_1");
-      expect(resumeUploadCall?.access_mode).toBe("public");
+      expect(resumeUploadCall?.access_mode).toBeUndefined();
     });
 
     it("POST /api/v1/config/resume rejects with 400 when no resume file is attached", async () => {
