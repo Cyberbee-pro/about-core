@@ -4,7 +4,20 @@ import { Readable } from "stream";
 import { UploadApiResponse } from "cloudinary";
 import cloudinary from "../config/cloudinary";
 import { Experience } from "../models/Experience";
-import { escapeRegex } from "../utils/stringUtils";
+import {
+  escapeRegex,
+  stripExtension,
+  sanitizeResumeFilename,
+  sanitizeResumeUrl,
+  sanitizeResumePublicId,
+} from "../utils/stringUtils";
+
+export {
+  stripExtension,
+  sanitizeResumeFilename,
+  sanitizeResumeUrl,
+  sanitizeResumePublicId,
+};
 
 const storage = multer.memoryStorage();
 
@@ -93,6 +106,7 @@ export interface CloudinaryUploadOptions {
   folder: string;
   resource_type: "image" | "video" | "raw" | "auto";
   public_id?: string;
+  access_mode?: "public" | "authenticated";
 }
 
 /** Minimal shape of a resource returned by cloudinary.search.execute() */
@@ -113,11 +127,16 @@ export const uploadBufferToCloudinary = (
   options: CloudinaryUploadOptions
 ): Promise<UploadApiResponse> => {
   return new Promise<UploadApiResponse>((resolve, reject) => {
+    const sanitizedPublicId = options.public_id
+      ? sanitizeResumePublicId(options.public_id)
+      : undefined;
+
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         folder: options.folder,
         resource_type: options.resource_type,
-        ...(options.public_id ? { public_id: options.public_id } : {}),
+        ...(sanitizedPublicId ? { public_id: sanitizedPublicId } : {}),
+        ...(options.access_mode ? { access_mode: options.access_mode } : {}),
       },
       (error, result) => {
         if (error || !result) {
@@ -226,13 +245,18 @@ export const getNextPublicId = async (
 
 /**
  * Determine the next sequential public_id for a resume PDF in portfolio/site_config/resume.
- * Naming convention: resume_date_{num}.pdf where {num} increments based on existing files,
- * or falls back to resume_date_{timestamp}.pdf on search failure / error.
+ * Naming convention: resume_date_{num} where {num} increments based on existing files,
+ * or falls back to resume_date_{timestamp} on search failure / error.
+ * Extensions are excluded from public_id values, and pre-existing extensions
+ * on base or discovered public IDs are stripped.
  */
 export const getNextResumePublicId = async (
   cache: FolderCache,
-  folder: string = "portfolio/site_config/resume"
+  folder: string = "portfolio/site_config/resume",
+  base: string = "resume_date"
 ): Promise<string> => {
+  const cleanBase = stripExtension(base) || "resume_date";
+
   if (!cache.has(folder)) {
     try {
       const result: CloudinarySearchResult = (await cloudinary.search
@@ -252,12 +276,13 @@ export const getNextResumePublicId = async (
   const existing = cache.get(folder);
 
   if (Array.isArray(existing)) {
-    const prefix = `${folder}/resume_date_`;
+    const prefix = `${folder}/${cleanBase}_`;
     const numbers = existing
-      .filter((id) => id.startsWith(prefix) || id.includes("/resume_date_"))
+      .filter((id) => id.startsWith(prefix) || id.includes(`/${cleanBase}_`))
       .map((id) => {
         const lastPart = id.split("/").pop() || "";
-        const match = lastPart.match(/^resume_date_(\d+)(?:\.pdf)?$/i);
+        const cleanLastPart = stripExtension(lastPart);
+        const match = cleanLastPart.match(new RegExp(`^${escapeRegex(cleanBase)}_(\\d+)$`, "i"));
         if (match) {
           const num = parseInt(match[1], 10);
           return Number.isNaN(num) ? 0 : num;
@@ -266,14 +291,14 @@ export const getNextResumePublicId = async (
       });
 
     const next = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
-    const publicId = `resume_date_${next}.pdf`;
+    const publicId = `${cleanBase}_${next}`;
 
     existing.push(`${folder}/${publicId}`);
 
     return publicId;
   }
 
-  return `resume_date_${Date.now()}.pdf`;
+  return `${cleanBase}_${Date.now()}`;
 };
 
 // ---------------------------------------------------------------------------
@@ -690,9 +715,10 @@ export const processSiteConfigUploads = async (
         folder,
         resource_type: "auto",
         public_id: publicId,
+        access_mode: "public",
       });
-      req.body.resumeUrl = result.secure_url;
-      req.body.resumePublicId = result.public_id;
+      req.body.resumeUrl = sanitizeResumeUrl(result.secure_url);
+      req.body.resumePublicId = sanitizeResumePublicId(result.public_id);
     }
 
     next();
