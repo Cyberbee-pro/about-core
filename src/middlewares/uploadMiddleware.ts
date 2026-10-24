@@ -717,7 +717,7 @@ export const processSiteConfigUploads = async (
         public_id: publicId,
         access_mode: "public",
       });
-      req.body.resumeUrl = sanitizeResumeUrl(result.secure_url);
+      req.body.resumeUrl = result.secure_url;
       req.body.resumePublicId = sanitizeResumePublicId(result.public_id);
     }
 

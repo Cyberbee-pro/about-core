@@ -849,6 +849,46 @@ describe("about-core API & Middleware Integration Tests", () => {
       );
     });
 
+    it("PUT /api/v1/config persists submitted resumeUrl completely unchanged without modifying extension", async () => {
+      const existingConfig = {
+        name: "Shibraj Das",
+        jobTitles: ["Full-Stack Developer"],
+        resumeUrl: "https://example.com/resume.custom-ext?query=1",
+        statusMessage: "Building systems...",
+        bioSummary: "Full stack engineer",
+      };
+
+      (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+      (SiteConfig.findOneAndUpdate as jest.Mock).mockImplementation((_q, update) =>
+        Promise.resolve({
+          ...existingConfig,
+          ...(update.$set || {}),
+        })
+      );
+
+      const res = await request(app)
+        .put("/api/v1/config")
+        .set("x-admin-token", "test-secret-token")
+        .send({
+          name: "Shibraj Das",
+          jobTitles: ["Full-Stack Developer"],
+          resumeUrl: "https://example.com/resume.custom-ext?query=1",
+          statusMessage: "Building systems...",
+          bioSummary: "Full stack engineer",
+        });
+
+      expect(res.status).toBe(200);
+      expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            resumeUrl: "https://example.com/resume.custom-ext?query=1",
+          }),
+        }),
+        expect.any(Object)
+      );
+    });
+
     it("POST /api/v1/config/resume uploads resume PDF directly and updates configuration", async () => {
       const updatedConfig = {
         name: "Shibraj Das",
@@ -873,7 +913,18 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.message).toContain("Resume PDF uploaded");
-      expect(res.body.resumeUrl).toBeDefined();
+      expect(res.body.resumeUrl).toBe("https://res.cloudinary.com/demo/auto/portfolio/site_config/resume/test_file");
+
+      expect(SiteConfig.findOneAndUpdate).toHaveBeenCalledWith(
+        {},
+        {
+          $set: {
+            resumeUrl: "https://res.cloudinary.com/demo/auto/portfolio/site_config/resume/test_file",
+            resumePublicId: "portfolio/site_config/resume/resume_date_1",
+          },
+        },
+        { new: true }
+      );
 
       const resumeUploadCall = mockUploadCalls.find(
         (call) => call.folder === "portfolio/site_config/resume"

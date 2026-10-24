@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import { Request, Response, NextFunction } from "express";
 import { SiteConfig, IPfpItem } from "../models/SiteConfig";
 import cloudinary from "../config/cloudinary";
-import { sanitizeResumeUrl, sanitizeResumePublicId } from "../middlewares/uploadMiddleware";
+import { sanitizeResumePublicId } from "../middlewares/uploadMiddleware";
 
 const parseJobTitles = (input: unknown): string[] | undefined => {
   if (typeof input === "string") {
@@ -161,7 +161,7 @@ export const createSiteConfig = async (
       name: (name as string).trim(),
       ...(typeof pfpUrl === "string" ? { pfpUrl: pfpUrl.trim() } : {}),
       ...(typeof pfpPublicId === "string" ? { pfpPublicId: pfpPublicId.trim() } : {}),
-      resumeUrl: sanitizeResumeUrl((resumeUrl as string).trim()),
+      resumeUrl: (resumeUrl as string).trim(),
       ...(typeof resumePublicId === "string" ? { resumePublicId: sanitizeResumePublicId(resumePublicId.trim()) } : {}),
       pfpHistory: initialHistory,
       jobTitles: parsedJobTitles!,
@@ -212,7 +212,7 @@ export const updateSiteConfig = async (
     const setFields: Record<string, unknown> = {
       name: (name as string).trim(),
       jobTitles: parsedJobTitles!,
-      resumeUrl: sanitizeResumeUrl((resumeUrl as string).trim()),
+      resumeUrl: (resumeUrl as string).trim(),
       statusMessage: (statusMessage as string).trim(),
       bioSummary: (bioSummary as string).trim(),
     };
@@ -372,15 +372,15 @@ export const uploadResume = async (
       return;
     }
 
-    const cleanResumeUrl = typeof req.body.resumeUrl === "string"
-      ? sanitizeResumeUrl(req.body.resumeUrl.trim())
+    const resumeUrl = typeof req.body.resumeUrl === "string"
+      ? req.body.resumeUrl.trim()
       : req.body.resumeUrl;
     const cleanResumePublicId = typeof req.body.resumePublicId === "string"
       ? sanitizeResumePublicId(req.body.resumePublicId.trim())
       : req.body.resumePublicId;
 
     const setFields: Record<string, unknown> = {
-      resumeUrl: cleanResumeUrl,
+      resumeUrl,
     };
     if (cleanResumePublicId) {
       setFields.resumePublicId = cleanResumePublicId;
@@ -405,7 +405,7 @@ export const uploadResume = async (
       success: true,
       message: "Resume PDF uploaded successfully",
       data: updatedConfig,
-      resumeUrl: cleanResumeUrl,
+      resumeUrl,
       resumePublicId: cleanResumePublicId,
     });
   } catch (error) {
