@@ -12,9 +12,9 @@ This repository contains the backend infrastructure. You must ground all archite
    *   Apply `.agents/skills/tdd-workflow.md`[cite: 7] when writing or refactoring testable business logic.
 
 ## Audit Summary
-Codebase audit completed with all 10 test suites and 161 tests passing. Key verified areas:
+Codebase audit completed with all 10 test suites and 208 tests passing. Key verified areas:
 - Model schemas: Project (5-status enum, image required, versions schema, social links, skills refs), SiteConfig (name, pfp, pfpHistory, jobTitles, bio, resumeUrl), Skill, Certificate, Achievement, Experience, LogEntry — all consistent
-- Routes & controllers: Public/protected split with authMiddleware, consistent error handling patterns, atomic experience position append, site config avatar rollback, and Cloudinary PDF resume uploads
+- Routes & controllers: Public/protected split with authMiddleware, dedicated admin project listing (`GET /api/v1/admin/projects`), consistent error handling patterns, atomic experience position append, site config avatar rollback, and Cloudinary PDF resume uploads
 - Middleware pipeline: cors (dynamic multi-origin), auth (Bearer/x-admin-token), dbLogger (MongoDB request telemetry), error (Mongoose mapping), upload (Cloudinary streaming with PDF support)
 - Media storage: Structured Cloudinary folder hierarchy documented in `cloudinary.md`
 - Test coverage: 100% of critical paths covered across 10 test suites
@@ -34,5 +34,5 @@ When asked to implement a feature or generate the boilerplate:
 2. Read the referenced schemas or config files.
 3. Generate the code following the Backend Patterns skill.
 4. Verify there are no Type errors or unhandled asynchronous rejections.
-5. Run `npm test` to confirm all 161 tests pass.
+5. Run `npm test` to confirm all 208 tests pass.
 6. Run `npx tsc --noEmit` to confirm type safety.

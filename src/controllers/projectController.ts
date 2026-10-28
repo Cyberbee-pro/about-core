@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { FilterQuery, Types } from "mongoose";
+import { escapeRegex } from "../utils/stringUtils";
 import {
   Project,
   IProject,
@@ -10,9 +11,10 @@ import {
 } from "../models/Project";
 
 export interface ProjectQueryParams {
-  category?: string;
-  featured?: string;
-  tag?: string;
+  category?: string | string[];
+  featured?: string | string[];
+  tag?: string | string[];
+  status?: string | string[];
 }
 
 function parseJsonField<T>(field: unknown, defaultValue: T): T {
@@ -36,28 +38,167 @@ function extractParamString(param: string | string[] | undefined): string {
   return param ?? "";
 }
 
+function parseQueryParam(
+  param: unknown,
+  paramName: string
+): { value?: string; error?: string } {
+  if (param === undefined) {
+    return {};
+  }
+
+  if (typeof param === "string") {
+    return { value: param };
+  }
+
+  if (Array.isArray(param)) {
+    if (param.length === 0 || typeof param[0] !== "string" || param[0].trim() === "") {
+      return { error: `Invalid query parameter shape for '${paramName}'` };
+    }
+    return { value: param[0] };
+  }
+
+  return { error: `Invalid query parameter shape for '${paramName}'` };
+}
+
 export const getProjects = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { category, featured, tag } = req.query as ProjectQueryParams;
+    const parsedCategory = parseQueryParam(req.query.category, "category");
+    if (parsedCategory.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedCategory.error,
+      });
+      return;
+    }
+
+    const parsedFeatured = parseQueryParam(req.query.featured, "featured");
+    if (parsedFeatured.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedFeatured.error,
+      });
+      return;
+    }
+
+    const parsedTag = parseQueryParam(req.query.tag, "tag");
+    if (parsedTag.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedTag.error,
+      });
+      return;
+    }
+
+    const parsedStatus = parseQueryParam(req.query.status, "status");
+    if (parsedStatus.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedStatus.error,
+      });
+      return;
+    }
+
+    const category = parsedCategory.value;
+    const featured = parsedFeatured.value;
+    const tag = parsedTag.value;
 
     const filter: FilterQuery<IProject> = {
       status: { $ne: "invisible" },
     };
 
-    if (category) {
+    if (category && category.trim()) {
       filter.category = category.toLowerCase().trim();
     }
 
     if (featured !== undefined) {
-      filter.featured = featured === "true";
+      filter.featured = featured.toLowerCase().trim() === "true";
     }
 
-    if (tag) {
-      filter.tags = tag.toLowerCase().trim();
+    if (tag && tag.trim()) {
+      filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") };
+    }
+
+    const projects = await Project.find(filter)
+      .sort({ featured: -1, startDate: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      count: projects.length,
+      data: projects,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getAdminProjects = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const parsedCategory = parseQueryParam(req.query.category, "category");
+    if (parsedCategory.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedCategory.error,
+      });
+      return;
+    }
+
+    const parsedFeatured = parseQueryParam(req.query.featured, "featured");
+    if (parsedFeatured.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedFeatured.error,
+      });
+      return;
+    }
+
+    const parsedTag = parseQueryParam(req.query.tag, "tag");
+    if (parsedTag.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedTag.error,
+      });
+      return;
+    }
+
+    const parsedStatus = parseQueryParam(req.query.status, "status");
+    if (parsedStatus.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedStatus.error,
+      });
+      return;
+    }
+
+    const category = parsedCategory.value;
+    const featured = parsedFeatured.value;
+    const tag = parsedTag.value;
+    const status = parsedStatus.value;
+
+    const filter: FilterQuery<IProject> = {};
+
+    if (status && status.trim()) {
+      filter.status = status.toLowerCase().trim() as ProjectStatus;
+    }
+
+    if (category && category.trim()) {
+      filter.category = category.toLowerCase().trim();
+    }
+
+    if (featured !== undefined) {
+      filter.featured = featured.toLowerCase().trim() === "true";
+    }
+
+    if (tag && tag.trim()) {
+      filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") };
     }
 
     const projects = await Project.find(filter)

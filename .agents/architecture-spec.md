@@ -379,6 +379,7 @@ export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
 | **PUT** | `/api/v1/projects/:id` | Yes | Multipart / JSON: `Partial<IProject>` | Update project metadata or media by ObjectId. |
 | **DELETE** | `/api/v1/projects/:id` | Yes | Params: `id` | Delete project document (preserves Cloudinary assets). |
 | **POST** | `/api/v1/projects/:slug/versions` | Yes | Multipart / JSON: `IProjectVersion` | Push new release version to `versions` array (single-truth `isLatest`). |
+| **GET** | `/api/v1/admin/projects` | Yes | Query: `status`, `category`, `featured`, `tag` | Fetch all projects from database without status restrictions (including invisible/draft). |
 
 ### 2.3 Skills (`/api/v1/skills`)
 | Method | Route | Auth | Payload / Params | Purpose |
@@ -445,7 +446,7 @@ Request
   ├── 4. express.static('public') ── Edge CDN local mirror serving MAGI EVA-0 dashboard
   ├── 5. dbLoggerMiddleware       ── Intercepts res.finish and records LogEntry in MongoDB
   ├── 6. /health & /api/v1/health ── Health check routes
-  ├── 7. Feature Routes           ── /api/v1/{projects, skills, certificates, achievements, experiences, config, admin/logs}
+  ├── 7. Feature Routes           ── /api/v1/{projects, skills, certificates, achievements, experiences, config, admin/logs, admin/projects}
   │       ├── authMiddleware      ── Verifies ADMIN_SECRET (Bearer / x-admin-token)
   │       └── uploadMiddleware    ── Multer memoryStorage + Cloudinary streaming
   ├── 8. notFoundMiddleware       ── Generates 404 JSON for unmatched routes

@@ -307,6 +307,44 @@ describe("about-core API & Middleware Integration Tests", () => {
       });
     });
 
+    it("GET /api/v1/projects filters tags with case-insensitive regex", async () => {
+      (Project.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      });
+
+      const res = await request(app).get("/api/v1/projects?tag=TypeScript");
+      expect(res.status).toBe(200);
+      expect(Project.find).toHaveBeenCalledWith({
+        status: { $ne: "invisible" },
+        tags: { $regex: new RegExp("^TypeScript$", "i") },
+      });
+    });
+
+    it("GET /api/v1/projects coerces array query parameters safely to single string", async () => {
+      (Project.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      });
+
+      const res = await request(app).get("/api/v1/projects?category=web&category=iot");
+      expect(res.status).toBe(200);
+      expect(Project.find).toHaveBeenCalledWith({
+        status: { $ne: "invisible" },
+        category: "web",
+      });
+    });
+
+    it("GET /api/v1/projects returns 400 Bad Request when unexpected array shape is provided", async () => {
+      const res = await request(app).get("/api/v1/projects?category[]=");
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Invalid query parameter");
+    });
+
     it("GET /api/v1/projects/categories returns distinct categories", async () => {
       (Project.distinct as jest.Mock).mockResolvedValue(["iot", "web", "ai"]);
 
@@ -392,6 +430,86 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toContain("Invalid project ID");
+    });
+  });
+
+  describe("Admin Project Routes", () => {
+    it("GET /api/v1/admin/projects rejects unauthorized request without token", async () => {
+      const res = await request(app).get("/api/v1/admin/projects");
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Unauthorized");
+    });
+
+    it("GET /api/v1/admin/projects rejects request with invalid bearer token", async () => {
+      const res = await request(app)
+        .get("/api/v1/admin/projects")
+        .set("Authorization", "Bearer wrong-token");
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Unauthorized");
+    });
+
+    it("GET /api/v1/admin/projects returns all projects including invisible and draft items when authenticated", async () => {
+      const mockAdminProjects = [
+        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: false },
+        { title: "Planning Project", slug: "planning-proj", category: "web", status: "planning", featured: true },
+        { title: "Active Project", slug: "active-proj", category: "mobile", status: "active", featured: false },
+      ];
+
+      (Project.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockAdminProjects),
+        }),
+      });
+
+      const res = await request(app)
+        .get("/api/v1/admin/projects")
+        .set("Authorization", "Bearer test-secret-token");
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.count).toBe(3);
+      expect(res.body.data).toEqual(mockAdminProjects);
+      // Verify no status filter was imposed
+      expect(Project.find).toHaveBeenCalledWith({});
+    });
+
+    it("GET /api/v1/admin/projects supports query filters for status, category, featured, and tag", async () => {
+      const mockFilteredProjects = [
+        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: true, tags: ["ai"] },
+      ];
+
+      (Project.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockFilteredProjects),
+        }),
+      });
+
+      const res = await request(app)
+        .get("/api/v1/admin/projects?status=invisible&category=rnd&featured=true&tag=ai")
+        .set("x-admin-token", "test-secret-token");
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.count).toBe(1);
+      expect(res.body.data).toEqual(mockFilteredProjects);
+      expect(Project.find).toHaveBeenCalledWith({
+        status: "invisible",
+        category: "rnd",
+        featured: true,
+        tags: { $regex: new RegExp("^ai$", "i") },
+      });
+    });
+
+    it("GET /api/v1/admin/projects rejects invalid status array shape with 400", async () => {
+      const res = await request(app)
+        .get("/api/v1/admin/projects?status[]=")
+        .set("Authorization", "Bearer test-secret-token");
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Invalid query parameter");
     });
   });
 
