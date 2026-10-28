@@ -395,6 +395,76 @@ describe("about-core API & Middleware Integration Tests", () => {
     });
   });
 
+  describe("Admin Project Routes", () => {
+    it("GET /api/v1/admin/projects rejects unauthorized request without token", async () => {
+      const res = await request(app).get("/api/v1/admin/projects");
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Unauthorized");
+    });
+
+    it("GET /api/v1/admin/projects rejects request with invalid bearer token", async () => {
+      const res = await request(app)
+        .get("/api/v1/admin/projects")
+        .set("Authorization", "Bearer wrong-token");
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Unauthorized");
+    });
+
+    it("GET /api/v1/admin/projects returns all projects including invisible and draft items when authenticated", async () => {
+      const mockAdminProjects = [
+        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: false },
+        { title: "Planning Project", slug: "planning-proj", category: "web", status: "planning", featured: true },
+        { title: "Active Project", slug: "active-proj", category: "mobile", status: "active", featured: false },
+      ];
+
+      (Project.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockAdminProjects),
+        }),
+      });
+
+      const res = await request(app)
+        .get("/api/v1/admin/projects")
+        .set("Authorization", "Bearer test-secret-token");
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.count).toBe(3);
+      expect(res.body.data).toEqual(mockAdminProjects);
+      // Verify no status filter was imposed
+      expect(Project.find).toHaveBeenCalledWith({});
+    });
+
+    it("GET /api/v1/admin/projects supports query filters for status, category, featured, and tag", async () => {
+      const mockFilteredProjects = [
+        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: true, tags: ["ai"] },
+      ];
+
+      (Project.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockFilteredProjects),
+        }),
+      });
+
+      const res = await request(app)
+        .get("/api/v1/admin/projects?status=invisible&category=rnd&featured=true&tag=ai")
+        .set("x-admin-token", "test-secret-token");
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.count).toBe(1);
+      expect(res.body.data).toEqual(mockFilteredProjects);
+      expect(Project.find).toHaveBeenCalledWith({
+        status: "invisible",
+        category: "rnd",
+        featured: true,
+        tags: "ai",
+      });
+    });
+  });
+
   describe("Site Configuration Routes", () => {
     it("GET /api/v1/config returns existing configuration with profile and job titles", async () => {
       const mockConfig = {

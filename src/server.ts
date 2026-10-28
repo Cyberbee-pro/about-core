@@ -16,6 +16,7 @@ import achievementRoutes from "./routes/achievementRoutes";
 import experienceRoutes from "./routes/experienceRoutes";
 import configRoutes from "./routes/configRoutes";
 import logRoutes from "./routes/logRoutes";
+import adminProjectRoutes from "./routes/adminProjectRoutes";
 
 const app: Application = express();
 
@@ -95,6 +96,7 @@ app.use("/api/v1/achievements", achievementRoutes);
 app.use("/api/v1/experiences", experienceRoutes);
 app.use("/api/v1/config", configRoutes);
 app.use("/api/v1/admin/logs", logRoutes);
+app.use("/api/v1/admin/projects", adminProjectRoutes);
 
 // Catch 404 & Centralized Error Handler
 app.use(notFoundMiddleware);

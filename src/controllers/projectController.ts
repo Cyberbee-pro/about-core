@@ -13,6 +13,7 @@ export interface ProjectQueryParams {
   category?: string;
   featured?: string;
   tag?: string;
+  status?: string;
 }
 
 function parseJsonField<T>(field: unknown, defaultValue: T): T {
@@ -47,6 +48,46 @@ export const getProjects = async (
     const filter: FilterQuery<IProject> = {
       status: { $ne: "invisible" },
     };
+
+    if (category) {
+      filter.category = category.toLowerCase().trim();
+    }
+
+    if (featured !== undefined) {
+      filter.featured = featured === "true";
+    }
+
+    if (tag) {
+      filter.tags = tag.toLowerCase().trim();
+    }
+
+    const projects = await Project.find(filter)
+      .sort({ featured: -1, startDate: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      count: projects.length,
+      data: projects,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getAdminProjects = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { category, featured, tag, status } = req.query as ProjectQueryParams;
+
+    const filter: FilterQuery<IProject> = {};
+
+    if (status) {
+      filter.status = status.toLowerCase().trim() as ProjectStatus;
+    }
 
     if (category) {
       filter.category = category.toLowerCase().trim();

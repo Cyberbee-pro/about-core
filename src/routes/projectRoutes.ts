@@ -45,4 +45,7 @@ router.post(
   addProjectVersion
 );
 
+export { default as adminProjectRoutes } from "./adminProjectRoutes";
+export { getAdminProjects } from "../controllers/projectController";
+
 export default router;
