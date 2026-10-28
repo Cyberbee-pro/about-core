@@ -307,6 +307,44 @@ describe("about-core API & Middleware Integration Tests", () => {
       });
     });
 
+    it("GET /api/v1/projects filters tags with case-insensitive regex", async () => {
+      (Project.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      });
+
+      const res = await request(app).get("/api/v1/projects?tag=TypeScript");
+      expect(res.status).toBe(200);
+      expect(Project.find).toHaveBeenCalledWith({
+        status: { $ne: "invisible" },
+        tags: { $regex: new RegExp("^TypeScript$", "i") },
+      });
+    });
+
+    it("GET /api/v1/projects coerces array query parameters safely to single string", async () => {
+      (Project.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      });
+
+      const res = await request(app).get("/api/v1/projects?category=web&category=iot");
+      expect(res.status).toBe(200);
+      expect(Project.find).toHaveBeenCalledWith({
+        status: { $ne: "invisible" },
+        category: "web",
+      });
+    });
+
+    it("GET /api/v1/projects returns 400 Bad Request when unexpected array shape is provided", async () => {
+      const res = await request(app).get("/api/v1/projects?category[]=");
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Invalid query parameter");
+    });
+
     it("GET /api/v1/projects/categories returns distinct categories", async () => {
       (Project.distinct as jest.Mock).mockResolvedValue(["iot", "web", "ai"]);
 
@@ -460,8 +498,18 @@ describe("about-core API & Middleware Integration Tests", () => {
         status: "invisible",
         category: "rnd",
         featured: true,
-        tags: "ai",
+        tags: { $regex: new RegExp("^ai$", "i") },
       });
+    });
+
+    it("GET /api/v1/admin/projects rejects invalid status array shape with 400", async () => {
+      const res = await request(app)
+        .get("/api/v1/admin/projects?status[]=")
+        .set("Authorization", "Bearer test-secret-token");
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain("Invalid query parameter");
     });
   });
 

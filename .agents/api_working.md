@@ -162,7 +162,8 @@ When uploading media files (`iconUrl`, `mediaUrls`, `certificateUrls`) for exper
   - Default: `{ status: { $ne: "invisible" } }` (hides drafts/archived)
   - `?category=<category>` $\rightarrow$ `filter.category = category.toLowerCase().trim()`
   - `?featured=<true|false>` $\rightarrow$ `filter.featured = featured === "true"`
-  - `?tag=<tag>` $\rightarrow$ `filter.tags = tag.toLowerCase().trim()`
+  - `?tag=<tag>` $\rightarrow$ `filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") }` (case-insensitive regex match)
+- **Query Parameter Validation:** `category`, `featured`, `tag`, `status` are validated as strings (arrays coerced to `param[0]`; unexpected array shapes return `400 Bad Request`).
 - **Sorting:** Featured projects first (`featured: -1`), then newest start date (`startDate: -1`).
 - **Read Mode:** `.lean()` (returns plain JS objects for optimal memory/speed).
 
@@ -224,7 +225,8 @@ When uploading media files (`iconUrl`, `mediaUrls`, `certificateUrls`) for exper
   - `?status=<status>` $\rightarrow$ `filter.status = status.toLowerCase().trim()` (explicit status filter)
   - `?category=<category>` $\rightarrow$ `filter.category = category.toLowerCase().trim()`
   - `?featured=<true|false>` $\rightarrow$ `filter.featured = featured === "true"`
-  - `?tag=<tag>` $\rightarrow$ `filter.tags = tag.toLowerCase().trim()`
+  - `?tag=<tag>` $\rightarrow$ `filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") }` (case-insensitive regex match)
+- **Query Parameter Validation:** `category`, `featured`, `tag`, `status` are validated as strings (arrays coerced to `param[0]`; unexpected array shapes return `400 Bad Request`).
 - **Sorting:** Featured projects first (`featured: -1`), then newest start date (`startDate: -1`).
 - **Read Mode:** `.lean()` (returns plain JS objects for optimal memory/speed).
 - **Response Shape:**

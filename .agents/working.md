@@ -207,7 +207,7 @@ npx tsc --noEmit
 # Compile to dist/ with path alias resolution
 npm run build
 
-# Run all 10 test suites (204 tests)
+# Run all 10 test suites (208 tests)
 npm test
 
 # Run tests with code coverage analysis

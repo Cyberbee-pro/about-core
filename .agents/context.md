@@ -95,7 +95,7 @@ Protected requests accept either `Authorization: Bearer <ADMIN_SECRET>` or
 
 - `npm run dev` — start the development server with `ts-node-dev -r tsconfig-paths/register`.
 - `npm run build` — type-check and compile to `dist/` with `tsc-alias` resolving `@/` path aliases.
-- `npm test` — run Jest serially. **All 10 test suites and 204 tests pass**.
+- `npm test` — run Jest serially. **All 10 test suites and 208 tests pass**.
 - `npm run test:coverage` — collect coverage.
 
 Required environment variables are documented in `.env.example`:
@@ -108,5 +108,5 @@ The complete Headless CMS API including Projects (with dedicated admin listing `
 Experiences (with single position append `POST /api/v1/experiences/:organization/positions`),
 Site Config (with avatar rollback, history, and Cloudinary PDF resume uploads), Request Logging, and Media Uploads is implemented,
 typed with strict TypeScript, fully refactored with `@/*` path aliases, production-compiled with `tsc-alias`,
-and sanitized against regex injection. All 10 test suites (204 tests) pass.
+and sanitized against regex injection. All 10 test suites (208 tests) pass.
 Evidence reports and TDD artifacts are preserved in `.agents/tdd/`.
