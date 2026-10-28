@@ -215,6 +215,27 @@ When uploading media files (`iconUrl`, `mediaUrls`, `certificateUrls`) for exper
   4. `await project.save()`
 - **Returns:** Updated project document with newly appended version history entry.
 
+#### `GET /api/v1/admin/projects`
+- **Scope:** Protected (`authMiddleware`)
+- **Target Model:** `Project`
+- **DB Operation:** `Project.find(filter).sort({ featured: -1, startDate: -1 }).lean()`
+- **Query Filter Logic:**
+  - Default: `{}` (fetches all projects without any status restriction, fully exposing `invisible`, `planning`, `active`, etc.)
+  - `?status=<status>` $\rightarrow$ `filter.status = status.toLowerCase().trim()` (explicit status filter)
+  - `?category=<category>` $\rightarrow$ `filter.category = category.toLowerCase().trim()`
+  - `?featured=<true|false>` $\rightarrow$ `filter.featured = featured === "true"`
+  - `?tag=<tag>` $\rightarrow$ `filter.tags = tag.toLowerCase().trim()`
+- **Sorting:** Featured projects first (`featured: -1`), then newest start date (`startDate: -1`).
+- **Read Mode:** `.lean()` (returns plain JS objects for optimal memory/speed).
+- **Response Shape:**
+  ```json
+  {
+    "success": true,
+    "count": 3,
+    "data": [...]
+  }
+  ```
+
 ---
 
 ### 4.3 Skills API (`/api/v1/skills`)
@@ -609,6 +630,7 @@ Because file uploads occur during the Express middleware pipeline **before** the
 | `GET` | `/api/v1/projects` | Public | `Project` | `find().sort().lean()` | `status != invisible`, `category`, `featured`, `tag` |
 | `GET` | `/api/v1/projects/categories` | Public | `Project` | `distinct()` | Categories where `status != invisible` |
 | `GET` | `/api/v1/projects/:slug` | Public* | `Project` | `findOne().lean()` | By `slug`; rejects `invisible` if not admin |
+| `GET` | `/api/v1/admin/projects` | Admin | `Project` | `find().sort().lean()` | No status filter (includes `invisible`/drafts); optional `status`, `category`, `featured`, `tag` |
 | `POST` | `/api/v1/projects` | Admin | `Project` | `create()` | Creates project, normalizes tags/skills, verifies unique slug |
 | `PUT` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndUpdate()` | Partial update by `_id`, runs validators |
 | `DELETE` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndDelete()` | Removes project by `_id` |

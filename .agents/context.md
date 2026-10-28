@@ -21,7 +21,7 @@ logging, health checks, routes, and centralized error handling.
 | --- | --- | --- |
 | Health & Dashboard | `GET /`, `GET /index.html`, `GET /health`, `GET /api/v1/health` | Root `GET /` serves MAGI EVA-0 HTML dashboard directly from `public/` (Edge CDN on Vercel, static on Express). `GET /health` returns liveness. `GET /api/v1/health` is a pure JSON API metadata endpoint (`dbStatus`, `uptime`, `memoryUsageMB`, `nodeVersion`, `env`). |
 | Projects | `GET /api/v1/projects`, `GET /categories`, `GET /:slug` | Public reads exclude `invisible` projects (unless admin authenticated). List filtering supports `category`, `featured`, and `tag`. |
-| Project admin | `POST /api/v1/projects`, `PUT /:id`, `DELETE /:id`, `POST /:slug/versions` | Protected by `ADMIN_SECRET`; create/update support multipart media (`image`, `videoDemo`, `threeDModel`). Single-truth `isLatest` version tracking. |
+| Project admin | `GET /api/v1/admin/projects`, `POST /api/v1/projects`, `PUT /:id`, `DELETE /:id`, `POST /:slug/versions` | Protected by `ADMIN_SECRET`; `GET /api/v1/admin/projects` lists all projects without status restrictions (including invisible/drafts) supporting status/category/featured/tag filtering; create/update support multipart media (`image`, `videoDemo`, `threeDModel`). Single-truth `isLatest` version tracking. |
 | Skills | `GET /api/v1/skills`, `GET /:id`, `POST /`, `PUT /:id`, `DELETE /:id` | Public reads sorted by `{ weight: 1, name: 1 }`; mutations protected by `ADMIN_SECRET` with 409 duplicate name validation. |
 | Certificates | `GET /api/v1/certificates`, `GET /:id`, `POST /`, `PUT /:id`, `DELETE /:id` | Public reads sorted by `{ weight: 1, title: 1 }`; mutations protected with 409 duplicate title validation. |
 | Achievements | `GET /api/v1/achievements`, `GET /:id`, `POST /`, `PUT /:id`, `DELETE /:id` | Public reads sorted by `{ weight: 1, title: 1 }`; mutations protected with 409 duplicate title validation. |
@@ -95,7 +95,7 @@ Protected requests accept either `Authorization: Bearer <ADMIN_SECRET>` or
 
 - `npm run dev` — start the development server with `ts-node-dev -r tsconfig-paths/register`.
 - `npm run build` — type-check and compile to `dist/` with `tsc-alias` resolving `@/` path aliases.
-- `npm test` — run Jest serially. **All 10 test suites and 161 tests pass**.
+- `npm test` — run Jest serially. **All 10 test suites and 204 tests pass**.
 - `npm run test:coverage` — collect coverage.
 
 Required environment variables are documented in `.env.example`:
@@ -104,9 +104,9 @@ credentials. `PORT` defaults to `5000`.
 
 ## Current Work State
 
-The complete Headless CMS API including Projects, Skills, Certificates, Achievements,
+The complete Headless CMS API including Projects (with dedicated admin listing `GET /api/v1/admin/projects`), Skills, Certificates, Achievements,
 Experiences (with single position append `POST /api/v1/experiences/:organization/positions`),
 Site Config (with avatar rollback, history, and Cloudinary PDF resume uploads), Request Logging, and Media Uploads is implemented,
 typed with strict TypeScript, fully refactored with `@/*` path aliases, production-compiled with `tsc-alias`,
-and sanitized against regex injection. All 10 test suites (161 tests) pass.
+and sanitized against regex injection. All 10 test suites (204 tests) pass.
 Evidence reports and TDD artifacts are preserved in `.agents/tdd/`.

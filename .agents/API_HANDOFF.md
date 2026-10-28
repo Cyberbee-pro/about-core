@@ -92,6 +92,7 @@ HTTP Request
 | `GET` | `/api/v1/projects` | Public | `application/json` | List visible projects (`status != 'invisible'`). Supports category, featured, and tag filters. |
 | `GET` | `/api/v1/projects/categories` | Public | `application/json` | Distinct categories across all visible projects. |
 | `GET` | `/api/v1/projects/:slug` | Public* | `application/json` | Get single project by slug. Invisible items return 404 unless admin authenticated. |
+| `GET` | `/api/v1/admin/projects` | Admin | `application/json` | List all projects without status filters (including invisible/drafts). Supports status, category, featured, and tag filters. |
 | `POST` | `/api/v1/projects` | Admin | JSON / Multipart | Create a new project. Accepts file uploads for `image`, `videoDemo`, and `threeDModel`. |
 | `PUT` | `/api/v1/projects/:id` | Admin | JSON / Multipart | Update project fields by MongoDB ObjectId. Accepts file uploads. |
 | `DELETE` | `/api/v1/projects/:id` | Admin | `application/json` | Delete project by MongoDB ObjectId. |
@@ -322,6 +323,41 @@ HTTP Request
   "success": true,
   "message": "Version added successfully",
   "data": { ...updatedProject }
+}
+```
+
+#### `GET /api/v1/admin/projects`
+- **Access**: Admin (`ADMIN_SECRET` via `Authorization: Bearer <token>` or `x-admin-token: <token>`)
+- **Query Parameters**:
+  - `status` (optional, `"invisible"` | `"planning"` | `"work_in_progress"` | `"delay_hold"` | `"active"`): Filter by specific project status.
+  - `category` (optional, string): Case-insensitive category match.
+  - `featured` (optional, `"true"` | `"false"`): Strict boolean comparison.
+  - `tag` (optional, string): Case-insensitive match against elements in `tags`.
+- **Sorting**: Featured items first (`featured: -1`), then newest start date descending (`startDate: -1`).
+- **Behavior**: Returns all projects from the database matching query parameters without imposing the public `status != 'invisible'` exclusion, ensuring full visibility of draft and archived projects in admin dashboards.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "count": 2,
+  "data": [
+    {
+      "_id": "670fa123456789abcdef0001",
+      "title": "Secret Project",
+      "slug": "secret-project",
+      "category": "experimental",
+      "description": "Internal prototype",
+      "featured": false,
+      "tags": ["ai", "robotics"],
+      "skills": [],
+      "startDate": "2026-05-01T00:00:00.000Z",
+      "status": "invisible",
+      "image": "https://res.cloudinary.com/.../image_1.jpg",
+      "contributors": [],
+      "socialLinks": [],
+      "versions": []
+    }
+  ]
 }
 ```
 

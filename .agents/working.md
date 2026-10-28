@@ -51,6 +51,7 @@
 │   │   └── logController.ts                 # Admin telemetry queries (date, month, year, level, pagination)
 │   ├── routes/                              # Express route modules
 │   │   ├── projectRoutes.ts                 # /api/v1/projects (public reads, admin mutations)
+│   │   ├── adminProjectRoutes.ts            # /api/v1/admin/projects (admin protected full project listing)
 │   │   ├── skillRoutes.ts                   # /api/v1/skills (public reads, admin mutations)
 │   │   ├── certificateRoutes.ts             # /api/v1/certificates (public reads, admin mutations)
 │   │   ├── achievementRoutes.ts             # /api/v1/achievements (public reads, admin mutations)
@@ -119,6 +120,7 @@
 
 | Method | Path | Purpose |
 |---|---|---|
+| `GET` | `/api/v1/admin/projects` | List all projects without status filters (including invisible/drafts); filters: `status`, `category`, `featured`, `tag` |
 | `POST` | `/api/v1/projects` | Create project (multipart: `image`, `videoDemo`, `threeDModel`) |
 | `PUT` | `/api/v1/projects/:id` | Update project by MongoDB ObjectId |
 | `DELETE` | `/api/v1/projects/:id` | Delete project by ObjectId (preserves Cloudinary assets) |
@@ -184,7 +186,7 @@
 3. **`express.static(path.join(process.cwd(), "public"))`**: Serves the Evangelion MAGI system dashboard directly from disk (mirrors Vercel Edge CDN).
 4. **`dbLoggerMiddleware`**: Non-blocking response hook that intercepts `response.finish` and asynchronously creates a `LogEntry` in MongoDB with latency, IP, method, status code, and sanitized metadata.
 5. **Health Routes**: `/health` (basic JSON) and `/api/v1/health` (detailed server and DB status).
-6. **Feature Routes**: Mounted at `/api/v1/{projects, skills, certificates, achievements, experiences, config, admin/logs}`.
+6. **Feature Routes**: Mounted at `/api/v1/{projects, skills, certificates, achievements, experiences, config, admin/logs, admin/projects}`.
 7. **`notFoundMiddleware`**: Centralized 404 handler returning structured JSON.
 8. **`errorMiddleware`**: Centralized error handler converting Mongoose `CastError` (400), `ValidationError` (400), MongoDB duplicate key code `11000` (409), CORS errors (403), and unhandled exceptions (500).
 
@@ -205,7 +207,7 @@ npx tsc --noEmit
 # Compile to dist/ with path alias resolution
 npm run build
 
-# Run all 10 test suites (161 tests)
+# Run all 10 test suites (204 tests)
 npm test
 
 # Run tests with code coverage analysis
