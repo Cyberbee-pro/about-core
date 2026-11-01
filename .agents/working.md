@@ -1,7 +1,7 @@
 # about-core Working Structure
 
 ## Repository Overview
-`about-core` is a serverless-ready Express 4 + TypeScript Headless CMS REST API for the [shibraj.dev](https://shibraj.dev) portfolio (powering both a Next.js web client and a native Kotlin Android client). It features MongoDB Atlas persistence via Mongoose, Cloudinary multi-format media streaming (images, videos, 3D GLB models, PDF resumes), custom MongoDB request telemetry logging (`LogEntry`), and full integration test coverage (10 test suites and 161 tests passing).
+`about-core` is a serverless-ready Express 4 + TypeScript Headless CMS REST API for the [shibraj.dev](https://shibraj.dev) portfolio (powering both a Next.js web client and a native Kotlin Android client). It features MongoDB Atlas persistence via Mongoose, Cloudinary multi-format media streaming (images, videos, 3D GLB models, PDF resumes), custom MongoDB request telemetry logging (`LogEntry`), and full integration test coverage (11 test suites and 328 tests passing).
 
 ## Directory Structure
 
@@ -33,7 +33,7 @@
 │   │   ├── db.ts                            # MongoDB connection management & pooling (cached connection)
 │   │   └── cloudinary.ts                    # Cloudinary v2 SDK configuration (enforced HTTPS)
 │   ├── models/                              # Mongoose schemas & TypeScript interfaces
-│   │   ├── Project.ts                       # Core project schema (slug, tags, skills refs, 3D model, versions)
+│   │   ├── Project.ts                       # Core project schema (slug, tags, skills refs, 3D model, versions, gallery)
 │   │   ├── SiteConfig.ts                    # Global configuration (name, pfp, pfpHistory, jobTitles, resume, bio)
 │   │   ├── Skill.ts                         # Tech stack skills (name, type, logoUrl, featured, weight)
 │   │   ├── Certificate.ts                   # Accreditations & certificates (title, organization, mediaUrl, weight)
@@ -77,7 +77,8 @@
 │   ├── skills-tests.test.ts                 # Skill endpoints CRUD, sorting & duplicate checks
 │   ├── certificates-tests.test.ts           # Certificate endpoints CRUD, sorting & duplicate checks
 │   ├── experiences-tests.test.ts            # Experience endpoints, position append, media streaming
-│   └── achievements-tests.test.ts           # Achievement endpoints CRUD, sorting & duplicate checks
+│   ├── achievements-tests.test.ts           # Achievement endpoints CRUD, sorting & duplicate checks
+│   └── gallery.test.ts                      # Tagged image gallery tests (project & version galleries, rollback, ordering)
 ├── .coderabbit.yaml                         # CodeRabbit review configuration
 ├── .env                                     # Local environment configuration (git-ignored)
 ├── .env.example                             # Environment variable template
@@ -125,6 +126,16 @@
 | `PUT` | `/api/v1/projects/:id` | Update project by MongoDB ObjectId |
 | `DELETE` | `/api/v1/projects/:id` | Delete project by ObjectId (preserves Cloudinary assets) |
 | `POST` | `/api/v1/projects/:slug/versions` | Append release version to project by slug (multipart media) |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId` | In-place update of project version subdocument (multipart media with rollback) |
+| `DELETE` | `/api/v1/projects/:slug/versions/:versionId` | Delete single project version subdocument (retains Cloudinary assets) |
+| `POST` | `/api/v1/projects/:slug/gallery` | Append images to project gallery (multipart `galleryImages` or JSON `items`) |
+| `PUT` | `/api/v1/projects/:slug/gallery/order` | Reorder project gallery items by full array of `_id`s |
+| `PUT` | `/api/v1/projects/:slug/gallery/:imageId` | Partial update of project gallery item (tags, caption, optional file replacement) |
+| `DELETE` | `/api/v1/projects/:slug/gallery/:imageId` | Delete image from project gallery (Cloudinary assets retained) |
+| `POST` | `/api/v1/projects/:slug/versions/:versionId/gallery` | Append images to version gallery (multipart `galleryImages` or JSON `items`) |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/order` | Reorder version gallery items by full array of `_id`s |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Partial update of version gallery item (tags, caption, optional file replacement) |
+| `DELETE` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Delete image from version gallery (Cloudinary assets retained) |
 | `POST` | `/api/v1/skills` | Create skill (multipart: `logoUrl`, unique name) |
 | `PUT` | `/api/v1/skills/:id` | Update skill by ObjectId (multipart: `logoUrl`) |
 | `DELETE` | `/api/v1/skills/:id` | Delete skill by ObjectId |
@@ -162,20 +173,21 @@
 
 ## Test Suite Overview
 
-- **Status**: **10 test suites, 161 tests passing** (Jest serially executed with `--runInBand`).
+- **Status**: **11 test suites, 328 tests passing** (Jest serially executed with `--runInBand`).
 - **In-Memory Testing**: Uses `mongodb-memory-server` for zero-dependency local and CI test runs.
 - **Path Aliases**: `@/*` alias mapping verified across test and source files via `tsconfig-paths` and `jest.config.ts`.
 - **Test File Map**:
   1. `tests/cors.test.ts` (9 tests) — Origin parsing, credentials, preflight OPTIONS, allowed/blocked behavior.
-  2. `tests/api.test.ts` (24 tests) — Health checks, MAGI static dashboard, auth middleware, project, site config avatar and resume PDF flows.
-  3. `tests/models.test.ts` (42 tests) — Schema constraints, defaults, and validations for all 7 Mongoose models (including resumeUrl on SiteConfig).
-  4. `tests/uploadNaming.test.ts` (12 tests) — Cloudinary sequential ID derivation, resume PDF incremental naming, Search API queries, request-level caching, timestamp fallback.
+  2. `tests/api.test.ts` (104 tests) — Health checks, MAGI static dashboard, auth middleware, public/admin projects, project versions (POST/PUT/DELETE, changelog parsing, folder sanitization, rollback resource types), site config avatar and resume PDF flows, admin request logs.
+  3. `tests/models.test.ts` (73 tests) — Schema constraints, defaults, and validations for all 7 Mongoose models (including resumeUrl on SiteConfig and gallery subdocuments on Project and Version).
+  4. `tests/uploadNaming.test.ts` (37 tests) — Cloudinary sequential ID derivation, resume PDF incremental naming, Search API queries, request-level caching, timestamp fallback, and sanitizeVersionTag folder rules.
   5. `tests/db.test.ts` (4 tests) — MongoDB connection pooling, cached readyState reuse, disconnection handling.
   6. `tests/stringUtils.test.ts` (3 tests) — Regex escaping for safe dynamic queries against ReDoS.
   7. `tests/skills-tests.test.ts` (11 tests) — Skill CRUD, weight/name sorting, duplicate name rejection.
   8. `tests/certificates-tests.test.ts` (14 tests) — Certificate CRUD, weight/title sorting, duplicate title rejection.
   9. `tests/experiences-tests.test.ts` (27 tests) — Experience CRUD, multi-position append, active role switching, media uploads.
   10. `tests/achievements-tests.test.ts` (15 tests) — Achievement CRUD, weight/title sorting, duplicate title rejection.
+  11. `tests/gallery.test.ts` (63 tests) — Comprehensive gallery tests for project and version galleries: auth enforcement, multipart aligned metadata, URL-based adds, tag normalization and length checks, caption limits, 10-file request limit, 30-item project/version caps, rollback destruction on failure, atomic updates, array reordering, deletion asset retention, PUT protection, and response guarantee helper.
 
 ---
 
@@ -188,7 +200,7 @@
 5. **Health Routes**: `/health` (basic JSON) and `/api/v1/health` (detailed server and DB status).
 6. **Feature Routes**: Mounted at `/api/v1/{projects, skills, certificates, achievements, experiences, config, admin/logs, admin/projects}`.
 7. **`notFoundMiddleware`**: Centralized 404 handler returning structured JSON.
-8. **`errorMiddleware`**: Centralized error handler converting Mongoose `CastError` (400), `ValidationError` (400), MongoDB duplicate key code `11000` (409), CORS errors (403), and unhandled exceptions (500).
+8. **`errorMiddleware`**: Centralized error handler converting Mongoose `CastError` (400), `ValidationError` (400), MongoDB duplicate key code `11000` (409), CORS errors (403), Multer limits/errors (400), and unhandled exceptions (500).
 
 ---
 
@@ -207,7 +219,7 @@ npx tsc --noEmit
 # Compile to dist/ with path alias resolution
 npm run build
 
-# Run all 10 test suites (208 tests)
+# Run all 11 test suites (328 tests)
 npm test
 
 # Run tests with code coverage analysis

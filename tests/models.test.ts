@@ -439,6 +439,82 @@ describe("Project Model - Skills Reference", () => {
   });
 });
 
+// ─── Project Model - Gallery ─────────────────────────────────────────────────
+
+describe("Project Model - Gallery", () => {
+  it("defaults project gallery to an empty array", () => {
+    const project = new Project({
+      title: "Gallery Project",
+      slug: "gallery-project",
+      category: "web",
+      description: "A project with gallery.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+    });
+    expect(project.gallery).toBeDefined();
+    expect(project.gallery).toHaveLength(0);
+    expect(project.validateSync()).toBeUndefined();
+  });
+
+  it("defaults version gallery to an empty array", () => {
+    const project = new Project({
+      title: "Gallery Project",
+      slug: "gallery-project",
+      category: "web",
+      description: "A project with gallery.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [{ versionTag: "v1.0.0" }],
+    });
+    expect(project.versions[0].gallery).toBeDefined();
+    expect(project.versions[0].gallery).toHaveLength(0);
+    expect(project.validateSync()).toBeUndefined();
+  });
+
+  it("accepts valid gallery image items with default tags and caption and auto-generated _id", () => {
+    const project = new Project({
+      title: "Gallery Project",
+      slug: "gallery-project",
+      category: "web",
+      description: "A project with gallery.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      gallery: [{ url: "https://cdn.example.com/img1.png" }],
+      versions: [
+        {
+          versionTag: "v1.0.0",
+          gallery: [{ url: "https://cdn.example.com/v1-img1.png" }],
+        },
+      ],
+    });
+    expect(project.validateSync()).toBeUndefined();
+    expect(project.gallery[0]._id).toBeDefined();
+    expect(project.gallery[0].url).toBe("https://cdn.example.com/img1.png");
+    expect(project.gallery[0].tags).toEqual([]);
+    expect(project.gallery[0].caption).toBe("");
+
+    expect(project.versions[0].gallery[0]._id).toBeDefined();
+    expect(project.versions[0].gallery[0].url).toBe("https://cdn.example.com/v1-img1.png");
+    expect(project.versions[0].gallery[0].tags).toEqual([]);
+    expect(project.versions[0].gallery[0].caption).toBe("");
+  });
+
+  it("fails validation when a gallery image url is missing", () => {
+    const project = new Project({
+      title: "Gallery Project",
+      slug: "gallery-project",
+      category: "web",
+      description: "A project with gallery.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      gallery: [{ caption: "Missing url" } as unknown as { url: string }],
+    });
+    const err = project.validateSync();
+    expect(err).toBeDefined();
+    expect(err!.errors["gallery.0.url"]).toBeDefined();
+  });
+});
+
 // ─── SiteConfig Model ────────────────────────────────────────────────────────
 
 describe("SiteConfig Model", () => {

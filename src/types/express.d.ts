@@ -1,9 +1,16 @@
 import { Request } from "express";
 
+export interface UploadedMediaAsset {
+  publicId: string;
+  resourceType: "image" | "video" | "raw" | "auto";
+}
+
 declare global {
   namespace Express {
     interface Request {
       adminAuthenticated?: boolean;
+      uploadedMediaAssets?: UploadedMediaAsset[];
+      galleryUploadedFiles?: Array<{ url: string }>;
     }
   }
 }

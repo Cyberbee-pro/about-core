@@ -12,7 +12,14 @@ import { Schema, model, Document, Types } from "mongoose";
 
 export interface ISocialLink { platform: string; url: string; }
 export interface IContributor { name: string; profilePicUrl: string; profileLink?: string; }
+export interface IGalleryImage {
+  _id?: Types.ObjectId;
+  url: string;
+  tags: string[];
+  caption: string;
+}
 export interface IProjectVersion {
+  _id?: Types.ObjectId;
   versionTag: string;
   releaseDate: Date;
   changelog: string[];
@@ -21,6 +28,7 @@ export interface IProjectVersion {
   demoUrl?: string;
   threeDFileUrl?: string;
   isLatest: boolean;
+  gallery: IGalleryImage[];
 }
 
 export type ProjectStatus = "invisible" | "planning" | "work_in_progress" | "delay_hold" | "active";
@@ -48,6 +56,7 @@ export interface IProject extends Document {
   githubLink?: string;
   socialLinks: ISocialLink[];
   versions: IProjectVersion[];
+  gallery: IGalleryImage[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -56,6 +65,12 @@ const ContributorSchema = new Schema<IContributor>({
   name: { type: String, required: true },
   profilePicUrl: { type: String, required: true },
   profileLink: { type: String },
+});
+
+const GalleryImageSchema = new Schema<IGalleryImage>({
+  url: { type: String, required: true },
+  tags: { type: [String], default: [] },
+  caption: { type: String, default: "" },
 });
 
 const VersionSchema = new Schema<IProjectVersion>({
@@ -67,6 +82,7 @@ const VersionSchema = new Schema<IProjectVersion>({
   demoUrl: { type: String },
   threeDFileUrl: { type: String },
   isLatest: { type: Boolean, default: false },
+  gallery: { type: [GalleryImageSchema], default: [] },
 });
 
 const ProjectSchema = new Schema<IProject>({
@@ -96,6 +112,7 @@ const ProjectSchema = new Schema<IProject>({
   deployedLink: { type: String, default: null },
   githubLink: { type: String, default: null },
   versions: [VersionSchema],
+  gallery: { type: [GalleryImageSchema], default: [] },
 }, { timestamps: true });
 
 export const Project = model<IProject>("Project", ProjectSchema);
@@ -379,6 +396,8 @@ export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
 | **PUT** | `/api/v1/projects/:id` | Yes | Multipart / JSON: `Partial<IProject>` | Update project metadata or media by ObjectId. |
 | **DELETE** | `/api/v1/projects/:id` | Yes | Params: `id` | Delete project document (preserves Cloudinary assets). |
 | **POST** | `/api/v1/projects/:slug/versions` | Yes | Multipart / JSON: `IProjectVersion` | Push new release version to `versions` array (single-truth `isLatest`). |
+| **PUT** | `/api/v1/projects/:slug/versions/:versionId` | Yes | Multipart / JSON: `Partial<IProjectVersion>` | Update specific project version in-place (supports partial media uploads, clean rollback on error, tag collision check, single-truth `isLatest`). |
+| **DELETE** | `/api/v1/projects/:slug/versions/:versionId` | Yes | Params: `slug`, `versionId` | Delete specific version subdocument (preserves Cloudinary assets, leaves project without latest if latest deleted). |
 | **GET** | `/api/v1/admin/projects` | Yes | Query: `status`, `category`, `featured`, `tag` | Fetch all projects from database without status restrictions (including invisible/draft). |
 
 ### 2.3 Skills (`/api/v1/skills`)
@@ -462,7 +481,7 @@ All media assets are buffered in memory and streamed directly to Cloudinary. Com
 ```
 portfolio/
 ├── projects/<slug>/{images, videos, models}/
-│   └── <versionTag>/{images, videos, models}/
+│   └── <versionTag>/{images, videos, models}/   # Version tag preserving dots (e.g. 'v1.0.0')
 ├── skills/<skill-name>/
 ├── certificate/
 ├── experiences/<tag>/<org-slug>/{icons, media, certificates}/

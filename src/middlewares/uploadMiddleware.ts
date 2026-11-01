@@ -4,6 +4,8 @@ import { Readable } from "stream";
 import { UploadApiResponse } from "cloudinary";
 import cloudinary from "../config/cloudinary";
 import { Experience } from "../models/Experience";
+import { Project } from "../models/Project";
+import { Types } from "mongoose";
 import {
   escapeRegex,
   stripExtension,
@@ -71,6 +73,8 @@ export const projectUploadFields = upload.fields([
   { name: "image", maxCount: 1 },
   { name: "videoDemo", maxCount: 1 },
   { name: "threeDModel", maxCount: 1 },
+  { name: "galleryImages", maxCount: 10 },
+  { name: "galleryImage", maxCount: 1 },
 ]);
 
 export const skillUploadFields = upload.fields([
@@ -305,6 +309,31 @@ export const getNextResumePublicId = async (
 // Folder determination
 // ---------------------------------------------------------------------------
 
+/**
+ * Sanitizes a version tag for safe use in Cloudinary folder paths.
+ * 1. Trims and lowercases.
+ * 2. Replaces any characters other than [a-z0-9._-] with hyphens.
+ * 3. Collapses consecutive dots into a hyphen to prevent directory traversal (e.g. "..").
+ * 4. Collapses multiple hyphens into a single hyphen.
+ * 5. Strips leading and trailing dots and hyphens.
+ * 6. Truncates to max 64 characters and strips any trailing dots/hyphens.
+ * Dots are preserved for standard semver tags (e.g. "v1.0.0" -> "v1.0.0").
+ */
+export const sanitizeVersionTag = (tag: string): string => {
+  if (!tag || typeof tag !== "string") {
+    return "";
+  }
+  return tag
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/\.{2,}/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .slice(0, 64)
+    .replace(/^[.-]+|[.-]+$/g, "");
+};
+
 interface FolderInfo {
   folder: string;
   base: string;
@@ -313,7 +342,7 @@ interface FolderInfo {
 const getFolderInfo = (
   reqPath: string,
   slug: string | null,
-  mediaType: "images" | "videos" | "models",
+  mediaType: "images" | "videos" | "models" | "gallery",
   versionTag?: string
 ): FolderInfo => {
   // Keep profile uploads tied to known profile endpoints. Substring matching
@@ -335,12 +364,24 @@ const getFolderInfo = (
     };
   }
 
+  if (mediaType === "gallery") {
+    if (reqPath.includes("/versions") && versionTag) {
+      const safeVersionTag = sanitizeVersionTag(versionTag);
+      if (safeVersionTag) {
+        return {
+          folder: `portfolio/projects/${slug}/${safeVersionTag}/gallery`,
+          base: slug,
+        };
+      }
+    }
+    return {
+      folder: `portfolio/projects/${slug}/gallery`,
+      base: slug,
+    };
+  }
+
   if (reqPath.includes("/versions") && versionTag) {
-    const safeVersionTag = versionTag
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^[-.]|[-.]$/g, "");
+    const safeVersionTag = sanitizeVersionTag(versionTag);
     if (safeVersionTag) {
       return {
         folder: `portfolio/projects/${slug}/${safeVersionTag}/${mediaType}`,
@@ -361,9 +402,23 @@ const getFolderInfo = (
 
 type MulterFilesMap = Record<string, Express.Multer.File[]>;
 
+export const cleanupUploadedVersionMedia = async (req: Request): Promise<void> => {
+  if (req.uploadedMediaAssets && req.uploadedMediaAssets.length > 0) {
+    for (const asset of req.uploadedMediaAssets) {
+      try {
+        await cloudinary.uploader.destroy(asset.publicId, {
+          resource_type: asset.resourceType,
+        });
+      } catch {
+        // Safe swallow: preserve original API error response
+      }
+    }
+  }
+};
+
 export const processMediaUploads = async (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
@@ -378,12 +433,108 @@ export const processMediaUploads = async (
     const slug = routeSlug
       ? routeSlug.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || null
       : deriveSlug(body);
-    const versionTag = typeof body.versionTag === "string" ? body.versionTag : undefined;
-    const resolveFolder = (mediaType: "images" | "videos" | "models") =>
+
+    let versionTag: string | undefined =
+      typeof body.versionTag === "string" && body.versionTag.trim()
+        ? body.versionTag.trim()
+        : undefined;
+
+    if (isVersionUpload) {
+      if (!slug) {
+        res.status(400).json({
+          success: false,
+          message: "Project slug is required for version media uploads",
+        });
+        return;
+      }
+
+      const rawVersionId =
+        typeof req.params.versionId === "string" ? req.params.versionId.trim() : undefined;
+
+      if (!versionTag && rawVersionId) {
+        if (!Types.ObjectId.isValid(rawVersionId)) {
+          res.status(400).json({
+            success: false,
+            message: "Invalid identifier format",
+          });
+          return;
+        }
+
+        const projectDoc = await Project.findOne({ slug });
+        if (!projectDoc) {
+          res.status(404).json({
+            success: false,
+            message: `Project not found with slug: ${slug}`,
+          });
+          return;
+        }
+
+        const storedVersion = projectDoc.versions.find(
+          (v) => String(v._id) === rawVersionId
+        );
+        if (!storedVersion) {
+          res.status(404).json({
+            success: false,
+            message: `Version not found with id: ${rawVersionId}`,
+          });
+          return;
+        }
+
+        versionTag = storedVersion.versionTag;
+      }
+
+      if (!versionTag) {
+        res.status(400).json({
+          success: false,
+          message: "Version tag is required for version media uploads",
+        });
+        return;
+      }
+
+      const safeVersionTag = sanitizeVersionTag(versionTag);
+      if (!safeVersionTag) {
+        res.status(400).json({
+          success: false,
+          message: "Invalid version tag for version media uploads",
+        });
+        return;
+      }
+      versionTag = safeVersionTag;
+    }
+
+    const allowedImageMimes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+      "image/gif",
+      "image/svg+xml",
+    ];
+    const isAllowedImage = (file: Express.Multer.File) =>
+      file.mimetype.startsWith("image/") || allowedImageMimes.includes(file.mimetype);
+
+    if (
+      (files.galleryImages && files.galleryImages.length > 0) ||
+      (files.galleryImage && files.galleryImage.length > 0)
+    ) {
+      if (!slug) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Project slug is required for gallery media uploads",
+        });
+        return;
+      }
+    }
+
+    const resolveFolder = (mediaType: "images" | "videos" | "models" | "gallery") =>
       getFolderInfo(req.path, slug, mediaType, isVersionUpload ? versionTag : undefined);
 
     // Request‑level cache — one Map per request, shared across all uploads
     const cache: FolderCache = new Map();
+    if (!req.uploadedMediaAssets) {
+      req.uploadedMediaAssets = [];
+    }
 
     // 1. Process Image upload
     if (files.image && files.image.length > 0) {
@@ -397,6 +548,10 @@ export const processMediaUploads = async (
         public_id: publicId,
       });
       req.body.image = result.secure_url;
+      req.uploadedMediaAssets.push({
+        publicId: result.public_id,
+        resourceType: "image",
+      });
     }
 
     // 2. Process Video Demo upload
@@ -411,6 +566,10 @@ export const processMediaUploads = async (
         public_id: publicId,
       });
       req.body.videoDemo = result.secure_url;
+      req.uploadedMediaAssets.push({
+        publicId: result.public_id,
+        resourceType: "video",
+      });
     }
 
     // 3. Process Raw 3D Model upload (.glb / .gltf)
@@ -423,6 +582,11 @@ export const processMediaUploads = async (
         folder,
         resource_type: "raw",
         public_id: publicId,
+      });
+
+      req.uploadedMediaAssets.push({
+        publicId: result.public_id,
+        resourceType: "raw",
       });
 
       let existingThreeDModel: Record<string, unknown> = {};
@@ -448,8 +612,64 @@ export const processMediaUploads = async (
       };
     }
 
+    // 4. Process Gallery Images upload
+    if (files.galleryImages && files.galleryImages.length > 0) {
+      const { folder, base } = resolveFolder("gallery");
+      const uploadedGalleryFiles: Array<{ url: string }> = [];
+      for (const galleryFile of files.galleryImages) {
+        if (!isAllowedImage(galleryFile)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: `Only image files are allowed for gallery: ${galleryFile.mimetype} (${galleryFile.originalname})`,
+          });
+          return;
+        }
+
+        const publicId = await getNextPublicId(cache, folder, base);
+        const result = await uploadBufferToCloudinary(galleryFile.buffer, {
+          folder,
+          resource_type: "image",
+          public_id: publicId,
+        });
+        uploadedGalleryFiles.push({ url: result.secure_url });
+        req.uploadedMediaAssets.push({
+          publicId: result.public_id,
+          resourceType: "image",
+        });
+      }
+      req.galleryUploadedFiles = uploadedGalleryFiles;
+    }
+
+    // 5. Process Single Gallery Image upload (for PUT update)
+    if (files.galleryImage && files.galleryImage.length > 0) {
+      const galleryFile = files.galleryImage[0];
+      if (!isAllowedImage(galleryFile)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: `Only image files are allowed for gallery: ${galleryFile.mimetype} (${galleryFile.originalname})`,
+        });
+        return;
+      }
+
+      const { folder, base } = resolveFolder("gallery");
+      const publicId = await getNextPublicId(cache, folder, base);
+      const result = await uploadBufferToCloudinary(galleryFile.buffer, {
+        folder,
+        resource_type: "image",
+        public_id: publicId,
+      });
+      req.body.galleryImage = result.secure_url;
+      req.uploadedMediaAssets.push({
+        publicId: result.public_id,
+        resourceType: "image",
+      });
+    }
+
     next();
   } catch (error) {
+    await cleanupUploadedVersionMedia(req);
     next(error);
   }
 };
@@ -524,6 +744,7 @@ export const processSkillUploads = async (
 
     next();
   } catch (error) {
+    await cleanupUploadedVersionMedia(req);
     next(error);
   }
 };
@@ -557,6 +778,7 @@ export const processCertificateUploads = async (
 
     next();
   } catch (error) {
+    await cleanupUploadedVersionMedia(req);
     next(error);
   }
 };
@@ -646,6 +868,7 @@ export const processExperienceUploads = async (
 
     next();
   } catch (error) {
+    await cleanupUploadedVersionMedia(req);
     next(error);
   }
 };
@@ -722,6 +945,7 @@ export const processSiteConfigUploads = async (
 
     next();
   } catch (error) {
+    await cleanupUploadedVersionMedia(req);
     next(error);
   }
 };

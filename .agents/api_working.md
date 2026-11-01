@@ -78,7 +78,7 @@ The database contains **7 core collections**:
 
 | Collection | Schema File | Key Indexes & Constraints | Key Relations / Subdocuments |
 | :--- | :--- | :--- | :--- |
-| `projects` | `src/models/Project.ts` | `slug` (Unique, Lowercase)<br>`timestamps: true` | `skills`: `Types.ObjectId[]` referencing `Skill`<br>`contributors`: subdocuments<br>`versions`: subdocuments |
+| `projects` | `src/models/Project.ts` | `slug` (Unique, Lowercase)<br>`timestamps: true` | `skills`: `Types.ObjectId[]` referencing `Skill`<br>`contributors`: subdocuments<br>`versions`: subdocuments (with nested `gallery: IGalleryImage[]`)<br>`gallery`: subdocuments (`IGalleryImage[]`) |
 | `skills` | `src/models/Skill.ts` | `name` (Unique, Trimmed)<br>`type` enum (`tool`, `language`, `framework`)<br>`timestamps: true` | Referenced by `Project` and `Experience` |
 | `certificates` | `src/models/Certificate.ts` | `timestamps: true`<br>Case-insensitive title uniqueness enforced in controller | Self-contained |
 | `achievements` | `src/models/Achievement.ts` | `timestamps: true`<br>Case-insensitive title uniqueness enforced in controller | Self-contained |
@@ -136,6 +136,15 @@ When uploading media files (`iconUrl`, `mediaUrls`, `certificateUrls`) for exper
   ```
 - **Purpose:** Resolves the experience's category tag (`focus` vs `extracurricular`) and organization slug so Cloudinary assets are placed into the exact folder path: `portfolio/experiences/{tag}/{orgSlug}/{media|certificates|icons}`.
 
+### 3.5 Multipart Upload Middleware DB Query (`processMediaUploads`) for Project Versions
+When uploading media files (`image`, `videoDemo`, `threeDModel`) for project versions via `PUT /api/v1/projects/:slug/versions/:versionId`, the upload middleware queries MongoDB before the controller executes:
+- **Trigger:** If `req.body.versionTag` is not provided in the request body.
+- **Query:**
+  ```typescript
+  Project.findOne({ slug: rawSlug.toLowerCase().trim() })
+  ```
+- **Purpose:** Resolves the existing version's stored `versionTag` from the subdocument matching `req.params.versionId`. The tag is sanitized via `sanitizeVersionTag` (preserving dots for semver such as `v1.0.0`, replacing slashes and spaces with hyphens, neutralizing `..` path traversals, stripping boundary dots/hyphens, and truncating to 64 characters) and targets `portfolio/projects/{slug}/{safeVersionTag}/[images|videos|models]`. If the versionId is invalid (`400`) or the project/version is missing (`404`) or the sanitized tag is empty (`400`), the request halts with an error and never falls back to `misc`.
+
 ---
 
 ## 4. Endpoint Database Interactions
@@ -166,6 +175,7 @@ When uploading media files (`iconUrl`, `mediaUrls`, `certificateUrls`) for exper
 - **Query Parameter Validation:** `category`, `featured`, `tag`, `status` are validated as strings (arrays coerced to `param[0]`; unexpected array shapes return `400 Bad Request`).
 - **Sorting:** Featured projects first (`featured: -1`), then newest start date (`startDate: -1`).
 - **Read Mode:** `.lean()` (returns plain JS objects for optimal memory/speed).
+- **Response Format Guarantee:** Processed through shared `formatProjectResponse` helper ensuring `gallery: []` on the project root and on each version in `versions` when none is stored in MongoDB.
 
 #### `GET /api/v1/projects/categories`
 - **Scope:** Public
@@ -178,10 +188,11 @@ When uploading media files (`iconUrl`, `mediaUrls`, `certificateUrls`) for exper
 - **Target Model:** `Project`
 - **DB Operation:** `Project.findOne({ slug: req.params.slug.toLowerCase().trim() }).lean()`
 - **Visibility Gatekeeper:** If `project.status === "invisible"` and `!req.adminAuthenticated`, returns `404 Not Found` to prevent leakage of unpublished work.
+- **Response Format Guarantee:** Guarantees `gallery: []` on project and on each version via `formatProjectResponse`.
 
 #### `POST /api/v1/projects`
 - **Scope:** Protected (`authMiddleware`)
-- **Multipart Uploads:** `image`, `videoDemo`, `threeDModel`
+- **Multipart Uploads:** `image`, `videoDemo`, `threeDModel`, and optional `galleryImages` (up to 10 files) with `galleryMeta` (JSON string array of `{ tags, caption }`)
 - **Target Model:** `Project`
 - **DB Operation:** `Project.create({...})`
 - **Key Fields Processed:**
@@ -189,6 +200,8 @@ When uploading media files (`iconUrl`, `mediaUrls`, `certificateUrls`) for exper
   - `skills`: Stringified array or JSON parsed into `Types.ObjectId[]`.
   - `tags`: Normalized to lowercase trimmed strings.
   - `status`: Default `"planning"`.
+  - `gallery`: Creation-time gallery items parsed and validated (max 30 items).
+- **Rollback Hook:** On failure (`400`, `409`, `500`), calls `cleanupUploadedVersionMedia(req)` destroying all uploaded gallery and project assets in Cloudinary.
 - **DB Error Handling:** Duplicate slug triggers Mongo Error 11000 $\rightarrow$ translated to `409 Conflict`.
 
 #### `PUT /api/v1/projects/:id`
@@ -196,7 +209,7 @@ When uploading media files (`iconUrl`, `mediaUrls`, `certificateUrls`) for exper
 - **Validation:** Verifies `Types.ObjectId.isValid(req.params.id)`.
 - **Target Model:** `Project`
 - **DB Operation:** `Project.findByIdAndUpdate(id, updatePayload, { new: true, runValidators: true })`
-- **Behavior:** Updates provided fields (including nested objects such as `threeDModel`, `contributors`, `socialLinks`, and `skills`). Returns updated document.
+- **Behavior:** Updates provided fields (including nested objects such as `threeDModel`, `contributors`, `socialLinks`, and `skills`). Explicitly excludes and ignores any `gallery` field sent in the payload so project updates can never overwrite or clear the gallery. Returns updated document with `gallery: []` guaranteed.
 
 #### `DELETE /api/v1/projects/:id`
 - **Scope:** Protected (`authMiddleware`)
@@ -207,14 +220,273 @@ When uploading media files (`iconUrl`, `mediaUrls`, `certificateUrls`) for exper
 
 #### `POST /api/v1/projects/:slug/versions`
 - **Scope:** Protected (`authMiddleware`)
-- **Multipart Uploads:** Version-specific assets (`image`, `videoDemo`, `threeDModel`).
+- **Multipart Uploads:** Version-specific assets (`image`, `videoDemo`, `threeDModel`, and optional `galleryImages` up to 10 files with `galleryMeta`). Folder: `portfolio/projects/{slug}/{safeVersionTag}/[images|videos|models|gallery]` (dots preserved in version tag, e.g. `v1.0.0`).
 - **Target Model:** `Project`
+- **Changelog Parsing:** Uses shared `parseChangelog` helper supporting real arrays, JSON-array strings (`'["a","b"]'`), or repeated multipart fields (`changelog=one`). Entries are trimmed, empty ones dropped, and non-string entries return `400 Bad Request`. Omitted, empty string, or `[]` default to `[]`.
 - **DB Operations (Two-step):**
   1. `const project = await Project.findOne({ slug })`
   2. If `isLatest === true`, resets existing versions: `project.versions.forEach(v => v.isLatest = false)`
-  3. `project.versions.push(newVersion)`
-  4. `await project.save()`
+  3. Validates creation-time gallery items (max 30 items)
+  4. `project.versions.push(newVersion)`
+  5. `await project.save()`
+- **Rollback Hook:** On error (`400`, `404`, `500`), calls `cleanupUploadedVersionMedia(req)` to destroy just-uploaded Cloudinary assets using their exact `resource_type` (`image`, `video`, `raw`).
 - **Returns:** Updated project document with newly appended version history entry.
+
+#### `PUT /api/v1/projects/:slug/versions/:versionId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Verifies `Types.ObjectId.isValid(req.params.versionId)` and `req.params.slug`.
+- **Target Model:** `Project`
+- **Changelog Parsing:** Uses shared `parseChangelog` helper. An omitted changelog leaves existing entries unchanged. An explicit empty string `""` or empty array `[]` clears the changelog to `[]`.
+- **Gallery Protection:** Does not mutate the version's `gallery` array; gallery modifications must use the dedicated version gallery endpoints.
+- **DB Operations:**
+  1. `const project = await Project.findOne({ slug })`
+  2. Subdocument lookup: `project.versions.find(v => String(v._id) === versionId)`
+  3. Case-insensitive JS duplicate check: ensures no other version in `project.versions` shares `trimmedTag.toLowerCase()` (renaming to self allowed).
+  4. Updates modified fields (`versionTag`, `releaseDate`, `changelog`, `demoUrl`, `image`, `videoDemo`, `threeDFileUrl`), clearing fields set to `""`.
+  5. Single-truth `isLatest`: if `true`, resets all versions in `project.versions` to `false`, sets current version to `true`. If `false`, leaves project without a latest version.
+  6. `await project.save()` (runs schema validators).
+- **Rollback Hook:** On error (`400`, `404`, `409`, `500`), calls `cleanupUploadedVersionMedia(req)` to destroy just-uploaded Cloudinary assets using their exact `resource_type` (`image`, `video`, `raw`).
+- **Returns:** Updated project document (`200 OK`).
+
+#### `POST /api/v1/projects/:slug/gallery`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Project slug existence; accepts either multipart file field `galleryImages` (1-10 files) aligned with `galleryMeta` (JSON string array), OR JSON body `{ items: [...] }` with http/https URLs. Cannot provide both or neither (`400`). Enforces max 30 items total per project (`400`).
+- **Target Model:** `Project`
+- **DB Operations:** Atomic append using `$push`:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug },
+    { $push: { gallery: { $each: newItems } } },
+    { new: true, runValidators: true }
+  )
+  ```
+- **Rollback Hook:** On failure (`400`, `404`, `500`), calls `cleanupUploadedVersionMedia(req)` destroying all uploaded gallery files in Cloudinary (`resource_type: "image"`).
+- **Returns:** `201 Created` with updated project data (`gallery: []` guaranteed).
+
+#### `PUT /api/v1/projects/:slug/gallery/order`
+- **Scope:** Protected (`authMiddleware`)
+- **Route Precedence:** Registered before `/gallery/:imageId` to prevent route shadowing.
+- **Validation:** Body must contain `{ order: string[] }` containing every existing gallery item `_id` exactly once; duplicate, extra, or missing IDs return `400 Bad Request`.
+- **Target Model:** `Project`
+- **DB Operations:** Load document, validate full ID equality, reorder in-place, and persist via `project.save()`.
+- **Returns:** `200 OK` with updated project data.
+
+#### `PUT /api/v1/projects/:slug/gallery/:imageId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:imageId` ObjectId format (`400`), project and image existence (`404`).
+- **Payload:** JSON or multipart with optional `tags`, `caption`, and optional single file field `galleryImage`.
+- **Target Model:** `Project`
+- **DB Operations:** Atomic positional update:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug, "gallery._id": imageId },
+    { $set: updateFields },
+    { new: true, runValidators: true }
+  )
+  ```
+- **Asset Retention:** Replacing an image updates the URL in MongoDB and keeps the old Cloudinary asset.
+- **Rollback Hook:** On failure, newly uploaded replacement file is destroyed in Cloudinary.
+- **Returns:** `200 OK` with updated project data.
+
+#### `DELETE /api/v1/projects/:slug/gallery/:imageId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:imageId` ObjectId format (`400`), project and image existence (`404`).
+- **Target Model:** `Project`
+- **DB Operations:** Atomic removal using `$pull`:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug },
+    { $pull: { gallery: { _id: imageId } } },
+    { new: true }
+  )
+  ```
+- **Asset Retention:** Cloudinary asset is intentionally retained (consistent with project deletion).
+- **Returns:** `200 OK` with updated project data.
+
+#### `POST /api/v1/projects/:slug/versions/:versionId/gallery`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:versionId` ObjectId format (`400`), project and version existence (`404`). Enforces max 30 items per version (`400`).
+- **Folder Structure:** `portfolio/projects/<slug>/<sanitizedVersionTag>/gallery/<slug>_<n>`.
+- **Target Model:** `Project`
+- **DB Operations:** Atomic append to the nested version's gallery array using positional operator:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug, "versions._id": versionId },
+    { $push: { "versions.$.gallery": { $each: newItems } } },
+    { new: true, runValidators: true }
+  )
+  ```
+- **Rollback Hook:** On failure (`400`, `404`, `500`), destroys newly uploaded files in Cloudinary.
+- **Returns:** `201 Created` with updated project data.
+
+#### `PUT /api/v1/projects/:slug/versions/:versionId/gallery/order`
+- **Scope:** Protected (`authMiddleware`)
+- **Route Precedence:** Registered before `/gallery/:imageId`.
+- **Validation:** Body must contain `{ order: string[] }` containing every existing version gallery item `_id` exactly once (`400` otherwise).
+- **Target Model:** `Project`
+- **DB Operations:** Finds project and version, validates IDs, reorders version `gallery` array in memory, and persists via `project.save()`.
+- **Returns:** `200 OK` with updated project data.
+
+#### `PUT /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:versionId` and `:imageId` ObjectId format (`400`), project, version, and image existence (`404`).
+- **Target Model:** `Project`
+- **DB Operations:** Atomic positional mutation using `arrayFilters`:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug, "versions._id": versionId, "versions.gallery._id": imageId },
+    { $set: updateFields }, // sets "versions.$[v].gallery.$[g].url", etc.
+    {
+      arrayFilters: [{ "v._id": versionId }, { "g._id": imageId }],
+      new: true,
+      runValidators: true,
+    }
+  )
+  ```
+- **Asset Retention:** Old asset retained on Cloudinary when URL is replaced.
+- **Rollback Hook:** On failure, newly uploaded replacement file is destroyed in Cloudinary.
+- **Returns:** `200 OK` with updated project data.
+
+#### `DELETE /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:versionId` and `:imageId` ObjectId format (`400`), project, version, and image existence (`404`).
+- **Target Model:** `Project`
+- **DB Operations:** Atomic removal from nested version gallery using positional `$pull`:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug, "versions._id": versionId },
+    { $pull: { "versions.$.gallery": { _id: imageId } } },
+    { new: true }
+  )
+  ```
+- **Asset Retention:** Cloudinary asset is intentionally retained.
+- **Returns:** `200 OK` with updated project data.
+
+#### `DELETE /api/v1/projects/:slug/versions/:versionId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Verifies `Types.ObjectId.isValid(req.params.versionId)` and `req.params.slug`.
+- **Target Model:** `Project`
+- **DB Operations:**
+  1. `const project = await Project.findOne({ slug })`
+  2. Finds version index: `project.versions.findIndex(v => String(v._id) === versionId)`
+  3. `project.versions.splice(index, 1)`
+  4. `await project.save()`
+- **Behavior:** Cloudinary assets are intentionally kept (no destroy calls, consistent with project deletion). Deleting latest version does NOT promote another version.
+- **Returns:** Updated project document (`200 OK`).
+
+#### `POST /api/v1/projects/:slug/gallery`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Project slug existence; accepts either multipart file field `galleryImages` (1-10 files) aligned with `galleryMeta` (JSON string array), OR JSON body `{ items: [...] }` with http/https URLs. Cannot provide both or neither (`400`). Enforces max 30 items total per project (`400`).
+- **Target Model:** `Project`
+- **DB Operations:** Atomic append using `$push`:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug },
+    { $push: { gallery: { $each: newItems } } },
+    { new: true, runValidators: true }
+  )
+  ```
+- **Rollback Hook:** On failure (`400`, `404`, `500`), calls `cleanupUploadedVersionMedia(req)` destroying all uploaded gallery files in Cloudinary (`resource_type: "image"`).
+- **Returns:** `201 Created` with updated project data (`gallery: []` guaranteed).
+
+#### `PUT /api/v1/projects/:slug/gallery/order`
+- **Scope:** Protected (`authMiddleware`)
+- **Route Precedence:** Registered before `/gallery/:imageId` to prevent route shadowing.
+- **Validation:** Body must contain `{ order: string[] }` containing every existing gallery item `_id` exactly once; duplicate, extra, or missing IDs return `400 Bad Request`.
+- **Target Model:** `Project`
+- **DB Operations:** Load document, validate full ID equality, reorder in-place, and persist via `project.save()`.
+- **Returns:** `200 OK` with updated project data.
+
+#### `PUT /api/v1/projects/:slug/gallery/:imageId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:imageId` ObjectId format (`400`), project and image existence (`404`).
+- **Payload:** JSON or multipart with optional `tags`, `caption`, and optional single file field `galleryImage`.
+- **Target Model:** `Project`
+- **DB Operations:** Atomic positional update:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug, "gallery._id": imageId },
+    { $set: updateFields },
+    { new: true, runValidators: true }
+  )
+  ```
+- **Asset Retention:** Replacing an image updates the URL in MongoDB and keeps the old Cloudinary asset.
+- **Rollback Hook:** On failure, newly uploaded replacement file is destroyed in Cloudinary.
+- **Returns:** `200 OK` with updated project data.
+
+#### `DELETE /api/v1/projects/:slug/gallery/:imageId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:imageId` ObjectId format (`400`), project and image existence (`404`).
+- **Target Model:** `Project`
+- **DB Operations:** Atomic removal using `$pull`:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug },
+    { $pull: { gallery: { _id: imageId } } },
+    { new: true }
+  )
+  ```
+- **Asset Retention:** Cloudinary asset is intentionally retained (consistent with project deletion).
+- **Returns:** `200 OK` with updated project data.
+
+#### `POST /api/v1/projects/:slug/versions/:versionId/gallery`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:versionId` ObjectId format (`400`), project and version existence (`404`). Enforces max 30 items per version (`400`).
+- **Folder Structure:** `portfolio/projects/<slug>/<sanitizedVersionTag>/gallery/<slug>_<n>`.
+- **Target Model:** `Project`
+- **DB Operations:** Atomic append to the nested version's gallery array using positional operator:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug, "versions._id": versionId },
+    { $push: { "versions.$.gallery": { $each: newItems } } },
+    { new: true, runValidators: true }
+  )
+  ```
+- **Rollback Hook:** On failure (`400`, `404`, `500`), destroys newly uploaded files in Cloudinary.
+- **Returns:** `201 Created` with updated project data.
+
+#### `PUT /api/v1/projects/:slug/versions/:versionId/gallery/order`
+- **Scope:** Protected (`authMiddleware`)
+- **Route Precedence:** Registered before `/gallery/:imageId`.
+- **Validation:** Body must contain `{ order: string[] }` containing every existing version gallery item `_id` exactly once (`400` otherwise).
+- **Target Model:** `Project`
+- **DB Operations:** Finds project and version, validates IDs, reorders version `gallery` array in memory, and persists via `project.save()`.
+- **Returns:** `200 OK` with updated project data.
+
+#### `PUT /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:versionId` and `:imageId` ObjectId format (`400`), project, version, and image existence (`404`).
+- **Target Model:** `Project`
+- **DB Operations:** Atomic positional mutation using `arrayFilters`:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug, "versions._id": versionId, "versions.gallery._id": imageId },
+    { $set: updateFields }, // sets "versions.$[v].gallery.$[g].url", etc.
+    {
+      arrayFilters: [{ "v._id": versionId }, { "g._id": imageId }],
+      new: true,
+      runValidators: true,
+    }
+  )
+  ```
+- **Asset Retention:** Old asset retained on Cloudinary when URL is replaced.
+- **Rollback Hook:** On failure, newly uploaded replacement file is destroyed in Cloudinary.
+- **Returns:** `200 OK` with updated project data.
+
+#### `DELETE /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`
+- **Scope:** Protected (`authMiddleware`)
+- **Validation:** Validates `:versionId` and `:imageId` ObjectId format (`400`), project, version, and image existence (`404`).
+- **Target Model:** `Project`
+- **DB Operations:** Atomic removal from nested version gallery using positional `$pull`:
+  ```typescript
+  await Project.findOneAndUpdate(
+    { slug, "versions._id": versionId },
+    { $pull: { "versions.$.gallery": { _id: imageId } } },
+    { new: true }
+  )
+  ```
+- **Asset Retention:** Cloudinary asset is intentionally retained.
+- **Returns:** `200 OK` with updated project data.
 
 #### `GET /api/v1/admin/projects`
 - **Scope:** Protected (`authMiddleware`)
@@ -619,6 +891,8 @@ Because file uploads occur during the Express middleware pipeline **before** the
   3. Database failure (`500 Internal Server Error`)
   
   The newly uploaded PDF asset is deleted from Cloudinary using `cloudinary.uploader.destroy(resumePublicId)`, keeping storage clean and synchronized with database state.
+- **Version Media Cleanup (`cleanupUploadedVersionMedia`):** If `POST /api/v1/projects/:slug/versions` or `PUT /api/v1/projects/:slug/versions/:versionId` fails due to validation error (`400`), missing project/version (`404`), duplicate tag collision (`409`), or database failure (`500`), newly uploaded assets recorded in `req.uploadedMediaAssets` are immediately destroyed via `cloudinary.uploader.destroy(publicId, { resource_type: asset.resourceType })`, ensuring images, videos, and raw 3D models are rolled back with their exact respective resource types.
+- **Gallery Upload Rollback (`cleanupUploadedVersionMedia`):** If adding or updating gallery images on a project (`POST /api/v1/projects`, `POST /api/v1/projects/:slug/gallery`, `PUT /api/v1/projects/:slug/gallery/:imageId`) or version (`POST /api/v1/projects/:slug/versions`, `POST /api/v1/projects/:slug/versions/:versionId/gallery`, `PUT /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`) fails due to validation errors, invalid file MIME types, batch size >10, exceeding 30 gallery items cap, missing project/version, or database failure, all newly uploaded gallery assets are rolled back and destroyed via `cleanupUploadedVersionMedia(req)` with `{ resource_type: "image" }`. Successful mutations and deletions keep Cloudinary assets intact.
 
 ---
 
@@ -629,14 +903,24 @@ Because file uploads occur during the Express middleware pipeline **before** the
 | `ALL` | *All Endpoints* | Public / Admin | `LogEntry` | `create()` | Logs request time, level, method, endpoint, status, IP, and duration |
 | `GET` | `/health` | Public | None | Connection readyState check | None |
 | `GET` | `/api/v1/health` | Public | None | Connection readyState check | None |
-| `GET` | `/api/v1/projects` | Public | `Project` | `find().sort().lean()` | `status != invisible`, `category`, `featured`, `tag` |
+| `GET` | `/api/v1/projects` | Public | `Project` | `find().sort().lean()` | `status != invisible`, `category`, `featured`, `tag` (guarantees `gallery: []`) |
 | `GET` | `/api/v1/projects/categories` | Public | `Project` | `distinct()` | Categories where `status != invisible` |
-| `GET` | `/api/v1/projects/:slug` | Public* | `Project` | `findOne().lean()` | By `slug`; rejects `invisible` if not admin |
-| `GET` | `/api/v1/admin/projects` | Admin | `Project` | `find().sort().lean()` | No status filter (includes `invisible`/drafts); optional `status`, `category`, `featured`, `tag` |
-| `POST` | `/api/v1/projects` | Admin | `Project` | `create()` | Creates project, normalizes tags/skills, verifies unique slug |
-| `PUT` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndUpdate()` | Partial update by `_id`, runs validators |
+| `GET` | `/api/v1/projects/:slug` | Public* | `Project` | `findOne().lean()` | By `slug`; rejects `invisible` if not admin (guarantees `gallery: []`) |
+| `GET` | `/api/v1/admin/projects` | Admin | `Project` | `find().sort().lean()` | No status filter (includes `invisible`/drafts); optional `status`, `category`, `featured`, `tag` (guarantees `gallery: []`) |
+| `POST` | `/api/v1/projects` | Admin | `Project` | `create()` | Creates project, normalizes tags/skills, verifies unique slug, creation-time gallery |
+| `PUT` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndUpdate()` | Partial update by `_id`, runs validators (ignores `gallery`) |
 | `DELETE` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndDelete()` | Removes project by `_id` |
-| `POST` | `/api/v1/projects/:slug/versions` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Appends version; resets `isLatest` if new is latest |
+| `POST` | `/api/v1/projects/:slug/versions` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Appends version; resets `isLatest` if new is latest, creation-time gallery |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | In-place update of version; tag duplicate check; single-truth `isLatest`; upload cleanup on failure (ignores `gallery`) |
+| `DELETE` | `/api/v1/projects/:slug/versions/:versionId` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Removes version from `versions` array; Cloudinary assets kept |
+| `POST` | `/api/v1/projects/:slug/gallery` | Admin | `Project` | `findOneAndUpdate()` | Atomic `$push` `$each` new gallery items (max 30 items) |
+| `PUT` | `/api/v1/projects/:slug/gallery/order` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Reorders project gallery items by full array of `_id`s |
+| `PUT` | `/api/v1/projects/:slug/gallery/:imageId` | Admin | `Project` | `findOneAndUpdate()` | Atomic positional `$set` on `gallery._id` (tags, caption, file) |
+| `DELETE` | `/api/v1/projects/:slug/gallery/:imageId` | Admin | `Project` | `findOneAndUpdate()` | Atomic `$pull` from `gallery` by `_id`; assets kept |
+| `POST` | `/api/v1/projects/:slug/versions/:versionId/gallery` | Admin | `Project` | `findOneAndUpdate()` | Atomic `$push` `$each` to `versions.$.gallery` (max 30 items) |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/order` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Reorders version gallery items by full array of `_id`s |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | `Project` | `findOneAndUpdate()` | Atomic positional `$set` on `versions.$[v].gallery.$[g]` with `arrayFilters` |
+| `DELETE` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | `Project` | `findOneAndUpdate()` | Atomic `$pull` from `versions.$.gallery` by `_id`; assets kept |
 | `GET` | `/api/v1/skills` | Public | `Skill` | `find().sort()` | Optional `type` filter; sorted by `weight: 1, name: 1` |
 | `GET` | `/api/v1/skills/:id` | Public | `Skill` | `findById()` | By `_id` |
 | `POST` | `/api/v1/skills` | Admin | `Skill` | `findOne()` $\rightarrow$ `create()` | Case-insensitive duplicate check on `name` |

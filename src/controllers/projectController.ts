@@ -1,14 +1,135 @@
 import { Request, Response, NextFunction } from "express";
 import { FilterQuery, Types } from "mongoose";
 import { escapeRegex } from "../utils/stringUtils";
+import { cleanupUploadedVersionMedia } from "../middlewares/uploadMiddleware";
 import {
   Project,
   IProject,
   IContributor,
   ISocialLink,
   IProjectVersion,
+  IGalleryImage,
   ProjectStatus,
 } from "../models/Project";
+
+export const GALLERY_TAG_REGEX = /^[a-z0-9][a-z0-9_+#.-]{0,23}$/;
+
+export function formatProjectResponse<T>(project: T): T {
+  if (!project || typeof project !== "object") {
+    return project;
+  }
+  const obj = typeof (project as { toObject?: unknown }).toObject === "function"
+    ? ((project as unknown) as { toObject: () => Record<string, unknown> }).toObject()
+    : (project as Record<string, unknown>);
+
+  if (!Array.isArray(obj.gallery)) {
+    obj.gallery = [];
+  }
+  if (Array.isArray(obj.versions)) {
+    obj.versions = obj.versions.map((v) => {
+      if (v && typeof v === "object") {
+        const vObj = typeof (v as { toObject?: unknown }).toObject === "function"
+          ? ((v as unknown) as { toObject: () => Record<string, unknown> }).toObject()
+          : (v as Record<string, unknown>);
+        if (!Array.isArray(vObj.gallery)) {
+          vObj.gallery = [];
+        }
+        return vObj;
+      }
+      return v;
+    });
+  }
+  return obj as T;
+}
+
+export function parseRawGalleryTags(raw: unknown): string[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (Array.isArray(raw)) {
+    return raw.map((item) => String(item));
+  }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      return [];
+    }
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (Array.isArray(parsed)) {
+          return parsed.map((item) => String(item));
+        }
+      } catch {
+        // Fall back to comma-separated
+      }
+    }
+    return trimmed.split(",").map((t) => t.trim()).filter(Boolean);
+  }
+  return [String(raw)];
+}
+
+export interface ParseGalleryTagsResult {
+  tags?: string[];
+  error?: string;
+}
+
+export function normalizeAndValidateGalleryTags(raw: unknown): ParseGalleryTagsResult {
+  const rawList = parseRawGalleryTags(raw);
+  const normalizedSet = new Set<string>();
+
+  for (const rawTag of rawList) {
+    const trimmed = String(rawTag).trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+    const hyphenated = lower.replace(/\s+/g, "-");
+    normalizedSet.add(hyphenated);
+  }
+
+  const tags = Array.from(normalizedSet);
+
+  if (tags.length > 8) {
+    return { error: "At most 8 tags allowed per image" };
+  }
+
+  for (const tag of tags) {
+    if (!GALLERY_TAG_REGEX.test(tag)) {
+      return {
+        error: `Invalid tag '${tag}'. Tags must match ^[a-z0-9][a-z0-9_+#.-]{0,23}$`,
+      };
+    }
+  }
+
+  return { tags };
+}
+
+export interface ValidateGalleryCaptionResult {
+  caption?: string;
+  error?: string;
+}
+
+export function validateGalleryCaption(raw: unknown): ValidateGalleryCaptionResult {
+  if (raw === undefined || raw === null) {
+    return { caption: "" };
+  }
+  if (typeof raw !== "string") {
+    return { error: "Caption must be a string" };
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length > 200) {
+    return { error: "Caption cannot exceed 200 characters" };
+  }
+  return { caption: trimmed };
+}
+
+export function isValidHttpUrl(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 export interface ProjectQueryParams {
   category?: string | string[];
@@ -29,6 +150,77 @@ function parseJsonField<T>(field: unknown, defaultValue: T): T {
     return field as T;
   }
   return defaultValue;
+}
+
+export interface ParseChangelogResult {
+  isProvided: boolean;
+  changelog?: string[];
+  error?: string;
+}
+
+export function parseChangelog(raw: unknown): ParseChangelogResult {
+  if (raw === undefined) {
+    return { isProvided: false, changelog: [] };
+  }
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      return { isProvided: true, changelog: [] };
+    }
+
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (!Array.isArray(parsed)) {
+          return {
+            isProvided: true,
+            error: "Changelog must be an array of strings",
+          };
+        }
+        for (const item of parsed) {
+          if (typeof item !== "string") {
+            return {
+              isProvided: true,
+              error: "Changelog entries must be strings",
+            };
+          }
+        }
+        const cleaned = parsed
+          .map((s: string) => s.trim())
+          .filter((s: string) => s.length > 0);
+        return { isProvided: true, changelog: cleaned };
+      } catch {
+        return {
+          isProvided: true,
+          error: "Invalid JSON format for changelog",
+        };
+      }
+    }
+
+    // Single field from multipart or plain text: changelog=only-one
+    return { isProvided: true, changelog: [trimmed] };
+  }
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item !== "string") {
+        return {
+          isProvided: true,
+          error: "Changelog entries must be strings",
+        };
+      }
+    }
+    const cleaned = (raw as string[])
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return { isProvided: true, changelog: cleaned };
+  }
+
+  return {
+    isProvided: true,
+    error: "Changelog must be an array of strings or a JSON string",
+  };
 }
 
 function extractParamString(param: string | string[] | undefined): string {
@@ -129,7 +321,7 @@ export const getProjects = async (
     res.status(200).json({
       success: true,
       count: projects.length,
-      data: projects,
+      data: projects.map(formatProjectResponse),
     });
   } catch (error) {
     next(error);
@@ -208,7 +400,7 @@ export const getAdminProjects = async (
     res.status(200).json({
       success: true,
       count: projects.length,
-      data: projects,
+      data: projects.map(formatProjectResponse),
     });
   } catch (error) {
     next(error);
@@ -271,7 +463,7 @@ export const getProjectBySlug = async (
 
     res.status(200).json({
       success: true,
-      data: project,
+      data: formatProjectResponse(project),
     });
   } catch (error) {
     next(error);
@@ -368,6 +560,74 @@ export const createProject = async (
       skills = (body.skills as unknown[]).map((s) => new Types.ObjectId(String(s)));
     }
 
+    let gallery: IGalleryImage[] = [];
+    if (req.galleryUploadedFiles && req.galleryUploadedFiles.length > 0) {
+      const uploadedFiles = req.galleryUploadedFiles;
+      let galleryMetaList: Array<{ tags?: unknown; caption?: unknown }> = [];
+
+      if (body.galleryMeta !== undefined) {
+        if (typeof body.galleryMeta === "string") {
+          try {
+            const parsed = JSON.parse(body.galleryMeta);
+            if (!Array.isArray(parsed)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "galleryMeta must be a JSON array" });
+              return;
+            }
+            galleryMetaList = parsed;
+          } catch {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({ success: false, message: "Invalid JSON format for galleryMeta" });
+            return;
+          }
+        } else if (Array.isArray(body.galleryMeta)) {
+          galleryMetaList = body.galleryMeta as Array<{ tags?: unknown; caption?: unknown }>;
+        } else {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "galleryMeta must be a JSON array" });
+          return;
+        }
+
+        if (galleryMetaList.length > uploadedFiles.length) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "galleryMeta contains more entries than uploaded files" });
+          return;
+        }
+      }
+
+      for (let i = 0; i < uploadedFiles.length; i++) {
+        const file = uploadedFiles[i];
+        const meta = galleryMetaList[i] || {};
+
+        const tagsResult = normalizeAndValidateGalleryTags(meta.tags);
+        if (tagsResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: tagsResult.error });
+          return;
+        }
+
+        const captionResult = validateGalleryCaption(meta.caption);
+        if (captionResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: captionResult.error });
+          return;
+        }
+
+        gallery.push({
+          _id: new Types.ObjectId(),
+          url: file.url,
+          tags: tagsResult.tags || [],
+          caption: captionResult.caption || "",
+        });
+      }
+
+      if (gallery.length > 30) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "Gallery cannot exceed 30 items per project" });
+        return;
+      }
+    }
+
     const project = await Project.create({
       title,
       slug,
@@ -387,14 +647,16 @@ export const createProject = async (
       deployedLink,
       githubLink,
       versions,
+      gallery,
     });
 
     res.status(201).json({
       success: true,
       message: "Project created successfully",
-      data: project,
+      data: formatProjectResponse(project),
     });
   } catch (error) {
+    await cleanupUploadedVersionMedia(req);
     next(error);
   }
 };
@@ -478,6 +740,9 @@ export const updateProject = async (
       }
     }
 
+    // Ensure gallery is NEVER modified by project PUT
+    delete (updatePayload as Record<string, unknown>).gallery;
+
     const updatedProject = await Project.findByIdAndUpdate(id, updatePayload, {
       new: true,
       runValidators: true,
@@ -494,7 +759,7 @@ export const updateProject = async (
     res.status(200).json({
       success: true,
       message: "Project updated successfully",
-      data: updatedProject,
+      data: formatProjectResponse(updatedProject),
     });
   } catch (error) {
     next(error);
@@ -545,6 +810,7 @@ export const addProjectVersion = async (
     const slug = extractParamString(req.params.slug).toLowerCase().trim();
 
     if (!slug) {
+      await cleanupUploadedVersionMedia(req);
       res.status(400).json({
         success: false,
         message: "Project slug parameter is required",
@@ -562,7 +828,6 @@ export const addProjectVersion = async (
     const {
       versionTag,
       releaseDate,
-      changelog,
       image,
       videoDemo,
       demoUrl,
@@ -571,6 +836,7 @@ export const addProjectVersion = async (
     } = body;
 
     if (!versionTag) {
+      await cleanupUploadedVersionMedia(req);
       res.status(400).json({
         success: false,
         message: "Version tag is required (e.g., 'v1.0.0')",
@@ -578,8 +844,19 @@ export const addProjectVersion = async (
       return;
     }
 
+    const changelogResult = parseChangelog(body.changelog);
+    if (changelogResult.error) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: changelogResult.error,
+      });
+      return;
+    }
+
     const project = await Project.findOne({ slug });
     if (!project) {
+      await cleanupUploadedVersionMedia(req);
       res.status(404).json({
         success: false,
         message: `Project not found with slug: ${slug}`,
@@ -595,10 +872,79 @@ export const addProjectVersion = async (
       });
     }
 
+    let versionGallery: IGalleryImage[] = [];
+    if (req.galleryUploadedFiles && req.galleryUploadedFiles.length > 0) {
+      const uploadedFiles = req.galleryUploadedFiles;
+      let galleryMetaList: Array<{ tags?: unknown; caption?: unknown }> = [];
+
+      if ((body as Record<string, unknown>).galleryMeta !== undefined) {
+        const rawMeta = (body as Record<string, unknown>).galleryMeta;
+        if (typeof rawMeta === "string") {
+          try {
+            const parsed = JSON.parse(rawMeta);
+            if (!Array.isArray(parsed)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "galleryMeta must be a JSON array" });
+              return;
+            }
+            galleryMetaList = parsed;
+          } catch {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({ success: false, message: "Invalid JSON format for galleryMeta" });
+            return;
+          }
+        } else if (Array.isArray(rawMeta)) {
+          galleryMetaList = rawMeta as Array<{ tags?: unknown; caption?: unknown }>;
+        } else {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "galleryMeta must be a JSON array" });
+          return;
+        }
+
+        if (galleryMetaList.length > uploadedFiles.length) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "galleryMeta contains more entries than uploaded files" });
+          return;
+        }
+      }
+
+      for (let i = 0; i < uploadedFiles.length; i++) {
+        const file = uploadedFiles[i];
+        const meta = galleryMetaList[i] || {};
+
+        const tagsResult = normalizeAndValidateGalleryTags(meta.tags);
+        if (tagsResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: tagsResult.error });
+          return;
+        }
+
+        const captionResult = validateGalleryCaption(meta.caption);
+        if (captionResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: captionResult.error });
+          return;
+        }
+
+        versionGallery.push({
+          _id: new Types.ObjectId(),
+          url: file.url,
+          tags: tagsResult.tags || [],
+          caption: captionResult.caption || "",
+        });
+      }
+
+      if (versionGallery.length > 30) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "Gallery cannot exceed 30 items per version" });
+        return;
+      }
+    }
+
     const newVersion: IProjectVersion = {
       versionTag,
       releaseDate: releaseDate ? new Date(releaseDate) : new Date(),
-      changelog: Array.isArray(changelog) ? changelog : [],
+      changelog: changelogResult.changelog ?? [],
       image,
       videoDemo,
       demoUrl,
@@ -606,6 +952,7 @@ export const addProjectVersion = async (
         threeDFileUrl ??
         threeDModel?.fileUrl,
       isLatest: shouldSetLatest,
+      gallery: versionGallery,
     };
 
     project.versions.push(newVersion);
@@ -614,7 +961,1073 @@ export const addProjectVersion = async (
     res.status(201).json({
       success: true,
       message: "Version added successfully",
-      data: project,
+      data: formatProjectResponse(project),
+    });
+  } catch (error) {
+    await cleanupUploadedVersionMedia(req);
+    next(error);
+  }
+};
+
+interface UpdateProjectVersionInput {
+  versionTag?: string;
+  releaseDate?: string | Date;
+  changelog?: string[] | string;
+  demoUrl?: string;
+  image?: string;
+  videoDemo?: string;
+  threeDFileUrl?: string;
+  threeDModel?: { fileUrl?: string } | string;
+  isLatest?: boolean | string;
+}
+
+export const updateProjectVersion = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const versionId = extractParamString(req.params.versionId);
+    if (!versionId || !Types.ObjectId.isValid(versionId)) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: "Invalid identifier format",
+      });
+      return;
+    }
+
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    if (!slug) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: "Project slug parameter is required",
+      });
+      return;
+    }
+
+    const project = await Project.findOne({ slug });
+    if (!project) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(404).json({
+        success: false,
+        message: `Project not found with slug: ${slug}`,
+      });
+      return;
+    }
+
+    const version = project.versions.find((v) => String(v._id) === versionId);
+    if (!version) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(404).json({
+        success: false,
+        message: `Version not found with id: ${versionId}`,
+      });
+      return;
+    }
+
+    const body = req.body as UpdateProjectVersionInput;
+
+    // 1. Validate and update versionTag
+    if (body.versionTag !== undefined) {
+      if (typeof body.versionTag !== "string" || !body.versionTag.trim()) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version tag is required and cannot be empty",
+        });
+        return;
+      }
+      const trimmedTag = body.versionTag.trim();
+      const isDuplicate = project.versions.some(
+        (v) =>
+          String(v._id) !== versionId &&
+          v.versionTag.trim().toLowerCase() === trimmedTag.toLowerCase()
+      );
+      if (isDuplicate) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(409).json({
+          success: false,
+          message: `Version tag '${trimmedTag}' already exists for this project`,
+        });
+        return;
+      }
+      version.versionTag = trimmedTag;
+    }
+
+    // 2. Validate and update releaseDate
+    if (body.releaseDate !== undefined) {
+      const parsedDate = new Date(body.releaseDate);
+      if (isNaN(parsedDate.getTime())) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Invalid release date format",
+        });
+        return;
+      }
+      version.releaseDate = parsedDate;
+    }
+
+    // 3. Update changelog
+    if (body.changelog !== undefined) {
+      const changelogResult = parseChangelog(body.changelog);
+      if (changelogResult.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: changelogResult.error,
+        });
+        return;
+      }
+      if (changelogResult.isProvided) {
+        version.changelog = changelogResult.changelog ?? [];
+      }
+    }
+
+    // 4. Update demoUrl
+    if (body.demoUrl !== undefined) {
+      if (typeof body.demoUrl === "string" && body.demoUrl.trim() === "") {
+        version.demoUrl = undefined;
+      } else {
+        version.demoUrl = typeof body.demoUrl === "string" ? body.demoUrl.trim() : undefined;
+      }
+    }
+
+    // 5. Update image
+    if (body.image !== undefined) {
+      if (typeof body.image === "string" && body.image.trim() === "") {
+        version.image = undefined;
+      } else {
+        version.image = typeof body.image === "string" ? body.image.trim() : undefined;
+      }
+    }
+
+    // 6. Update videoDemo
+    if (body.videoDemo !== undefined) {
+      if (typeof body.videoDemo === "string" && body.videoDemo.trim() === "") {
+        version.videoDemo = undefined;
+      } else {
+        version.videoDemo = typeof body.videoDemo === "string" ? body.videoDemo.trim() : undefined;
+      }
+    }
+
+    // 7. Update threeDFileUrl / threeDModel
+    const threeDModel = parseJsonField<{ fileUrl?: string } | undefined>(
+      body.threeDModel,
+      undefined
+    );
+    const uploaded3DUrl = threeDModel?.fileUrl;
+
+    if (uploaded3DUrl) {
+      version.threeDFileUrl = uploaded3DUrl;
+    } else if (body.threeDFileUrl !== undefined) {
+      if (typeof body.threeDFileUrl === "string" && body.threeDFileUrl.trim() === "") {
+        version.threeDFileUrl = undefined;
+      } else {
+        version.threeDFileUrl =
+          typeof body.threeDFileUrl === "string" ? body.threeDFileUrl.trim() : undefined;
+      }
+    }
+
+    // 8. Update isLatest
+    if (body.isLatest !== undefined) {
+      const isLatestBool = body.isLatest === true || body.isLatest === "true";
+      if (isLatestBool) {
+        project.versions.forEach((v) => {
+          v.isLatest = false;
+        });
+        version.isLatest = true;
+      } else {
+        version.isLatest = false;
+      }
+    }
+
+    await project.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Version updated successfully",
+      data: formatProjectResponse(project),
+    });
+  } catch (error) {
+    await cleanupUploadedVersionMedia(req);
+    next(error);
+  }
+};
+
+export const deleteProjectVersion = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const versionId = extractParamString(req.params.versionId);
+    if (!versionId || !Types.ObjectId.isValid(versionId)) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid identifier format",
+      });
+      return;
+    }
+
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    if (!slug) {
+      res.status(400).json({
+        success: false,
+        message: "Project slug parameter is required",
+      });
+      return;
+    }
+
+    const project = await Project.findOne({ slug });
+    if (!project) {
+      res.status(404).json({
+        success: false,
+        message: `Project not found with slug: ${slug}`,
+      });
+      return;
+    }
+
+    const versionIndex = project.versions.findIndex((v) => String(v._id) === versionId);
+    if (versionIndex === -1) {
+      res.status(404).json({
+        success: false,
+        message: `Version not found with id: ${versionId}`,
+      });
+      return;
+    }
+
+    project.versions.splice(versionIndex, 1);
+    await project.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Version deleted successfully",
+      data: formatProjectResponse(project),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Project Gallery Controllers
+// ---------------------------------------------------------------------------
+
+export const addProjectGallery = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    if (!slug) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({ success: false, message: "Project slug parameter is required" });
+      return;
+    }
+
+    const hasFiles = Boolean(req.galleryUploadedFiles && req.galleryUploadedFiles.length > 0);
+    const hasItems = Boolean(req.body.items !== undefined);
+
+    if (hasFiles && hasItems) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({ success: false, message: "A request must have files or items, not both" });
+      return;
+    }
+
+    if (!hasFiles && !hasItems) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({ success: false, message: "A request must have files or items" });
+      return;
+    }
+
+    const itemsToAdd: IGalleryImage[] = [];
+
+    if (hasFiles) {
+      const uploadedFiles = req.galleryUploadedFiles!;
+      let galleryMetaList: Array<{ tags?: unknown; caption?: unknown }> = [];
+
+      if (req.body.galleryMeta !== undefined) {
+        if (typeof req.body.galleryMeta === "string") {
+          try {
+            const parsed = JSON.parse(req.body.galleryMeta);
+            if (!Array.isArray(parsed)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "galleryMeta must be a JSON array" });
+              return;
+            }
+            galleryMetaList = parsed;
+          } catch {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({ success: false, message: "Invalid JSON format for galleryMeta" });
+            return;
+          }
+        } else if (Array.isArray(req.body.galleryMeta)) {
+          galleryMetaList = req.body.galleryMeta;
+        } else {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "galleryMeta must be a JSON array" });
+          return;
+        }
+
+        if (galleryMetaList.length > uploadedFiles.length) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "galleryMeta contains more entries than uploaded files" });
+          return;
+        }
+      }
+
+      for (let i = 0; i < uploadedFiles.length; i++) {
+        const file = uploadedFiles[i];
+        const meta = galleryMetaList[i] || {};
+
+        const tagsResult = normalizeAndValidateGalleryTags(meta.tags);
+        if (tagsResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: tagsResult.error });
+          return;
+        }
+
+        const captionResult = validateGalleryCaption(meta.caption);
+        if (captionResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: captionResult.error });
+          return;
+        }
+
+        itemsToAdd.push({
+          _id: new Types.ObjectId(),
+          url: file.url,
+          tags: tagsResult.tags || [],
+          caption: captionResult.caption || "",
+        });
+      }
+    } else {
+      let rawItems = req.body.items;
+      if (typeof rawItems === "string") {
+        try {
+          rawItems = JSON.parse(rawItems);
+        } catch {
+          res.status(400).json({ success: false, message: "Invalid JSON format for items" });
+          return;
+        }
+      }
+
+      if (!Array.isArray(rawItems) || rawItems.length === 0) {
+        res.status(400).json({ success: false, message: "items must be a non-empty array" });
+        return;
+      }
+
+      if (rawItems.length > 10) {
+        res.status(400).json({ success: false, message: "At most 10 items per request" });
+        return;
+      }
+
+      for (const item of rawItems) {
+        if (!item || typeof item !== "object" || typeof item.url !== "string" || !isValidHttpUrl(item.url)) {
+          res.status(400).json({ success: false, message: "Each item must have a valid http or https url" });
+          return;
+        }
+
+        const tagsResult = normalizeAndValidateGalleryTags(item.tags);
+        if (tagsResult.error) {
+          res.status(400).json({ success: false, message: tagsResult.error });
+          return;
+        }
+
+        const captionResult = validateGalleryCaption(item.caption);
+        if (captionResult.error) {
+          res.status(400).json({ success: false, message: captionResult.error });
+          return;
+        }
+
+        itemsToAdd.push({
+          _id: new Types.ObjectId(),
+          url: item.url.trim(),
+          tags: tagsResult.tags || [],
+          caption: captionResult.caption || "",
+        });
+      }
+    }
+
+    const project = await Project.findOne({ slug });
+    if (!project) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+      return;
+    }
+
+    const currentCount = Array.isArray(project.gallery) ? project.gallery.length : 0;
+    if (currentCount + itemsToAdd.length > 30) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: `Gallery cannot exceed 30 items per project (current: ${currentCount}, adding: ${itemsToAdd.length})`,
+      });
+      return;
+    }
+
+    const updatedProject = await Project.findOneAndUpdate(
+      {
+        slug,
+        $expr: {
+          $lte: [
+            { $add: [{ $size: { $ifNull: ["$gallery", []] } }, itemsToAdd.length] },
+            30,
+          ],
+        },
+      },
+      {
+        $push: { gallery: { $each: itemsToAdd } },
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedProject) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({ success: false, message: "Gallery cannot exceed 30 items per project" });
+      return;
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Gallery images added successfully",
+      data: formatProjectResponse(updatedProject),
+    });
+  } catch (error) {
+    await cleanupUploadedVersionMedia(req);
+    next(error);
+  }
+};
+
+export const reorderProjectGallery = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    if (!slug) {
+      res.status(400).json({ success: false, message: "Project slug parameter is required" });
+      return;
+    }
+
+    const { order } = req.body as { order?: unknown };
+    if (!Array.isArray(order) || order.some((id) => typeof id !== "string")) {
+      res.status(400).json({ success: false, message: "Order must be an array of image ID strings" });
+      return;
+    }
+
+    for (const id of order) {
+      if (!Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, message: "Invalid identifier format" });
+        return;
+      }
+    }
+
+    if (new Set(order).size !== order.length) {
+      res.status(400).json({ success: false, message: "Order array cannot contain duplicates" });
+      return;
+    }
+
+    const project = await Project.findOne({ slug });
+    if (!project) {
+      res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+      return;
+    }
+
+    const currentGallery = Array.isArray(project.gallery) ? project.gallery : [];
+    const currentIds = currentGallery.map((item) => String(item._id));
+
+    if (
+      order.length !== currentIds.length ||
+      !currentIds.every((id) => order.includes(id))
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Order must contain every current gallery image id exactly once",
+      });
+      return;
+    }
+
+    const itemMap = new Map(currentGallery.map((item) => [String(item._id), item]));
+    project.gallery = order.map((id) => itemMap.get(id)!);
+    await project.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Gallery order updated successfully",
+      data: formatProjectResponse(project),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateProjectGalleryImage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    const imageId = extractParamString(req.params.imageId);
+
+    if (!imageId || !Types.ObjectId.isValid(imageId)) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({ success: false, message: "Invalid identifier format" });
+      return;
+    }
+
+    const setFields: Record<string, unknown> = {};
+
+    if (req.body.tags !== undefined) {
+      if (
+        req.body.tags === "" ||
+        (Array.isArray(req.body.tags) && req.body.tags.length === 0)
+      ) {
+        setFields["gallery.$.tags"] = [];
+      } else {
+        const tagsResult = normalizeAndValidateGalleryTags(req.body.tags);
+        if (tagsResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: tagsResult.error });
+          return;
+        }
+        setFields["gallery.$.tags"] = tagsResult.tags || [];
+      }
+    }
+
+    if (req.body.caption !== undefined) {
+      const captionResult = validateGalleryCaption(req.body.caption);
+      if (captionResult.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: captionResult.error });
+        return;
+      }
+      setFields["gallery.$.caption"] = captionResult.caption || "";
+    }
+
+    if (typeof req.body.galleryImage === "string" && req.body.galleryImage) {
+      setFields["gallery.$.url"] = req.body.galleryImage;
+    }
+
+    if (Object.keys(setFields).length === 0) {
+      const project = await Project.findOne({ slug });
+      if (!project) {
+        res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+        return;
+      }
+      const item = (project.gallery || []).find((img) => String(img._id) === imageId);
+      if (!item) {
+        res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
+        return;
+      }
+      res.status(200).json({
+        success: true,
+        message: "Gallery image updated successfully",
+        data: formatProjectResponse(project),
+      });
+      return;
+    }
+
+    const updatedProject = await Project.findOneAndUpdate(
+      { slug, "gallery._id": new Types.ObjectId(imageId) },
+      { $set: setFields },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedProject) {
+      await cleanupUploadedVersionMedia(req);
+      const project = await Project.findOne({ slug });
+      if (!project) {
+        res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+        return;
+      }
+      res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Gallery image updated successfully",
+      data: formatProjectResponse(updatedProject),
+    });
+  } catch (error) {
+    await cleanupUploadedVersionMedia(req);
+    next(error);
+  }
+};
+
+export const deleteProjectGalleryImage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    const imageId = extractParamString(req.params.imageId);
+
+    if (!imageId || !Types.ObjectId.isValid(imageId)) {
+      res.status(400).json({ success: false, message: "Invalid identifier format" });
+      return;
+    }
+
+    const updatedProject = await Project.findOneAndUpdate(
+      { slug, "gallery._id": new Types.ObjectId(imageId) },
+      { $pull: { gallery: { _id: new Types.ObjectId(imageId) } } },
+      { new: true }
+    );
+
+    if (!updatedProject) {
+      const project = await Project.findOne({ slug });
+      if (!project) {
+        res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+        return;
+      }
+      res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Gallery image deleted successfully",
+      data: formatProjectResponse(updatedProject),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Version Gallery Controllers
+// ---------------------------------------------------------------------------
+
+export const addVersionGallery = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    const versionId = extractParamString(req.params.versionId);
+
+    if (!versionId || !Types.ObjectId.isValid(versionId)) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({ success: false, message: "Invalid identifier format" });
+      return;
+    }
+
+    const hasFiles = Boolean(req.galleryUploadedFiles && req.galleryUploadedFiles.length > 0);
+    const hasItems = Boolean(req.body.items !== undefined);
+
+    if (hasFiles && hasItems) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({ success: false, message: "A request must have files or items, not both" });
+      return;
+    }
+
+    if (!hasFiles && !hasItems) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({ success: false, message: "A request must have files or items" });
+      return;
+    }
+
+    const itemsToAdd: IGalleryImage[] = [];
+
+    if (hasFiles) {
+      const uploadedFiles = req.galleryUploadedFiles!;
+      let galleryMetaList: Array<{ tags?: unknown; caption?: unknown }> = [];
+
+      if (req.body.galleryMeta !== undefined) {
+        if (typeof req.body.galleryMeta === "string") {
+          try {
+            const parsed = JSON.parse(req.body.galleryMeta);
+            if (!Array.isArray(parsed)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "galleryMeta must be a JSON array" });
+              return;
+            }
+            galleryMetaList = parsed;
+          } catch {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({ success: false, message: "Invalid JSON format for galleryMeta" });
+            return;
+          }
+        } else if (Array.isArray(req.body.galleryMeta)) {
+          galleryMetaList = req.body.galleryMeta;
+        } else {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "galleryMeta must be a JSON array" });
+          return;
+        }
+
+        if (galleryMetaList.length > uploadedFiles.length) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "galleryMeta contains more entries than uploaded files" });
+          return;
+        }
+      }
+
+      for (let i = 0; i < uploadedFiles.length; i++) {
+        const file = uploadedFiles[i];
+        const meta = galleryMetaList[i] || {};
+
+        const tagsResult = normalizeAndValidateGalleryTags(meta.tags);
+        if (tagsResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: tagsResult.error });
+          return;
+        }
+
+        const captionResult = validateGalleryCaption(meta.caption);
+        if (captionResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: captionResult.error });
+          return;
+        }
+
+        itemsToAdd.push({
+          _id: new Types.ObjectId(),
+          url: file.url,
+          tags: tagsResult.tags || [],
+          caption: captionResult.caption || "",
+        });
+      }
+    } else {
+      let rawItems = req.body.items;
+      if (typeof rawItems === "string") {
+        try {
+          rawItems = JSON.parse(rawItems);
+        } catch {
+          res.status(400).json({ success: false, message: "Invalid JSON format for items" });
+          return;
+        }
+      }
+
+      if (!Array.isArray(rawItems) || rawItems.length === 0) {
+        res.status(400).json({ success: false, message: "items must be a non-empty array" });
+        return;
+      }
+
+      if (rawItems.length > 10) {
+        res.status(400).json({ success: false, message: "At most 10 items per request" });
+        return;
+      }
+
+      for (const item of rawItems) {
+        if (!item || typeof item !== "object" || typeof item.url !== "string" || !isValidHttpUrl(item.url)) {
+          res.status(400).json({ success: false, message: "Each item must have a valid http or https url" });
+          return;
+        }
+
+        const tagsResult = normalizeAndValidateGalleryTags(item.tags);
+        if (tagsResult.error) {
+          res.status(400).json({ success: false, message: tagsResult.error });
+          return;
+        }
+
+        const captionResult = validateGalleryCaption(item.caption);
+        if (captionResult.error) {
+          res.status(400).json({ success: false, message: captionResult.error });
+          return;
+        }
+
+        itemsToAdd.push({
+          _id: new Types.ObjectId(),
+          url: item.url.trim(),
+          tags: tagsResult.tags || [],
+          caption: captionResult.caption || "",
+        });
+      }
+    }
+
+    const project = await Project.findOne({ slug });
+    if (!project) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+      return;
+    }
+
+    const version = (project.versions || []).find((v) => String(v._id) === versionId);
+    if (!version) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(404).json({ success: false, message: `Version not found with id: ${versionId}` });
+      return;
+    }
+
+    const currentCount = Array.isArray(version.gallery) ? version.gallery.length : 0;
+    if (currentCount + itemsToAdd.length > 30) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: `Gallery cannot exceed 30 items per version (current: ${currentCount}, adding: ${itemsToAdd.length})`,
+      });
+      return;
+    }
+
+    const updatedProject = await Project.findOneAndUpdate(
+      { slug, "versions._id": new Types.ObjectId(versionId) },
+      { $push: { "versions.$.gallery": { $each: itemsToAdd } } },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedProject) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(404).json({ success: false, message: "Project or version not found" });
+      return;
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Gallery images added successfully",
+      data: formatProjectResponse(updatedProject),
+    });
+  } catch (error) {
+    await cleanupUploadedVersionMedia(req);
+    next(error);
+  }
+};
+
+export const reorderVersionGallery = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    const versionId = extractParamString(req.params.versionId);
+
+    if (!versionId || !Types.ObjectId.isValid(versionId)) {
+      res.status(400).json({ success: false, message: "Invalid identifier format" });
+      return;
+    }
+
+    const { order } = req.body as { order?: unknown };
+    if (!Array.isArray(order) || order.some((id) => typeof id !== "string")) {
+      res.status(400).json({ success: false, message: "Order must be an array of image ID strings" });
+      return;
+    }
+
+    for (const id of order) {
+      if (!Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, message: "Invalid identifier format" });
+        return;
+      }
+    }
+
+    if (new Set(order).size !== order.length) {
+      res.status(400).json({ success: false, message: "Order array cannot contain duplicates" });
+      return;
+    }
+
+    const project = await Project.findOne({ slug });
+    if (!project) {
+      res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+      return;
+    }
+
+    const version = (project.versions || []).find((v) => String(v._id) === versionId);
+    if (!version) {
+      res.status(404).json({ success: false, message: `Version not found with id: ${versionId}` });
+      return;
+    }
+
+    const currentGallery = Array.isArray(version.gallery) ? version.gallery : [];
+    const currentIds = currentGallery.map((item) => String(item._id));
+
+    if (
+      order.length !== currentIds.length ||
+      !currentIds.every((id) => order.includes(id))
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Order must contain every current gallery image id exactly once",
+      });
+      return;
+    }
+
+    const itemMap = new Map(currentGallery.map((item) => [String(item._id), item]));
+    version.gallery = order.map((id) => itemMap.get(id)!);
+    await project.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Gallery order updated successfully",
+      data: formatProjectResponse(project),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateVersionGalleryImage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    const versionId = extractParamString(req.params.versionId);
+    const imageId = extractParamString(req.params.imageId);
+
+    if (!versionId || !Types.ObjectId.isValid(versionId) || !imageId || !Types.ObjectId.isValid(imageId)) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({ success: false, message: "Invalid identifier format" });
+      return;
+    }
+
+    const setFields: Record<string, unknown> = {};
+
+    if (req.body.tags !== undefined) {
+      if (
+        req.body.tags === "" ||
+        (Array.isArray(req.body.tags) && req.body.tags.length === 0)
+      ) {
+        setFields["versions.$[v].gallery.$[g].tags"] = [];
+      } else {
+        const tagsResult = normalizeAndValidateGalleryTags(req.body.tags);
+        if (tagsResult.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: tagsResult.error });
+          return;
+        }
+        setFields["versions.$[v].gallery.$[g].tags"] = tagsResult.tags || [];
+      }
+    }
+
+    if (req.body.caption !== undefined) {
+      const captionResult = validateGalleryCaption(req.body.caption);
+      if (captionResult.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: captionResult.error });
+        return;
+      }
+      setFields["versions.$[v].gallery.$[g].caption"] = captionResult.caption || "";
+    }
+
+    if (typeof req.body.galleryImage === "string" && req.body.galleryImage) {
+      setFields["versions.$[v].gallery.$[g].url"] = req.body.galleryImage;
+    }
+
+    if (Object.keys(setFields).length === 0) {
+      const project = await Project.findOne({ slug });
+      if (!project) {
+        res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+        return;
+      }
+      const version = (project.versions || []).find((v) => String(v._id) === versionId);
+      if (!version) {
+        res.status(404).json({ success: false, message: `Version not found with id: ${versionId}` });
+        return;
+      }
+      const item = (version.gallery || []).find((img) => String(img._id) === imageId);
+      if (!item) {
+        res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
+        return;
+      }
+      res.status(200).json({
+        success: true,
+        message: "Gallery image updated successfully",
+        data: formatProjectResponse(project),
+      });
+      return;
+    }
+
+    const updatedProject = await Project.findOneAndUpdate(
+      {
+        slug,
+        "versions._id": new Types.ObjectId(versionId),
+        "versions.gallery._id": new Types.ObjectId(imageId),
+      },
+      { $set: setFields },
+      {
+        arrayFilters: [
+          { "v._id": new Types.ObjectId(versionId) },
+          { "g._id": new Types.ObjectId(imageId) },
+        ],
+        new: true,
+        runValidators: true,
+      }
+    );
+
+    if (!updatedProject) {
+      await cleanupUploadedVersionMedia(req);
+      const project = await Project.findOne({ slug });
+      if (!project) {
+        res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+        return;
+      }
+      const version = (project.versions || []).find((v) => String(v._id) === versionId);
+      if (!version) {
+        res.status(404).json({ success: false, message: `Version not found with id: ${versionId}` });
+        return;
+      }
+      res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Gallery image updated successfully",
+      data: formatProjectResponse(updatedProject),
+    });
+  } catch (error) {
+    await cleanupUploadedVersionMedia(req);
+    next(error);
+  }
+};
+
+export const deleteVersionGalleryImage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const slug = extractParamString(req.params.slug).toLowerCase().trim();
+    const versionId = extractParamString(req.params.versionId);
+    const imageId = extractParamString(req.params.imageId);
+
+    if (!versionId || !Types.ObjectId.isValid(versionId) || !imageId || !Types.ObjectId.isValid(imageId)) {
+      res.status(400).json({ success: false, message: "Invalid identifier format" });
+      return;
+    }
+
+    const updatedProject = await Project.findOneAndUpdate(
+      {
+        slug,
+        "versions._id": new Types.ObjectId(versionId),
+        "versions.gallery._id": new Types.ObjectId(imageId),
+      },
+      { $pull: { "versions.$[v].gallery": { _id: new Types.ObjectId(imageId) } } },
+      {
+        arrayFilters: [{ "v._id": new Types.ObjectId(versionId) }],
+        new: true,
+      }
+    );
+
+    if (!updatedProject) {
+      const project = await Project.findOne({ slug });
+      if (!project) {
+        res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+        return;
+      }
+      const version = (project.versions || []).find((v) => String(v._id) === versionId);
+      if (!version) {
+        res.status(404).json({ success: false, message: `Version not found with id: ${versionId}` });
+        return;
+      }
+      res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Gallery image deleted successfully",
+      data: formatProjectResponse(updatedProject),
     });
   } catch (error) {
     next(error);

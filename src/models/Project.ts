@@ -2,7 +2,14 @@ import { Schema, model, Document, Types } from "mongoose";
 
 export interface ISocialLink { platform: string; url: string; }
 export interface IContributor { name: string; profilePicUrl: string; profileLink?: string; }
+export interface IGalleryImage {
+  _id?: Types.ObjectId;
+  url: string;
+  tags: string[];
+  caption: string;
+}
 export interface IProjectVersion {
+  _id?: Types.ObjectId;
   versionTag: string;
   releaseDate: Date;
   changelog: string[];
@@ -11,6 +18,7 @@ export interface IProjectVersion {
   demoUrl?: string;
   threeDFileUrl?: string;
   isLatest: boolean;
+  gallery: IGalleryImage[];
 }
 
 export type ProjectStatus = "invisible" | "planning" | "work_in_progress" | "delay_hold" | "active";
@@ -38,6 +46,7 @@ export interface IProject extends Document {
   githubLink?: string;
   socialLinks: ISocialLink[];
   versions: IProjectVersion[];
+  gallery: IGalleryImage[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,6 +55,12 @@ const ContributorSchema = new Schema<IContributor>({
   name: { type: String, required: true },
   profilePicUrl: { type: String, required: true },
   profileLink: { type: String },
+});
+
+const GalleryImageSchema = new Schema<IGalleryImage>({
+  url: { type: String, required: true },
+  tags: { type: [String], default: [] },
+  caption: { type: String, default: "" },
 });
 
 const VersionSchema = new Schema<IProjectVersion>({
@@ -57,6 +72,7 @@ const VersionSchema = new Schema<IProjectVersion>({
   demoUrl: { type: String },
   threeDFileUrl: { type: String },
   isLatest: { type: Boolean, default: false },
+  gallery: { type: [GalleryImageSchema], default: [] },
 });
 
 const ProjectSchema = new Schema<IProject>({
@@ -86,6 +102,7 @@ const ProjectSchema = new Schema<IProject>({
   deployedLink: { type: String, default: null },
   githubLink: { type: String, default: null },
   versions: [VersionSchema],
+  gallery: { type: [GalleryImageSchema], default: [] },
 }, { timestamps: true });
 
 export const Project = model<IProject>("Project", ProjectSchema);

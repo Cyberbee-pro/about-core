@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { cleanupUploadedVersionMedia } from "./uploadMiddleware";
 
 export interface CustomError extends Error {
   statusCode?: number;
@@ -17,12 +18,18 @@ export const notFoundMiddleware = (
   });
 };
 
-export const errorMiddleware = (
+export const errorMiddleware = async (
   err: unknown,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
-): void => {
+): Promise<void> => {
+  try {
+    await cleanupUploadedVersionMedia(req);
+  } catch {
+    // Safe swallow
+  }
+
   let statusCode = 500;
   let message = "Internal Server Error";
   let errors: Record<string, unknown> | undefined;
@@ -34,6 +41,8 @@ export const errorMiddleware = (
 
     if (typeof customErr.statusCode === "number") {
       statusCode = customErr.statusCode;
+    } else if (customErr.name === "MulterError") {
+      statusCode = 400;
     } else if (customErr.message === "Not allowed by CORS") {
       statusCode = 403;
     }
