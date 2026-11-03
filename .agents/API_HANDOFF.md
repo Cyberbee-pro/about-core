@@ -48,11 +48,11 @@ HTTP Request
   - Validated via a dynamic validator function. Requests without an `Origin` header (such as curl, mobile apps, Postman, or server-to-server) are allowed.
   - Allowed origins are parsed from the `CLIENT_ORIGIN` environment variable (comma-separated, e.g., `http://localhost:3000,https://core.shibraj.dev,https://client.shibraj.dev,https://shibraj.dev`).
   - Defaults to `["https://core.shibraj.dev", "https://client.shibraj.dev", "https://shibraj.dev", "http://localhost:3000"]` if `CLIENT_ORIGIN` is not configured.
-  - Wildcard `*` in `CLIENT_ORIGIN` dynamically reflects the requesting origin with credentials enabled.
+  - When `CLIENT_ORIGIN` is set to wildcard `*`, responds with `Access-Control-Allow-Origin: *` and credentials disabled (`credentials: false`), strictly compliant with the W3C CORS specification. All API authentication relies on HTTP headers (`Authorization: Bearer <token>` or `x-admin-token`), so browser cookies/ambient credentials are not required.
   - Trailing slashes in origins are normalized automatically.
   - **Allowed Methods**: `GET`, `POST`, `PUT`, `DELETE`, `OPTIONS`.
   - **Allowed Headers**: `Content-Type`, `Authorization`, `x-admin-token`.
-  - **Credentials**: `true` (`Access-Control-Allow-Credentials: true`).
+  - **Credentials**: `true` (`Access-Control-Allow-Credentials: true`) for explicit allowed origin matches; `false` when wildcard `*` is configured.
   - **Rejected Origins**: Return HTTP `403 Forbidden` with `{ "success": false, "message": "Not allowed by CORS" }`.
 - **URL Validation Rules**:
   - Every URL string written to the database (when provided and non-empty) is strictly validated via WHATWG `new URL` and must use an absolute `http:` or `https:` protocol.
@@ -1065,7 +1065,6 @@ Tags are free-form strings validated and normalized strictly in this sequential 
 ```json
 {
   "success": true,
-  "message": "Contributor created successfully",
   "data": { ...contributor }
 }
 ```
@@ -1083,7 +1082,6 @@ Tags are free-form strings validated and normalized strictly in this sequential 
 ```json
 {
   "success": true,
-  "message": "Contributor updated successfully",
   "data": { ...updatedContributor }
 }
 ```

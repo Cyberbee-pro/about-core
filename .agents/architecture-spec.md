@@ -557,7 +557,7 @@ Request
 
 ## 4. Cloudinary Media Storage Hierarchy
 
-All media assets are buffered in memory and streamed directly to Cloudinary. Complete directory layout, sequential numbering (`<base>_1`), and Search API caching rules are detailed in [`cloudinary.md`](../cloudinary.md).
+All media assets are buffered in memory and streamed directly to Cloudinary. Complete directory layout, sequential numbering (`<base>_1`), and Search API caching rules are detailed in [`cloudinary.md`](./cloudinary.md).
 
 ```
 portfolio/

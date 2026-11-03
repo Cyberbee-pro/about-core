@@ -98,4 +98,41 @@ describe("Clear Legacy Contributors Script Tests", () => {
 
     logSpy.mockRestore();
   });
+
+  it("--apply preserves valid contributor references in mixed arrays", async () => {
+    const mockSave = jest.fn().mockResolvedValue(true);
+    const validRef = { contributor: "60c72b2f9b1d8b2bad000001", role: "lead" };
+    const validVerRef = { contributor: "60c72b2f9b1d8b2bad000002", role: "contributor" };
+
+    const mockProject = {
+      slug: "mixed-project",
+      contributors: [
+        { name: "Legacy Dev", profilePicUrl: "https://example.com/legacy.png" },
+        validRef,
+      ],
+      versions: [
+        {
+          versionTag: "v1.0.0",
+          contributors: [
+            validVerRef,
+            { name: "Legacy Ver Dev", profilePicUrl: "https://example.com/legacy-ver.png" },
+          ],
+        },
+      ],
+      save: mockSave,
+    };
+
+    (Project.find as jest.Mock).mockResolvedValue([mockProject]);
+
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    const result = await clearLegacyContributors({ apply: true });
+
+    expect(result.applied).toBe(true);
+    expect(mockSave).toHaveBeenCalledTimes(1);
+    expect(mockProject.contributors).toEqual([validRef]);
+    expect(mockProject.versions[0].contributors).toEqual([validVerRef]);
+
+    logSpy.mockRestore();
+  });
 });

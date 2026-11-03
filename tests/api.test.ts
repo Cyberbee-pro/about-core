@@ -2518,5 +2518,98 @@ describe("about-core API & Middleware Integration Tests", () => {
         expect(mockProject.save).toHaveBeenCalled();
       });
     });
+
+    describe("Systemic Upload Rollback & Duplicate Version Tag Enforcement", () => {
+      it("POST /api/v1/projects rolls back uploaded image when creation fails with 409 duplicate", async () => {
+        const duplicateError = new Error("E11000 duplicate key error") as Error & { code?: number };
+        duplicateError.code = 11000;
+        (Project.create as jest.Mock).mockRejectedValueOnce(duplicateError);
+
+        const res = await request(app)
+          .post("/api/v1/projects")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("title", "Duplicate Project")
+          .field("category", "web")
+          .field("description", "A project with duplicate slug")
+          .attach("image", Buffer.from("proj image"), {
+            filename: "proj.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(409);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/projects/duplicate-project/images/"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("PUT /api/v1/projects/:id rolls back uploaded image when validation fails with 400", async () => {
+        const res = await request(app)
+          .put("/api/v1/projects/60c72b2f9b1d8b2bad000001")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("deployedLink", "javascript:alert(1)")
+          .attach("image", Buffer.from("updated image"), {
+            filename: "updated.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(400);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/projects/misc/images/"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("POST /api/v1/config rolls back uploaded pfp when payload validation fails with 400", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          // Missing "name" to trigger validation failure
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .attach("pfp", Buffer.from("fake pfp image"), {
+            filename: "pfp.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(400);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("POST /api/v1/projects/:slug/versions returns 409, names the tag, and rolls back uploads on duplicate versionTag", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0", isLatest: true },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .post("/api/v1/projects/my-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "V1.0.0") // Case-insensitive duplicate of v1.0.0
+          .attach("image", Buffer.from("new version image"), {
+            filename: "new-v.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(409);
+        expect(res.body.success).toBe(false);
+        expect(res.body.message).toContain("Version tag 'V1.0.0' already exists for this project");
+        expect(mockProject.versions.length).toBe(1);
+        expect(mockProject.save).not.toHaveBeenCalled();
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/projects/my-project/v1.0.0/images/"),
+          { resource_type: "image" }
+        );
+      });
+    });
   });
 });

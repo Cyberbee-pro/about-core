@@ -12,12 +12,12 @@ This repository contains the backend infrastructure. You must ground all archite
    *   Apply `.agents/skills/tdd-workflow.md`[cite: 7] when writing or refactoring testable business logic.
 
 ## Audit Summary
-Codebase audit completed with all 14 test suites and 384 tests passing. Key verified areas:
+Codebase audit completed with all test suites passing (`npm test`). Key verified areas:
 - Model schemas: Project (5-status enum, image required, versions schema with version metadata and contributors ref, social links, skills refs, tagged image galleries on project and version), Contributor (name, profilePicUrl, profileLink), SiteConfig (name, pfp, pfpHistory, jobTitles, bio, resumeUrl), Skill, Certificate, Achievement, Experience, LogEntry — all 8 collections consistent
 - Routes & controllers: Public/protected split with authMiddleware, dedicated admin project listing (`GET /api/v1/admin/projects`), per-version in-place update and delete endpoints (`PUT / DELETE /api/v1/projects/:slug/versions/:versionId`), tagged image gallery endpoints (`POST / PUT order / PUT :imageId / DELETE :imageId` on project and version), shared contributor endpoints (`GET / POST / PUT / DELETE /api/v1/contributors`), consistent error handling patterns, atomic experience position append, site config avatar rollback, and Cloudinary PDF resume uploads
 - Middleware pipeline: cors (dynamic multi-origin), auth (Bearer/x-admin-token), dbLogger (MongoDB request telemetry), error (Mongoose & Multer mapping), upload (Cloudinary streaming with PDF, contributor & gallery support, stored versionTag lookup, and failed-upload cleanup)
-- Media storage: Structured Cloudinary folder hierarchy documented in `cloudinary.md`
-- Test coverage: 100% of critical paths covered across 14 test suites
+- Media storage: Structured Cloudinary folder hierarchy documented in [`.agents/cloudinary.md`](.agents/cloudinary.md)
+- Test coverage: 100% of critical paths covered across all test suites (`npm test`)
 - TypeScript: All strict flags enabled, zero compilation errors (`npx tsc --noEmit`)
 - Configuration: .env.example vars, tsconfig strictness, dependencies all standard and version-pinned
 

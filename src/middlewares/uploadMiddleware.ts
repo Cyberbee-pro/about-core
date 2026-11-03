@@ -5,6 +5,8 @@ import { UploadApiResponse } from "cloudinary";
 import cloudinary from "../config/cloudinary";
 import { Experience } from "../models/Experience";
 import { Project } from "../models/Project";
+import { Skill } from "../models/Skill";
+import { Contributor } from "../models/Contributor";
 import { Types } from "mongoose";
 import {
   escapeRegex,
@@ -408,9 +410,38 @@ const getFolderInfo = (
 
 type MulterFilesMap = Record<string, Express.Multer.File[]>;
 
+export const hasUploadedResumeFile = (req: Request): boolean => {
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+  return Boolean(
+    files &&
+      ((Array.isArray(files.resume) && files.resume.length > 0) ||
+        (Array.isArray(files.resumeFile) && files.resumeFile.length > 0) ||
+        (Array.isArray(files.resumePdf) && files.resumePdf.length > 0) ||
+        (Array.isArray(files.pdf) && files.pdf.length > 0))
+  );
+};
+
+export const cleanupUploadedResume = async (req: Request): Promise<void> => {
+  try {
+    if (
+      hasUploadedResumeFile(req) &&
+      typeof req.body.resumePublicId === "string" &&
+      req.body.resumePublicId.trim()
+    ) {
+      const publicId = sanitizeResumePublicId(req.body.resumePublicId.trim());
+      req.body.resumePublicId = "";
+      await cloudinary.uploader.destroy(publicId);
+    }
+  } catch {
+    // Best-effort cleanup: safely swallow error so original API response or error is preserved
+  }
+};
+
 export const cleanupUploadedVersionMedia = async (req: Request): Promise<void> => {
   if (req.uploadedMediaAssets && req.uploadedMediaAssets.length > 0) {
-    for (const asset of req.uploadedMediaAssets) {
+    const assets = [...req.uploadedMediaAssets];
+    req.uploadedMediaAssets = [];
+    for (const asset of assets) {
       try {
         await cloudinary.uploader.destroy(asset.publicId, {
           resource_type: asset.resourceType,
@@ -420,6 +451,21 @@ export const cleanupUploadedVersionMedia = async (req: Request): Promise<void> =
       }
     }
   }
+};
+
+export const attachRollbackOnFailure = (req: Request, res: Response): void => {
+  const customRes = res as unknown as { _rollbackHookAttached?: boolean };
+  if (customRes._rollbackHookAttached) {
+    return;
+  }
+  customRes._rollbackHookAttached = true;
+
+  res.on("finish", async () => {
+    if (res.statusCode >= 400) {
+      await cleanupUploadedVersionMedia(req);
+      await cleanupUploadedResume(req);
+    }
+  });
 };
 
 export const processMediaUploads = async (
@@ -673,6 +719,10 @@ export const processMediaUploads = async (
       });
     }
 
+    if (req.uploadedMediaAssets && req.uploadedMediaAssets.length > 0) {
+      attachRollbackOnFailure(req, res);
+    }
+
     next();
   } catch (error) {
     await cleanupUploadedVersionMedia(req);
@@ -738,7 +788,7 @@ export const deriveExperienceOrg = (org: unknown): string => {
 
 export const processSkillUploads = async (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
@@ -749,14 +799,45 @@ export const processSkillUploads = async (
     const files = req.files as MulterFilesMap;
     if (files.logoUrl && files.logoUrl.length > 0) {
       const file = files.logoUrl[0];
-      const skillName = deriveSkillName(req.body.name);
+
+      let rawName = req.body.name;
+      const paramId = typeof req.params.id === "string" ? req.params.id : undefined;
+      if (
+        (!rawName || !String(rawName).trim()) &&
+        paramId &&
+        Types.ObjectId.isValid(paramId)
+      ) {
+        try {
+          const storedSkill = await Skill.findById(paramId);
+          if (storedSkill && (storedSkill as { name?: string }).name) {
+            rawName = (storedSkill as { name?: string }).name;
+          }
+        } catch {
+          // Ignore and fall back
+        }
+      }
+
+      const skillName = deriveSkillName(rawName);
       const folder = `portfolio/skills/${skillName}`;
+      const cache: FolderCache = new Map();
+      const publicId = await getNextPublicId(cache, folder, skillName);
+
+      if (!req.uploadedMediaAssets) {
+        req.uploadedMediaAssets = [];
+      }
+
       const result = await uploadBufferToCloudinary(file.buffer, {
         folder,
         resource_type: "image",
-        public_id: skillName,
+        public_id: publicId,
       });
+
       req.body.logoUrl = result.secure_url;
+      req.uploadedMediaAssets.push({
+        publicId: result.public_id,
+        resourceType: "image",
+      });
+      attachRollbackOnFailure(req, res);
     }
 
     next();
@@ -800,9 +881,27 @@ export const processContributorUploads = async (
         return;
       }
 
-      const contributorName = deriveContributorName(req.body.name);
+      let rawName = req.body.name;
+      const paramId = typeof req.params.id === "string" ? req.params.id : undefined;
+      if (
+        (!rawName || !String(rawName).trim()) &&
+        paramId &&
+        Types.ObjectId.isValid(paramId)
+      ) {
+        try {
+          const storedContributor = await Contributor.findById(paramId);
+          if (storedContributor && (storedContributor as { name?: string }).name) {
+            rawName = (storedContributor as { name?: string }).name;
+          }
+        } catch {
+          // Ignore and fall back
+        }
+      }
+
+      const contributorName = deriveContributorName(rawName);
       const folder = `portfolio/contributors/${contributorName}`;
-      const publicId = contributorName;
+      const cache: FolderCache = new Map();
+      const publicId = await getNextPublicId(cache, folder, contributorName);
 
       if (!req.uploadedMediaAssets) {
         req.uploadedMediaAssets = [];
@@ -819,6 +918,7 @@ export const processContributorUploads = async (
         publicId: result.public_id,
         resourceType: "image",
       });
+      attachRollbackOnFailure(req, res);
     }
 
     next();
@@ -830,7 +930,7 @@ export const processContributorUploads = async (
 
 export const processCertificateUploads = async (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
@@ -853,6 +953,14 @@ export const processCertificateUploads = async (
         public_id: publicId,
       });
       req.body.mediaUrl = result.secure_url;
+      if (!req.uploadedMediaAssets) {
+        req.uploadedMediaAssets = [];
+      }
+      req.uploadedMediaAssets.push({
+        publicId: result.public_id,
+        resourceType: "image",
+      });
+      attachRollbackOnFailure(req, res);
     }
 
     next();
@@ -864,7 +972,7 @@ export const processCertificateUploads = async (
 
 export const processExperienceUploads = async (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
@@ -911,6 +1019,13 @@ export const processExperienceUploads = async (
         public_id: "experience_icon",
       });
       req.body.iconUrl = result.secure_url;
+      if (!req.uploadedMediaAssets) {
+        req.uploadedMediaAssets = [];
+      }
+      req.uploadedMediaAssets.push({
+        publicId: result.public_id,
+        resourceType: "image",
+      });
     }
 
     // 2. Process Media uploads
@@ -925,6 +1040,13 @@ export const processExperienceUploads = async (
           public_id: publicId,
         });
         uploadedMediaUrls.push(result.secure_url);
+        if (!req.uploadedMediaAssets) {
+          req.uploadedMediaAssets = [];
+        }
+        req.uploadedMediaAssets.push({
+          publicId: result.public_id,
+          resourceType: "image",
+        });
       }
       req.body.uploadedMediaUrls = uploadedMediaUrls;
     }
@@ -941,8 +1063,19 @@ export const processExperienceUploads = async (
           public_id: publicId,
         });
         uploadedCertificateUrls.push(result.secure_url);
+        if (!req.uploadedMediaAssets) {
+          req.uploadedMediaAssets = [];
+        }
+        req.uploadedMediaAssets.push({
+          publicId: result.public_id,
+          resourceType: "image",
+        });
       }
       req.body.uploadedCertificateUrls = uploadedCertificateUrls;
+    }
+
+    if (req.uploadedMediaAssets && req.uploadedMediaAssets.length > 0) {
+      attachRollbackOnFailure(req, res);
     }
 
     next();
@@ -966,7 +1099,7 @@ export const isPdfBuffer = (buffer: Buffer): boolean => {
 
 export const processSiteConfigUploads = async (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
@@ -993,6 +1126,13 @@ export const processSiteConfigUploads = async (
       });
       req.body.pfpUrl = result.secure_url;
       req.body.pfpPublicId = result.public_id;
+      if (!req.uploadedMediaAssets) {
+        req.uploadedMediaAssets = [];
+      }
+      req.uploadedMediaAssets.push({
+        publicId: result.public_id,
+        resourceType: "image",
+      });
     }
 
     // 2. Process Resume PDF upload
@@ -1022,9 +1162,14 @@ export const processSiteConfigUploads = async (
       req.body.resumePublicId = sanitizeResumePublicId(result.public_id);
     }
 
+    if (pfpFile || resumeFile) {
+      attachRollbackOnFailure(req, res);
+    }
+
     next();
   } catch (error) {
     await cleanupUploadedVersionMedia(req);
+    await cleanupUploadedResume(req);
     next(error);
   }
 };

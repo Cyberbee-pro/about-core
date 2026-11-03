@@ -43,29 +43,36 @@ export const getAllowedOrigins = (): string[] => {
 
 // Global Middlewares
 app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow non-browser requests (Postman, curl, server-to-server)
-      if (!origin) return callback(null, true);
+  cors((req, callback) => {
+    const origin = req.header("Origin");
+    // Allow non-browser requests (Postman, curl, server-to-server)
+    if (!origin) {
+      return callback(null, { origin: true });
+    }
 
-      const rawEnv = process.env.CLIENT_ORIGIN || "";
-      const allowedOrigins = rawEnv
-        .split(",")
-        .map((o) => o.trim().replace(/\/+$/, ""))
-        .filter(Boolean);
+    const allowedOrigins = getAllowedOrigins().map((o) => o.trim().replace(/\/+$/, ""));
+    const cleanOrigin = origin.trim().replace(/\/+$/, "");
 
-      const cleanOrigin = origin.trim().replace(/\/+$/, "");
+    if (allowedOrigins.includes("*")) {
+      return callback(null, {
+        origin: "*",
+        credentials: false,
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization", "x-admin-token"],
+      });
+    }
 
-      if (allowedOrigins.includes(cleanOrigin)) {
-        callback(null, cleanOrigin);
-      } else {
-        console.warn(`[CORS Blocked] Origin "${origin}" not found in allowed list.`);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-admin-token"],
+    if (allowedOrigins.includes(cleanOrigin)) {
+      return callback(null, {
+        origin: cleanOrigin,
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization", "x-admin-token"],
+      });
+    }
+
+    console.warn(`[CORS Blocked] Origin "${origin}" not found in allowed list.`);
+    callback(new Error("Not allowed by CORS"));
   })
 );
 app.use(express.json());

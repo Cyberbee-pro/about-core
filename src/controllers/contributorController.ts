@@ -304,7 +304,7 @@ export const deleteContributor = async (
     if (projectCount > 0 || versionCount > 0) {
       res.status(409).json({
         success: false,
-        message: `Cannot delete contributor: referenced by ${projectCount} project(s) and ${versionCount} version(s)`,
+        message: `Cannot delete contributor: referenced by ${projectCount} project(s) and ${versionCount} project version(s)`,
       });
       return;
     }

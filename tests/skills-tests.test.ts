@@ -18,6 +18,7 @@ type CloudinaryMockCallback = (
 ) => void;
 
 const mockUploadCalls: CloudinaryMockOptions[] = [];
+const mockDestroy = jest.fn().mockResolvedValue({ result: "ok" });
 
 jest.mock("@/config/cloudinary", () => {
   const search = {
@@ -26,6 +27,7 @@ jest.mock("@/config/cloudinary", () => {
     execute: jest.fn().mockResolvedValue({ resources: [], total_count: 0 }),
   };
   const uploader = {
+    destroy: mockDestroy,
     upload_stream: (
       options: CloudinaryMockOptions,
       callback: CloudinaryMockCallback
@@ -39,7 +41,9 @@ jest.mock("@/config/cloudinary", () => {
       process.nextTick(() =>
         callback(null, {
           secure_url: `https://res.cloudinary.com/demo/${options.resource_type}/${options.folder}/${options.public_id || "file"}`,
-          public_id: options.public_id || "test_id",
+          public_id: options.folder
+            ? `${options.folder}/${options.public_id || "file"}`
+            : options.public_id || "test_id",
         })
       );
       return writable;
@@ -48,6 +52,9 @@ jest.mock("@/config/cloudinary", () => {
   const cloudinary = { uploader, search, uploadCalls: mockUploadCalls };
   return { __esModule: true, default: cloudinary, cloudinary };
 });
+
+const mockCloudinary = jest.requireMock("@/config/cloudinary");
+const mockSearch = mockCloudinary.default.search;
 
 // Mock models and DB
 jest.mock("@/models/Skill", () => {
@@ -79,6 +86,9 @@ describe("Skills API Integration Tests", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUploadCalls.length = 0;
+    mockSearch.expression.mockReturnValue(mockSearch);
+    mockSearch.max_results.mockReturnValue(mockSearch);
+    mockSearch.execute.mockResolvedValue({ resources: [], total_count: 0 });
     (Skill.find as jest.Mock).mockImplementation((filter?: Record<string, unknown>) => ({
       sort: jest.fn().mockResolvedValue([
         { _id: "skill-1", name: "TypeScript", type: filter?.type || "language", logoUrl: "", featured: false, weight: 0 },
@@ -209,8 +219,58 @@ describe("Skills API Integration Tests", () => {
       (c) => c.folder === "portfolio/skills/react-native"
     );
     expect(uploadCall).toBeDefined();
-    expect(uploadCall?.public_id).toBe("react-native");
+    expect(uploadCall?.public_id).toBe("react-native_1");
     expect(uploadCall?.resource_type).toBe("image");
+  });
+
+  it("POST /api/v1/skills with colliding slugs ('C' and 'C++') gives distinct ids", async () => {
+    const mockCloudinary = jest.requireMock("@/config/cloudinary") as {
+      default: { search: { execute: jest.Mock } };
+    };
+    mockCloudinary.default.search.execute.mockResolvedValueOnce({
+      resources: [],
+      total_count: 0,
+    });
+
+    const res1 = await request(app)
+      .post("/api/v1/skills")
+      .set("Authorization", "Bearer test-secret-token")
+      .field("name", "C")
+      .field("type", "language")
+      .attach("logoUrl", Buffer.from("c-logo"), {
+        filename: "c.png",
+        contentType: "image/png",
+      });
+
+    expect(res1.status).toBe(201);
+    expect(mockUploadCalls[0].folder).toBe("portfolio/skills/c");
+    expect(mockUploadCalls[0].public_id).toBe("c_1");
+
+    mockCloudinary.default.search.execute.mockResolvedValueOnce({
+      resources: [
+        {
+          public_id: "portfolio/skills/c/c_1",
+          folder: "portfolio/skills/c",
+          resource_type: "image",
+        },
+      ],
+      total_count: 1,
+    });
+
+    const res2 = await request(app)
+      .post("/api/v1/skills")
+      .set("Authorization", "Bearer test-secret-token")
+      .field("name", "C++")
+      .field("type", "language")
+      .attach("logoUrl", Buffer.from("cpp-logo"), {
+        filename: "cpp.png",
+        contentType: "image/png",
+      });
+
+    expect(res2.status).toBe(201);
+    expect(mockUploadCalls[1].folder).toBe("portfolio/skills/c");
+    expect(mockUploadCalls[1].public_id).toBe("c_2");
+    expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
   });
 
   it("POST /api/v1/skills with duplicate name returns 409", async () => {
@@ -222,6 +282,92 @@ describe("Skills API Integration Tests", () => {
     expect(res.status).toBe(409);
     expect(res.body.success).toBe(false);
     expect(res.body.message).toContain("duplicate");
+  });
+
+  it("a duplicate-name POST /skills with a file returns 409, destroys only that request's new upload, and leaves existing logo untouched", async () => {
+    const existingSkill = {
+      _id: "skill-react",
+      name: "React",
+      logoUrl: "https://res.cloudinary.com/demo/image/upload/portfolio/skills/react/react_1.png",
+    };
+    (Skill.findOne as jest.Mock).mockResolvedValue(existingSkill);
+
+    const res = await request(app)
+      .post("/api/v1/skills")
+      .set("Authorization", "Bearer test-secret-token")
+      .field("name", "React")
+      .field("type", "framework")
+      .attach("logoUrl", Buffer.from("new-react-logo"), {
+        filename: "react.png",
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toContain("duplicate");
+
+    // The failing request uploaded react_1 (or react_n), which must be destroyed
+    expect(mockDestroy).toHaveBeenCalledWith(
+      expect.stringMatching(/portfolio\/skills\/react\//),
+      { resource_type: "image" }
+    );
+    // The existing logo in DB was NOT passed to destroy
+    expect(mockDestroy).not.toHaveBeenCalledWith(
+      "portfolio/skills/react/react_1.png",
+      expect.anything()
+    );
+  });
+
+  it("PUT /api/v1/skills/:id without a name for two skills gives two distinct ids", async () => {
+    const id1 = "60c72b2f9b1d8b2bad000001";
+    const id2 = "60c72b2f9b1d8b2bad000002";
+
+    (Skill.findById as jest.Mock).mockImplementation((id) => {
+      if (id === id1) return Promise.resolve({ _id: id1, name: "React" });
+      if (id === id2) return Promise.resolve({ _id: id2, name: "Vue" });
+      return Promise.resolve(null);
+    });
+    (Skill.findOne as jest.Mock).mockResolvedValue(null);
+    (Skill.findByIdAndUpdate as jest.Mock).mockResolvedValue({ _id: id1 });
+
+    await request(app)
+      .put(`/api/v1/skills/${id1}`)
+      .set("Authorization", "Bearer test-secret-token")
+      .attach("logoUrl", Buffer.from("react-logo"), "react.png");
+
+    await request(app)
+      .put(`/api/v1/skills/${id2}`)
+      .set("Authorization", "Bearer test-secret-token")
+      .attach("logoUrl", Buffer.from("vue-logo"), "vue.png");
+
+    expect(mockUploadCalls.length).toBe(2);
+    expect(mockUploadCalls[0].folder).toBe("portfolio/skills/react");
+    expect(mockUploadCalls[0].public_id).toBe("react_1");
+    expect(mockUploadCalls[1].folder).toBe("portfolio/skills/vue");
+    expect(mockUploadCalls[1].public_id).toBe("vue_1");
+    expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
+  });
+
+  it("a replaced picture on PUT /skills/:id keeps the old asset", async () => {
+    (Skill.findById as jest.Mock).mockResolvedValue({
+      _id: "skill-1",
+      name: "React",
+      logoUrl: "https://res.cloudinary.com/demo/image/upload/portfolio/skills/react/react_1.png",
+    });
+    (Skill.findOne as jest.Mock).mockResolvedValue(null);
+    (Skill.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+      _id: "skill-1",
+      name: "React",
+      logoUrl: "https://res.cloudinary.com/demo/image/upload/portfolio/skills/react/react_2.png",
+    });
+
+    const res = await request(app)
+      .put("/api/v1/skills/skill-1")
+      .set("Authorization", "Bearer test-secret-token")
+      .attach("logoUrl", Buffer.from("new-logo"), "new.png");
+
+    expect(res.status).toBe(200);
+    expect(mockDestroy).not.toHaveBeenCalled();
   });
 
   it("PUT /api/v1/skills/:id updates a skill (admin protected)", async () => {

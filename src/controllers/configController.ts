@@ -1,9 +1,14 @@
 import mongoose from "mongoose";
 import { Request, Response, NextFunction } from "express";
 import { SiteConfig, IPfpItem } from "../models/SiteConfig";
-import cloudinary from "../config/cloudinary";
-import { sanitizeResumePublicId } from "../middlewares/uploadMiddleware";
+import {
+  sanitizeResumePublicId,
+  hasUploadedResumeFile,
+  cleanupUploadedResume,
+} from "../middlewares/uploadMiddleware";
 import { isValidHttpUrl } from "../utils/stringUtils";
+
+export { hasUploadedResumeFile, cleanupUploadedResume };
 
 const parseJobTitles = (input: unknown): string[] | undefined => {
   if (typeof input === "string") {
@@ -38,31 +43,6 @@ const validateSiteConfigPayload = (
   if (typeof bioSummary !== "string" || !bioSummary.trim()) missing.push("bioSummary");
 
   return missing;
-};
-
-export const hasUploadedResumeFile = (req: Request): boolean => {
-  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
-  return Boolean(
-    files &&
-      ((Array.isArray(files.resume) && files.resume.length > 0) ||
-        (Array.isArray(files.resumeFile) && files.resumeFile.length > 0) ||
-        (Array.isArray(files.resumePdf) && files.resumePdf.length > 0) ||
-        (Array.isArray(files.pdf) && files.pdf.length > 0))
-  );
-};
-
-export const cleanupUploadedResume = async (req: Request): Promise<void> => {
-  try {
-    if (
-      hasUploadedResumeFile(req) &&
-      typeof req.body.resumePublicId === "string" &&
-      req.body.resumePublicId.trim()
-    ) {
-      await cloudinary.uploader.destroy(sanitizeResumePublicId(req.body.resumePublicId.trim()));
-    }
-  } catch {
-    // Best-effort cleanup: safely swallow error so original API response or error is preserved
-  }
 };
 
 export const getSiteConfig = async (

@@ -41,7 +41,9 @@ jest.mock("@/config/cloudinary", () => {
       process.nextTick(() =>
         callback(null, {
           secure_url: `https://res.cloudinary.com/demo/${options.resource_type}/${options.folder}/${options.public_id || "file"}`,
-          public_id: options.public_id || "test_id",
+          public_id: options.folder
+            ? `${options.folder}/${options.public_id || "file"}`
+            : options.public_id || "test_id",
         })
       );
       return writable;
@@ -50,6 +52,9 @@ jest.mock("@/config/cloudinary", () => {
   const cloudinary = { uploader, search, uploadCalls: mockUploadCalls };
   return { __esModule: true, default: cloudinary, cloudinary };
 });
+
+const mockCloudinary = jest.requireMock("@/config/cloudinary");
+const mockSearch = mockCloudinary.default.search;
 
 jest.mock("@/models/Contributor", () => {
   const actual = jest.requireActual("@/models/Contributor");
@@ -101,6 +106,9 @@ describe("Contributors API Integration Tests", () => {
     jest.clearAllMocks();
     mockUploadCalls.length = 0;
     mockDestroy.mockClear();
+    mockSearch.expression.mockReturnValue(mockSearch);
+    mockSearch.max_results.mockReturnValue(mockSearch);
+    mockSearch.execute.mockResolvedValue({ resources: [], total_count: 0 });
 
     (Contributor.find as jest.Mock).mockImplementation(() => ({
       collation: jest.fn().mockReturnThis(),
@@ -370,7 +378,13 @@ describe("Contributors API Integration Tests", () => {
       expect(Contributor.findByIdAndUpdate).not.toHaveBeenCalled();
     });
 
-    it("replaces picture with uploaded file and keeps old Cloudinary asset", async () => {
+    it("replaces picture with uploaded file, uses stored name when name omitted, and keeps old Cloudinary asset", async () => {
+      (Contributor.findById as jest.Mock).mockResolvedValue({
+        _id: validId,
+        name: "Alice",
+        profilePicUrl: "https://example.com/old-alice.png",
+      });
+
       const res = await request(app)
         .put(`/api/v1/contributors/${validId}`)
         .set("Authorization", "Bearer test-secret-token")
@@ -378,14 +392,88 @@ describe("Contributors API Integration Tests", () => {
 
       expect(res.status).toBe(200);
       expect(mockUploadCalls.length).toBe(1);
+      expect(mockUploadCalls[0].folder).toBe("portfolio/contributors/alice");
+      expect(mockUploadCalls[0].public_id).toBe("alice_1");
       expect(mockDestroy).not.toHaveBeenCalled();
       expect(Contributor.findByIdAndUpdate).toHaveBeenCalledWith(
         validId,
         expect.objectContaining({
-          profilePicUrl: expect.stringContaining("portfolio/contributors/"),
+          profilePicUrl: expect.stringContaining("portfolio/contributors/alice/alice_1"),
         }),
         expect.anything()
       );
+    });
+
+    it("PUT without a name for two contributors gives two distinct ids", async () => {
+      const id1 = "60c72b2f9b1d8b2bad000001";
+      const id2 = "60c72b2f9b1d8b2bad000002";
+
+      (Contributor.findById as jest.Mock).mockImplementation((id) => {
+        if (id === id1) return Promise.resolve({ _id: id1, name: "Alice" });
+        if (id === id2) return Promise.resolve({ _id: id2, name: "Bob" });
+        return Promise.resolve(null);
+      });
+
+      await request(app)
+        .put(`/api/v1/contributors/${id1}`)
+        .set("Authorization", "Bearer test-secret-token")
+        .attach("profilePicUrl", Buffer.from("pic1"), "pic1.png");
+
+      await request(app)
+        .put(`/api/v1/contributors/${id2}`)
+        .set("Authorization", "Bearer test-secret-token")
+        .attach("profilePicUrl", Buffer.from("pic2"), "pic2.png");
+
+      expect(mockUploadCalls.length).toBe(2);
+      expect(mockUploadCalls[0].folder).toBe("portfolio/contributors/alice");
+      expect(mockUploadCalls[0].public_id).toBe("alice_1");
+      expect(mockUploadCalls[1].folder).toBe("portfolio/contributors/bob");
+      expect(mockUploadCalls[1].public_id).toBe("bob_1");
+      expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
+    });
+
+    it("colliding slugs ('Ada.Lovelace' and 'Ada Lovelace') give distinct ids", async () => {
+      const mockCloudinary = jest.requireMock("@/config/cloudinary") as {
+        default: { search: { execute: jest.Mock } };
+      };
+      // When first upload happens, search is empty -> ada-lovelace_1
+      mockCloudinary.default.search.execute.mockResolvedValueOnce({
+        resources: [],
+        total_count: 0,
+      });
+
+      const res1 = await request(app)
+        .post("/api/v1/contributors")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("name", "Ada.Lovelace")
+        .attach("profilePicUrl", Buffer.from("ada1"), "ada1.png");
+
+      expect(res1.status).toBe(201);
+      expect(mockUploadCalls[0].folder).toBe("portfolio/contributors/ada-lovelace");
+      expect(mockUploadCalls[0].public_id).toBe("ada-lovelace_1");
+
+      // When second upload happens for colliding slug, search returns existing ada-lovelace_1 -> ada-lovelace_2
+      mockCloudinary.default.search.execute.mockResolvedValueOnce({
+        resources: [
+          {
+            public_id: "portfolio/contributors/ada-lovelace/ada-lovelace_1",
+            folder: "portfolio/contributors/ada-lovelace",
+            resource_type: "image",
+          },
+        ],
+        total_count: 1,
+      });
+
+      const res2 = await request(app)
+        .post("/api/v1/contributors")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("name", "Ada Lovelace")
+        .attach("profilePicUrl", Buffer.from("ada2"), "ada2.png");
+
+      expect(res2.status).toBe(201);
+      expect(mockUploadCalls[1].folder).toBe("portfolio/contributors/ada-lovelace");
+      expect(mockUploadCalls[1].public_id).toBe("ada-lovelace_2");
+      expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
     });
 
     it("returns 404 for unknown contributor id", async () => {
@@ -427,7 +515,7 @@ describe("Contributors API Integration Tests", () => {
 
       expect(res.status).toBe(409);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/referenced by 1 project\(s\) and 0 version\(s\)/i);
+      expect(res.body.message).toMatch(/referenced by 1 project\(s\) and 0 project version\(s\)/i);
       expect(Contributor.findByIdAndDelete).not.toHaveBeenCalled();
     });
 
@@ -451,7 +539,7 @@ describe("Contributors API Integration Tests", () => {
         .set("Authorization", "Bearer test-secret-token");
 
       expect(res.status).toBe(409);
-      expect(res.body.message).toMatch(/referenced by 0 project\(s\) and 1 version\(s\)/i);
+      expect(res.body.message).toMatch(/referenced by 0 project\(s\) and 1 project version\(s\)/i);
       expect(Contributor.findByIdAndDelete).not.toHaveBeenCalled();
     });
 

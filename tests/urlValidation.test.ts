@@ -666,6 +666,20 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
         }
       );
 
+      it.each(INVALID_URL_PAYLOADS)(
+        "rejects invalid threeDModel.fileUrl on version update: '%s' with 400",
+        async (badUrl) => {
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProjDoc);
+          const res = await request(app)
+            .put(`/api/v1/projects/cool-project/versions/${validVerId}`)
+            .set("Authorization", "Bearer test-secret-token")
+            .send({ threeDModel: { fileUrl: badUrl } });
+
+          expect(res.status).toBe(400);
+          expect(res.body.message).toMatch(/Version threeDFileUrl.*http.*https/i);
+        }
+      );
+
       it("clears demoUrl, image, videoDemo, threeDFileUrl when empty string is sent", async () => {
         (Project.findOne as jest.Mock).mockResolvedValue(mockProjDoc);
 

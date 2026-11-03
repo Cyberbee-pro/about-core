@@ -59,7 +59,7 @@ Protected requests accept either `Authorization: Bearer <ADMIN_SECRET>` or
 - Media is accepted in memory via Multer fields `image`, `videoDemo`, `threeDModel`,
   `logoUrl`, `iconUrl`, `mediaUrls`, `certificateUrls`, `pfp`/`pfpUrl`/`image`, and `resume`/`resumeFile`/`resumePdf`/`pdf`,
   then streamed to Cloudinary as image, video, raw, and auto assets.
-- Upload folders and directory hierarchy are formally specified in [`cloudinary.md`](../cloudinary.md):
+- Upload folders and directory hierarchy are formally specified in [`cloudinary.md`](./cloudinary.md):
   - Projects: `portfolio/projects/<slug>/{images,videos,models}`; version subfolders: `portfolio/projects/<slug>/<versionTag>/{images,videos,models}`; fallback: `portfolio/projects/misc/{images,videos,models}`.
   - Skills: `portfolio/skills/{skill_name}/{skill_name}`.
   - Certificates: `portfolio/certificate/{org_title_year}`.
@@ -95,7 +95,7 @@ Protected requests accept either `Authorization: Bearer <ADMIN_SECRET>` or
 
 - `npm run dev` — start the development server with `ts-node-dev -r tsconfig-paths/register`.
 - `npm run build` — type-check and compile to `dist/` with `tsc-alias` resolving `@/` path aliases.
-- `npm test` — run Jest serially. **All 10 test suites and 261 tests pass**.
+- `npm test` — run Jest serially. **All test suites pass**.
 - `npm run test:coverage` — collect coverage.
 
 Required environment variables are documented in `.env.example`:
@@ -108,5 +108,5 @@ The complete Headless CMS API including Projects (with dedicated admin listing `
 Experiences (with single position append `POST /api/v1/experiences/:organization/positions`),
 Site Config (with avatar rollback, history, and Cloudinary PDF resume uploads), Request Logging, and Media Uploads is implemented,
 typed with strict TypeScript, fully refactored with `@/*` path aliases, production-compiled with `tsc-alias`,
-and sanitized against regex injection. All 10 test suites (261 tests) pass.
+and sanitized against regex injection. All test suites pass (`npm test`).
 Evidence reports and TDD artifacts are preserved in `.agents/tdd/`.

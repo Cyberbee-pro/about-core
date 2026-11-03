@@ -1,7 +1,7 @@
 # about-core Working Structure
 
 ## Repository Overview
-`about-core` is a serverless-ready Express 4 + TypeScript Headless CMS REST API for the [shibraj.dev](https://shibraj.dev) portfolio (powering both a Next.js web client and a native Kotlin Android client). It features MongoDB Atlas persistence via Mongoose, Cloudinary multi-format media streaming (images, videos, 3D GLB models, PDF resumes), custom MongoDB request telemetry logging (`LogEntry`), and full integration test coverage (14 test suites and 384 tests passing).
+`about-core` is a serverless-ready Express 4 + TypeScript Headless CMS REST API for the [shibraj.dev](https://shibraj.dev) portfolio (powering both a Next.js web client and a native Kotlin Android client). It features MongoDB Atlas persistence via Mongoose, Cloudinary multi-format media streaming (images, videos, 3D GLB models, PDF resumes), custom MongoDB request telemetry logging (`LogEntry`), and full integration test coverage across all test suites (`npm test`).
 
 ## Directory Structure
 
@@ -178,24 +178,25 @@
 
 ## Test Suite Overview
 
-- **Status**: **14 test suites, 384 tests passing** (Jest serially executed with `--runInBand`).
+- **Status**: **All test suites passing** (Jest serially executed with `--runInBand` via `npm test`).
 - **In-Memory Testing**: Uses `mongodb-memory-server` for zero-dependency local and CI test runs.
 - **Path Aliases**: `@/*` alias mapping verified across test and source files via `tsconfig-paths` and `jest.config.ts`.
 - **Test File Map**:
-  1. `tests/cors.test.ts` (9 tests) — Origin parsing, credentials, preflight OPTIONS, allowed/blocked behavior.
-  2. `tests/api.test.ts` (104 tests) — Health checks, MAGI static dashboard, auth middleware, public/admin projects, project versions (POST/PUT/DELETE, changelog parsing, folder sanitization, rollback resource types), site config avatar and resume PDF flows, admin request logs.
-  3. `tests/models.test.ts` (84 tests) — Schema constraints, defaults, and validations for all 8 Mongoose models (including resumeUrl on SiteConfig, gallery subdocuments, version metadata, and Contributor model).
-  4. `tests/uploadNaming.test.ts` (37 tests) — Cloudinary sequential ID derivation, resume PDF incremental naming, Search API queries, request-level caching, timestamp fallback, and sanitizeVersionTag folder rules.
-  5. `tests/db.test.ts` (4 tests) — MongoDB connection pooling, cached readyState reuse, disconnection handling.
-  6. `tests/stringUtils.test.ts` (3 tests) — Regex escaping for safe dynamic queries against ReDoS.
-  7. `tests/skills-tests.test.ts` (11 tests) — Skill CRUD, weight/name sorting, duplicate name rejection.
-  8. `tests/certificates-tests.test.ts` (14 tests) — Certificate CRUD, weight/title sorting, duplicate title rejection.
-  9. `tests/experiences-tests.test.ts` (27 tests) — Experience CRUD, multi-position append, active role switching, media uploads.
-  10. `tests/achievements-tests.test.ts` (15 tests) — Achievement CRUD, weight/title sorting, duplicate title rejection.
-  11. `tests/gallery.test.ts` (63 tests) — Comprehensive gallery tests for project and version galleries: auth enforcement, multipart aligned metadata, URL-based adds, tag normalization and length checks, caption limits, 10-file request limit, 30-item project/version caps, rollback destruction on failure, atomic updates, array reordering, deletion asset retention, PUT protection, and response guarantee helper.
-  12. `tests/contributors.test.ts` (27 tests) — Contributor CRUD, case-insensitive sort, Cloudinary picture streaming and rollback, duplicate name checks, deletion protection when referenced by project or version.
-  13. `tests/versionMetadata.test.ts` (16 tests) — Project version metadata fields (status, startDate, endDate, deployedLink, githubLink, contributors, socialLinks), defaults, PUT partial updates and clears, date validation, URL validation, and join subdocument reference handling.
-  14. `tests/clearLegacyContributors.test.ts` (2 tests) — Verification of dry-run and apply modes for clearing legacy embedded contributors.
+  1. `tests/cors.test.ts` — Origin parsing, credentials, preflight OPTIONS, allowed/blocked behavior, wildcard handling.
+  2. `tests/api.test.ts` — Health checks, MAGI static dashboard, auth middleware, public/admin projects, project versions (POST/PUT/DELETE, duplicate versionTag rejection, changelog parsing, folder sanitization, systemic rollback on failure), site config avatar and resume PDF flows, admin request logs.
+  3. `tests/models.test.ts` — Schema constraints, defaults, and validations for all 8 Mongoose models (including resumeUrl on SiteConfig, gallery subdocuments, version metadata, and Contributor model).
+  4. `tests/uploadNaming.test.ts` — Cloudinary sequential ID derivation, resume PDF incremental naming, Search API queries, request-level caching, timestamp fallback, and sanitizeVersionTag folder rules.
+  5. `tests/db.test.ts` — MongoDB connection pooling, cached readyState reuse, disconnection handling.
+  6. `tests/stringUtils.test.ts` — Regex escaping for safe dynamic queries against ReDoS, URL validation helper.
+  7. `tests/skills-tests.test.ts` — Skill CRUD, weight/name sorting, duplicate name rejection, sequential upload naming without overwrites.
+  8. `tests/certificates-tests.test.ts` — Certificate CRUD, weight/title sorting, duplicate title rejection.
+  9. `tests/experiences-tests.test.ts` — Experience CRUD, multi-position append, active role switching, media uploads.
+  10. `tests/achievements-tests.test.ts` — Achievement CRUD, weight/title sorting, duplicate title rejection.
+  11. `tests/gallery.test.ts` — Comprehensive gallery tests for project and version galleries: auth enforcement, multipart aligned metadata, URL-based adds, tag normalization and length checks, caption limits, 10-file request limit, 30-item project/version caps, rollback destruction on failure, atomic updates, array reordering, deletion asset retention, PUT protection, and response guarantee helper.
+  12. `tests/contributors.test.ts` — Contributor CRUD, case-insensitive sort, Cloudinary picture streaming and rollback, sequential naming without overwrites, duplicate name checks, deletion protection when referenced by project or version.
+  13. `tests/versionMetadata.test.ts` — Project version metadata fields (status, startDate, endDate, deployedLink, githubLink, contributors, socialLinks), defaults, PUT partial updates and clears, date validation, URL validation, and join subdocument reference handling.
+  14. `tests/clearLegacyContributors.test.ts` — Verification of dry-run and apply modes for clearing legacy embedded contributors while preserving valid references.
+  15. `tests/urlValidation.test.ts` — Comprehensive URL scheme validation across all project, version, contributor, skill, certificate, experience, and config endpoints.
 
 ---
 
@@ -214,7 +215,7 @@
 
 ## Media Upload Architecture
 
-All media uploads are buffered in memory via Multer and streamed to Cloudinary using sequential naming and request-level memoization. Complete hierarchy, rules, and diagrams are documented in [`cloudinary.md`](../cloudinary.md).
+All media uploads are buffered in memory via Multer and streamed to Cloudinary using sequential naming and request-level memoization. Complete hierarchy, rules, and diagrams are documented in [`cloudinary.md`](./cloudinary.md).
 
 ---
 
@@ -227,7 +228,7 @@ npx tsc --noEmit
 # Compile to dist/ with path alias resolution
 npm run build
 
-# Run all 14 test suites (384 tests)
+# Run full test suite
 npm test
 
 # Run tests with code coverage analysis

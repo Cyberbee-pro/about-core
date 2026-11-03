@@ -1407,6 +1407,19 @@ export const addProjectVersion = async (
       return;
     }
 
+    const trimmedTag = versionTag.trim();
+    const isDuplicate = project.versions.some(
+      (v) => v.versionTag.trim().toLowerCase() === trimmedTag.toLowerCase()
+    );
+    if (isDuplicate) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(409).json({
+        success: false,
+        message: `Version tag '${trimmedTag}' already exists for this project`,
+      });
+      return;
+    }
+
     const shouldSetLatest = Boolean(isLatest ?? false);
 
     if (shouldSetLatest) {
@@ -1697,8 +1710,18 @@ export const updateProjectVersion = async (
     );
     const uploaded3DUrl = threeDModel?.fileUrl;
 
-    if (uploaded3DUrl) {
-      version.threeDFileUrl = uploaded3DUrl;
+    if (uploaded3DUrl !== undefined) {
+      if (typeof uploaded3DUrl === "string" && uploaded3DUrl.trim() === "") {
+        version.threeDFileUrl = undefined;
+      } else {
+        const link = typeof uploaded3DUrl === "string" ? uploaded3DUrl.trim() : "";
+        if (!isValidHttpUrl(link)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "Version threeDFileUrl must be a valid http or https URL" });
+          return;
+        }
+        version.threeDFileUrl = link;
+      }
     } else if (body.threeDFileUrl !== undefined) {
       if (typeof body.threeDFileUrl === "string" && body.threeDFileUrl.trim() === "") {
         version.threeDFileUrl = undefined;

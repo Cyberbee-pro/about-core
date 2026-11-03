@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { Skill, SkillType, SKILL_TYPES } from "../models/Skill";
 import { escapeRegex, isValidHttpUrl } from "../utils/stringUtils";
+import { cleanupUploadedVersionMedia } from "../middlewares/uploadMiddleware";
 
 const ALLOWED_SKILL_TYPES: readonly SkillType[] =
   Array.isArray(SKILL_TYPES) && SKILL_TYPES.length > 0
@@ -63,6 +64,7 @@ export const createSkill = async (
   try {
     const trimmedName = (req.body.name || "").trim();
     if (!trimmedName) {
+      await cleanupUploadedVersionMedia(req);
       res.status(400).json({
         success: false,
         message: "Skill name is required",
@@ -74,6 +76,7 @@ export const createSkill = async (
     if (req.body.type !== undefined && req.body.type !== null) {
       const sanitizedType = String(req.body.type).trim().toLowerCase();
       if (!ALLOWED_SKILL_TYPES.includes(sanitizedType as SkillType)) {
+        await cleanupUploadedVersionMedia(req);
         res.status(400).json({
           success: false,
           message: `Invalid skill type: must be one of ${ALLOWED_SKILL_TYPES.join(", ")}`,
@@ -88,6 +91,7 @@ export const createSkill = async (
     });
 
     if (existingSkill) {
+      await cleanupUploadedVersionMedia(req);
       res.status(409).json({
         success: false,
         message: "Skill name must be unique (duplicate)",
@@ -103,6 +107,7 @@ export const createSkill = async (
     const logoUrl = typeof req.body.logoUrl === "string" ? req.body.logoUrl.trim() : "";
     if (logoUrl !== "") {
       if (!isValidHttpUrl(logoUrl)) {
+        await cleanupUploadedVersionMedia(req);
         res.status(400).json({
           success: false,
           message: "logoUrl must be a valid http or https URL",
@@ -124,6 +129,7 @@ export const createSkill = async (
       data: skill,
     });
   } catch (error) {
+    await cleanupUploadedVersionMedia(req);
     next(error);
   }
 };
