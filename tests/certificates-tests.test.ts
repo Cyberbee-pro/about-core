@@ -140,7 +140,7 @@ describe("Certificates API Integration Tests", () => {
         title: "Test Cert",
         description: "Cert Description",
         link: "https://example.com",
-        mediaUrl: "portfolio/certificate/cert.jpg",
+        mediaUrl: "https://example.com/certificate/cert.jpg",
         organization: "Cert Org",
         weight: 0,
       });
@@ -188,7 +188,7 @@ describe("Certificates API Integration Tests", () => {
         title: "Test Cert",
         description: "Cert Description",
         link: "https://example.com",
-        mediaUrl: "portfolio/certificate/cert.jpg",
+        mediaUrl: "https://example.com/certificate/cert.jpg",
         organization: "Cert Org",
         weight: 0,
       });

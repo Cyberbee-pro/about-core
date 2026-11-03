@@ -1,7 +1,7 @@
 # about-core Working Structure
 
 ## Repository Overview
-`about-core` is a serverless-ready Express 4 + TypeScript Headless CMS REST API for the [shibraj.dev](https://shibraj.dev) portfolio (powering both a Next.js web client and a native Kotlin Android client). It features MongoDB Atlas persistence via Mongoose, Cloudinary multi-format media streaming (images, videos, 3D GLB models, PDF resumes), custom MongoDB request telemetry logging (`LogEntry`), and full integration test coverage (11 test suites and 328 tests passing).
+`about-core` is a serverless-ready Express 4 + TypeScript Headless CMS REST API for the [shibraj.dev](https://shibraj.dev) portfolio (powering both a Next.js web client and a native Kotlin Android client). It features MongoDB Atlas persistence via Mongoose, Cloudinary multi-format media streaming (images, videos, 3D GLB models, PDF resumes), custom MongoDB request telemetry logging (`LogEntry`), and full integration test coverage (14 test suites and 384 tests passing).
 
 ## Directory Structure
 
@@ -27,22 +27,26 @@
 │   ├── haz.svg                              # Hazard warning icon
 │   ├── HEX_L.svg                            # Hexagonal dashboard decorative asset
 │   └── HEX_R.svg                            # Hexagonal dashboard decorative asset
+├── scripts/                                 # Maintenance & migration scripts
+│   └── clear-legacy-contributors.ts         # Idempotent cleanup script for legacy embedded contributors
 ├── src/                                     # Application TypeScript source code
 │   ├── server.ts                            # App initialization, CORS, static mounts, routes & error handling
 │   ├── config/                              # Infrastructure connections
 │   │   ├── db.ts                            # MongoDB connection management & pooling (cached connection)
 │   │   └── cloudinary.ts                    # Cloudinary v2 SDK configuration (enforced HTTPS)
 │   ├── models/                              # Mongoose schemas & TypeScript interfaces
-│   │   ├── Project.ts                       # Core project schema (slug, tags, skills refs, 3D model, versions, gallery)
+│   │   ├── Project.ts                       # Core project schema (slug, tags, skills refs, 3D model, versions, gallery, contributors)
+│   │   ├── Contributor.ts                   # Shared contributors collection (name, profilePicUrl, profileLink)
 │   │   ├── SiteConfig.ts                    # Global configuration (name, pfp, pfpHistory, jobTitles, resume, bio)
 │   │   ├── Skill.ts                         # Tech stack skills (name, type, logoUrl, featured, weight)
 │   │   ├── Certificate.ts                   # Accreditations & certificates (title, organization, mediaUrl, weight)
 │   │   ├── Achievement.ts                   # Milestones & honors (title, date, detail, weight)
 │   │   ├── Experience.ts                    # Work history (organization, tag, type, iconUrl, skills, positions[])
 │   │   ├── LogEntry.ts                      # Centralized MongoDB request log telemetry
-│   │   └── index.ts                         # Barrel export for all 7 Mongoose models
+│   │   └── index.ts                         # Barrel export for all 8 Mongoose models
 │   ├── controllers/                         # Route handler controllers (business logic & validation)
-│   │   ├── projectController.ts             # Project CRUD, filtering, version releases
+│   │   ├── projectController.ts             # Project CRUD, filtering, version releases, gallery operations
+│   │   ├── contributorController.ts         # Contributor CRUD with unique case-insensitive name & reference tracking
 │   │   ├── skillController.ts               # Skill CRUD with unique case-insensitive name validation
 │   │   ├── certificateController.ts         # Certificate CRUD with unique title validation
 │   │   ├── achievementController.ts         # Achievement CRUD with unique title validation
@@ -50,8 +54,9 @@
 │   │   ├── configController.ts              # Site config read, creation, avatar uploads & history rollback
 │   │   └── logController.ts                 # Admin telemetry queries (date, month, year, level, pagination)
 │   ├── routes/                              # Express route modules
-│   │   ├── projectRoutes.ts                 # /api/v1/projects (public reads, admin mutations)
+│   │   ├── projectRoutes.ts                 # /api/v1/projects (public reads, admin mutations, versions, gallery)
 │   │   ├── adminProjectRoutes.ts            # /api/v1/admin/projects (admin protected full project listing)
+│   │   ├── contributorRoutes.ts             # /api/v1/contributors (public reads, admin mutations)
 │   │   ├── skillRoutes.ts                   # /api/v1/skills (public reads, admin mutations)
 │   │   ├── certificateRoutes.ts             # /api/v1/certificates (public reads, admin mutations)
 │   │   ├── achievementRoutes.ts             # /api/v1/achievements (public reads, admin mutations)
@@ -173,13 +178,13 @@
 
 ## Test Suite Overview
 
-- **Status**: **11 test suites, 328 tests passing** (Jest serially executed with `--runInBand`).
+- **Status**: **14 test suites, 384 tests passing** (Jest serially executed with `--runInBand`).
 - **In-Memory Testing**: Uses `mongodb-memory-server` for zero-dependency local and CI test runs.
 - **Path Aliases**: `@/*` alias mapping verified across test and source files via `tsconfig-paths` and `jest.config.ts`.
 - **Test File Map**:
   1. `tests/cors.test.ts` (9 tests) — Origin parsing, credentials, preflight OPTIONS, allowed/blocked behavior.
   2. `tests/api.test.ts` (104 tests) — Health checks, MAGI static dashboard, auth middleware, public/admin projects, project versions (POST/PUT/DELETE, changelog parsing, folder sanitization, rollback resource types), site config avatar and resume PDF flows, admin request logs.
-  3. `tests/models.test.ts` (73 tests) — Schema constraints, defaults, and validations for all 7 Mongoose models (including resumeUrl on SiteConfig and gallery subdocuments on Project and Version).
+  3. `tests/models.test.ts` (84 tests) — Schema constraints, defaults, and validations for all 8 Mongoose models (including resumeUrl on SiteConfig, gallery subdocuments, version metadata, and Contributor model).
   4. `tests/uploadNaming.test.ts` (37 tests) — Cloudinary sequential ID derivation, resume PDF incremental naming, Search API queries, request-level caching, timestamp fallback, and sanitizeVersionTag folder rules.
   5. `tests/db.test.ts` (4 tests) — MongoDB connection pooling, cached readyState reuse, disconnection handling.
   6. `tests/stringUtils.test.ts` (3 tests) — Regex escaping for safe dynamic queries against ReDoS.
@@ -188,6 +193,9 @@
   9. `tests/experiences-tests.test.ts` (27 tests) — Experience CRUD, multi-position append, active role switching, media uploads.
   10. `tests/achievements-tests.test.ts` (15 tests) — Achievement CRUD, weight/title sorting, duplicate title rejection.
   11. `tests/gallery.test.ts` (63 tests) — Comprehensive gallery tests for project and version galleries: auth enforcement, multipart aligned metadata, URL-based adds, tag normalization and length checks, caption limits, 10-file request limit, 30-item project/version caps, rollback destruction on failure, atomic updates, array reordering, deletion asset retention, PUT protection, and response guarantee helper.
+  12. `tests/contributors.test.ts` (27 tests) — Contributor CRUD, case-insensitive sort, Cloudinary picture streaming and rollback, duplicate name checks, deletion protection when referenced by project or version.
+  13. `tests/versionMetadata.test.ts` (16 tests) — Project version metadata fields (status, startDate, endDate, deployedLink, githubLink, contributors, socialLinks), defaults, PUT partial updates and clears, date validation, URL validation, and join subdocument reference handling.
+  14. `tests/clearLegacyContributors.test.ts` (2 tests) — Verification of dry-run and apply modes for clearing legacy embedded contributors.
 
 ---
 
@@ -198,7 +206,7 @@
 3. **`express.static(path.join(process.cwd(), "public"))`**: Serves the Evangelion MAGI system dashboard directly from disk (mirrors Vercel Edge CDN).
 4. **`dbLoggerMiddleware`**: Non-blocking response hook that intercepts `response.finish` and asynchronously creates a `LogEntry` in MongoDB with latency, IP, method, status code, and sanitized metadata.
 5. **Health Routes**: `/health` (basic JSON) and `/api/v1/health` (detailed server and DB status).
-6. **Feature Routes**: Mounted at `/api/v1/{projects, skills, certificates, achievements, experiences, config, admin/logs, admin/projects}`.
+6. **Feature Routes**: Mounted at `/api/v1/{projects, contributors, skills, certificates, achievements, experiences, config, admin/logs, admin/projects}`.
 7. **`notFoundMiddleware`**: Centralized 404 handler returning structured JSON.
 8. **`errorMiddleware`**: Centralized error handler converting Mongoose `CastError` (400), `ValidationError` (400), MongoDB duplicate key code `11000` (409), CORS errors (403), Multer limits/errors (400), and unhandled exceptions (500).
 
@@ -219,7 +227,7 @@ npx tsc --noEmit
 # Compile to dist/ with path alias resolution
 npm run build
 
-# Run all 11 test suites (328 tests)
+# Run all 14 test suites (384 tests)
 npm test
 
 # Run tests with code coverage analysis

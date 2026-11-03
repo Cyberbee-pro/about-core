@@ -11,6 +11,7 @@ import { notFoundMiddleware, errorMiddleware } from "./middlewares/errorMiddlewa
 import { getHealth } from "./controllers/configController";
 import projectRoutes from "./routes/projectRoutes";
 import skillRoutes from "./routes/skillRoutes";
+import contributorRoutes from "./routes/contributorRoutes";
 import certificateRoutes from "./routes/certificateRoutes";
 import achievementRoutes from "./routes/achievementRoutes";
 import experienceRoutes from "./routes/experienceRoutes";
@@ -90,6 +91,7 @@ app.get("/api/v1/health", getHealth);
 
 // Mount Feature Routes
 app.use("/api/v1/projects", projectRoutes);
+app.use("/api/v1/contributors", contributorRoutes);
 app.use("/api/v1/skills", skillRoutes);
 app.use("/api/v1/certificates", certificateRoutes);
 app.use("/api/v1/achievements", achievementRoutes);

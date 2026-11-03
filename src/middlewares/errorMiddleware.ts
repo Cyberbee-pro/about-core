@@ -43,6 +43,8 @@ export const errorMiddleware = async (
       statusCode = customErr.statusCode;
     } else if (customErr.name === "MulterError") {
       statusCode = 400;
+    } else if (typeof customErr.message === "string" && customErr.message.startsWith("Unsupported file type")) {
+      statusCode = 400;
     } else if (customErr.message === "Not allowed by CORS") {
       statusCode = 403;
     }

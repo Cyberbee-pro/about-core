@@ -5,3 +5,4 @@ export * from "./Skill";
 export * from "./Achievement";
 export * from "./Experience";
 export * from "./Certificate";
+export * from "./Contributor";

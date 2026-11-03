@@ -50,6 +50,10 @@ portfolio/
 │   └── <skill-name>/                           # Hyphenated, URL-safe skill name (e.g., 'typescript', 'react-native')
 │       └── <skill-name>                        # Skill brand/tech icon (resource_type: image)
 │
+├── contributors/
+│   └── <contributor-name>/                     # Derived, lowercase hyphenated name (e.g., 'ada-lovelace')
+│       └── <contributor-name>                  # Contributor profile picture (resource_type: image)
+│
 ├── certificate/                                # Flat certificate storage (note singular directory name)
 │   └── <org>_<title>_<year>                    # Formatted ID (e.g., 'google_cloud_certified_2025') (resource_type: image)
 │
@@ -227,6 +231,13 @@ To prevent accidental asset overwrites without generating long random UUIDs, `ab
   - On successful requests, nothing is destroyed.
   - Replacing an existing item's image (`PUT .../gallery/:imageId`) updates the URL in MongoDB but retains the previous Cloudinary asset (assets are kept, consistent with project deletion).
   - Deleting a gallery item (`DELETE .../gallery/:imageId`) removes the item subdocument from MongoDB while retaining the Cloudinary asset.
+
+### 5.6 Contributor Profile Pictures
+- **Path & Public ID**: `portfolio/contributors/<derived-name>/<derived-name>` where `<derived-name>` is lowercase alphanumeric with hyphens (e.g., `ada-lovelace`).
+- **File Validation**: Images only (JPEG, PNG, WebP, GIF, SVG), 100 MB max file size. Non-image files return 400 Bad Request.
+- **Rollback on Failure**: If the request fails before the contributor document is saved to MongoDB, newly uploaded Cloudinary assets are rolled back via `cleanupUploadedVersionMedia(req)`.
+- **Updates & Asset Retention**: Updating a contributor's picture (`PUT /api/v1/contributors/:id`) replaces the URL on the document and retains the old Cloudinary asset (consistent with project edits). Deleting a contributor retains Cloudinary assets.
+
 
 
 ---

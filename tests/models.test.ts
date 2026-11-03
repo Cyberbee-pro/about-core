@@ -5,6 +5,7 @@ import { Experience } from "@/models/Experience";
 import { Certificate } from "@/models/Certificate";
 import { Project } from "@/models/Project";
 import { SiteConfig, migrateSiteConfigResumeUrl } from "@/models/SiteConfig";
+import { Contributor } from "@/models/Contributor";
 
 /**
  * These tests validate Mongoose schema definitions using `document.validate()`
@@ -392,6 +393,71 @@ describe("Certificate Model", () => {
   });
 });
 
+// ─── Contributor Model ────────────────────────────────────────────────────────
+
+describe("Contributor Model", () => {
+  const validContributorData = {
+    name: "Ada Lovelace",
+    profilePicUrl: "https://cdn.example.com/contributors/ada.png",
+    profileLink: "https://ada.dev",
+  };
+
+  it("validates a well-formed contributor document", () => {
+    const doc = new Contributor(validContributorData);
+    const error = doc.validateSync();
+    expect(error).toBeUndefined();
+  });
+
+  it("trims the name field", () => {
+    const doc = new Contributor({
+      ...validContributorData,
+      name: "   Ada Lovelace   ",
+    });
+    expect(doc.name).toBe("Ada Lovelace");
+  });
+
+  it("fails validation when name is missing", () => {
+    const { name: _n, ...noName } = validContributorData;
+    const doc = new Contributor(noName);
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.name).toBeDefined();
+  });
+
+  it("fails validation when profilePicUrl is missing", () => {
+    const { profilePicUrl: _p, ...noPic } = validContributorData;
+    const doc = new Contributor(noPic);
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.profilePicUrl).toBeDefined();
+  });
+
+  it("accepts valid optional profileLink", () => {
+    const doc = new Contributor({
+      name: "Ada Lovelace",
+      profilePicUrl: "https://cdn.example.com/ada.png",
+      profileLink: "https://ada.dev",
+    });
+    const error = doc.validateSync();
+    expect(error).toBeUndefined();
+    expect(doc.profileLink).toBe("https://ada.dev");
+  });
+
+  it("fails validation when profileLink is not a valid http/https URL", () => {
+    const doc = new Contributor({
+      ...validContributorData,
+      profileLink: "ftp://invalid-url.com",
+    });
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.profileLink).toBeDefined();
+  });
+
+  it("sets the correct model name", () => {
+    expect(Contributor.modelName).toBe("Contributor");
+  });
+});
+
 // ─── Project Model (skills addition) ────────────────────────────────────────
 
 describe("Project Model - Skills Reference", () => {
@@ -512,6 +578,79 @@ describe("Project Model - Gallery", () => {
     const err = project.validateSync();
     expect(err).toBeDefined();
     expect(err!.errors["gallery.0.url"]).toBeDefined();
+  });
+});
+
+// ─── Project Model - Version Metadata & Contributors Join ───────────────────
+
+describe("Project Model - Version Metadata & Contributors Join", () => {
+  it("accepts all 7 new metadata fields on version subdocuments", () => {
+    const contrId = new mongoose.Types.ObjectId();
+    const project = new Project({
+      title: "Metadata Project",
+      slug: "metadata-project",
+      category: "web",
+      description: "A project with metadata.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [
+        {
+          versionTag: "v1.0.0",
+          status: "work_in_progress",
+          startDate: new Date("2024-01-01"),
+          endDate: new Date("2024-06-01"),
+          deployedLink: "https://app.dev",
+          githubLink: "https://github.com/app",
+          contributors: [{ contributor: contrId, role: "Architect" }],
+          socialLinks: [{ platform: "GitHub", url: "https://github.com/app" }],
+        },
+      ],
+    });
+
+    const error = project.validateSync();
+    expect(error).toBeUndefined();
+    const v = project.versions[0];
+    expect(v.status).toBe("work_in_progress");
+    expect(v.deployedLink).toBe("https://app.dev");
+    expect(v.githubLink).toBe("https://github.com/app");
+    expect(v.contributors?.[0].contributor?.toString()).toBe(contrId.toString());
+    expect(v.contributors?.[0].role).toBe("Architect");
+  });
+
+  it("does not inject schema defaults for version status or startDate", () => {
+    const project = new Project({
+      title: "No Default Project",
+      slug: "no-default-project",
+      category: "web",
+      description: "A project without version defaults.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [{ versionTag: "v0.9.0" }],
+    });
+
+    const v = project.versions[0];
+    expect(v.status).toBeUndefined();
+    expect(v.startDate).toBeUndefined();
+    expect(v.endDate).toBeUndefined();
+    expect(v.deployedLink).toBeUndefined();
+    expect(v.githubLink).toBeUndefined();
+  });
+
+  it("disables _id on contributor join subdocuments", () => {
+    const contrId = new mongoose.Types.ObjectId();
+    const project = new Project({
+      title: "Join Project",
+      slug: "join-project",
+      category: "web",
+      description: "A project testing join schema.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      contributors: [{ contributor: contrId, role: "Tester" }],
+    });
+
+    const raw = project.toObject() as unknown as { contributors: Array<Record<string, unknown>> };
+    expect(raw.contributors[0]._id).toBeUndefined();
+    expect(raw.contributors[0].role).toBe("Tester");
   });
 });
 
@@ -763,5 +902,10 @@ describe("Models barrel export (src/models/index.ts)", () => {
   it("exports LogEntry model", () => {
     expect(barrel.LogEntry).toBeDefined();
     expect(barrel.LogEntry.modelName).toBe("LogEntry");
+  });
+
+  it("exports Contributor model", () => {
+    expect(barrel.Contributor).toBeDefined();
+    expect(barrel.Contributor.modelName).toBe("Contributor");
   });
 });

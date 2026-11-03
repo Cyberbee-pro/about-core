@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { Skill, SkillType, SKILL_TYPES } from "../models/Skill";
-import { escapeRegex } from "../utils/stringUtils";
+import { escapeRegex, isValidHttpUrl } from "../utils/stringUtils";
 
 const ALLOWED_SKILL_TYPES: readonly SkillType[] =
   Array.isArray(SKILL_TYPES) && SKILL_TYPES.length > 0
@@ -100,10 +100,21 @@ export const createSkill = async (
     const weight =
       req.body.weight !== undefined ? Number(req.body.weight) || 0 : 0;
 
+    const logoUrl = typeof req.body.logoUrl === "string" ? req.body.logoUrl.trim() : "";
+    if (logoUrl !== "") {
+      if (!isValidHttpUrl(logoUrl)) {
+        res.status(400).json({
+          success: false,
+          message: "logoUrl must be a valid http or https URL",
+        });
+        return;
+      }
+    }
+
     const skill = await Skill.create({
       name: trimmedName,
       type,
-      logoUrl: req.body.logoUrl || "",
+      logoUrl,
       featured,
       weight,
     });
@@ -154,7 +165,19 @@ export const updateSkill = async (
     }
 
     if (req.body.logoUrl !== undefined) {
-      updateData.logoUrl = req.body.logoUrl;
+      const logoUrl = typeof req.body.logoUrl === "string" ? req.body.logoUrl.trim() : "";
+      if (logoUrl !== "") {
+        if (!isValidHttpUrl(logoUrl)) {
+          res.status(400).json({
+            success: false,
+            message: "logoUrl must be a valid http or https URL",
+          });
+          return;
+        }
+        updateData.logoUrl = logoUrl;
+      } else {
+        updateData.logoUrl = "";
+      }
     }
     if (req.body.featured !== undefined) {
       updateData.featured =

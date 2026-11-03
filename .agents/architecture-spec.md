@@ -11,7 +11,11 @@
 import { Schema, model, Document, Types } from "mongoose";
 
 export interface ISocialLink { platform: string; url: string; }
-export interface IContributor { name: string; profilePicUrl: string; profileLink?: string; }
+export interface IProjectContributor {
+  contributor?: Types.ObjectId;
+  role?: string;
+}
+export type IContributor = IProjectContributor;
 export interface IGalleryImage {
   _id?: Types.ObjectId;
   url: string;
@@ -29,6 +33,13 @@ export interface IProjectVersion {
   threeDFileUrl?: string;
   isLatest: boolean;
   gallery: IGalleryImage[];
+  status?: ProjectStatus;
+  startDate?: Date;
+  endDate?: Date;
+  deployedLink?: string;
+  githubLink?: string;
+  contributors?: IProjectContributor[];
+  socialLinks?: ISocialLink[];
 }
 
 export type ProjectStatus = "invisible" | "planning" | "work_in_progress" | "delay_hold" | "active";
@@ -43,7 +54,7 @@ export interface IProject extends Document {
   skills: Types.ObjectId[];
   startDate: Date;
   endDate?: Date;
-  contributors: IContributor[];
+  contributors: IProjectContributor[];
   status: ProjectStatus;
   image: string;
   videoDemo?: string;
@@ -61,11 +72,13 @@ export interface IProject extends Document {
   updatedAt: Date;
 }
 
-const ContributorSchema = new Schema<IContributor>({
-  name: { type: String, required: true },
-  profilePicUrl: { type: String, required: true },
-  profileLink: { type: String },
-});
+const ProjectContributorSchema = new Schema<IProjectContributor>(
+  {
+    contributor: { type: Schema.Types.ObjectId, ref: "Contributor" },
+    role: { type: String, trim: true },
+  },
+  { _id: false, strict: false }
+);
 
 const GalleryImageSchema = new Schema<IGalleryImage>({
   url: { type: String, required: true },
@@ -73,47 +86,72 @@ const GalleryImageSchema = new Schema<IGalleryImage>({
   caption: { type: String, default: "" },
 });
 
-const VersionSchema = new Schema<IProjectVersion>({
-  versionTag: { type: String, required: true },
-  releaseDate: { type: Date, default: Date.now },
-  changelog: [{ type: String }],
-  image: { type: String },
-  videoDemo: { type: String },
-  demoUrl: { type: String },
-  threeDFileUrl: { type: String },
-  isLatest: { type: Boolean, default: false },
-  gallery: { type: [GalleryImageSchema], default: [] },
-});
+const VersionSchema = new Schema<IProjectVersion>(
+  {
+    versionTag: { type: String, required: true },
+    releaseDate: { type: Date, default: Date.now },
+    changelog: [{ type: String }],
+    image: { type: String },
+    videoDemo: { type: String },
+    demoUrl: { type: String },
+    threeDFileUrl: { type: String },
+    isLatest: { type: Boolean, default: false },
+    gallery: { type: [GalleryImageSchema], default: [] },
+    status: {
+      type: String,
+      enum: ["invisible", "planning", "work_in_progress", "delay_hold", "active"],
+      required: false,
+    },
+    startDate: { type: Date, required: false },
+    endDate: { type: Date, required: false },
+    deployedLink: { type: String, required: false },
+    githubLink: { type: String, required: false },
+    contributors: { type: [ProjectContributorSchema], default: undefined },
+    socialLinks: {
+      type: [
+        {
+          platform: { type: String, required: true },
+          url: { type: String, required: true },
+        },
+      ],
+      default: undefined,
+    },
+  },
+  { strict: false }
+);
 
-const ProjectSchema = new Schema<IProject>({
-  title: { type: String, required: true, trim: true },
-  slug: { type: String, required: true, unique: true, lowercase: true },
-  category: { type: String, required: true, lowercase: true, trim: true },
-  description: { type: String, required: true },
-  featured: { type: Boolean, default: false },
-  tags: [{ type: String, trim: true }],
-  skills: [{ type: Schema.Types.ObjectId, ref: "Skill" }],
-  startDate: { type: Date, required: true },
-  endDate: { type: Date },
-  contributors: [ContributorSchema],
-  status: {
-    type: String,
-    enum: ["invisible", "planning", "work_in_progress", "delay_hold", "active"],
-    default: "planning",
+const ProjectSchema = new Schema<IProject>(
+  {
+    title: { type: String, required: true, trim: true },
+    slug: { type: String, required: true, unique: true, lowercase: true },
+    category: { type: String, required: true, lowercase: true, trim: true },
+    description: { type: String, required: true },
+    featured: { type: Boolean, default: false },
+    tags: [{ type: String, trim: true }],
+    skills: [{ type: Schema.Types.ObjectId, ref: "Skill" }],
+    startDate: { type: Date, required: true },
+    endDate: { type: Date },
+    contributors: { type: [ProjectContributorSchema], default: [] },
+    status: {
+      type: String,
+      enum: ["invisible", "planning", "work_in_progress", "delay_hold", "active"],
+      default: "planning",
+    },
+    image: { type: String, required: true },
+    videoDemo: { type: String, default: null },
+    socialLinks: [{ platform: { type: String, required: true }, url: { type: String, required: true } }],
+    threeDModel: {
+      fileUrl: { type: String, default: null },
+      initialRotation: { type: [Number], default: [0, 0, 0] },
+      enableExplodedView: { type: Boolean, default: false },
+    },
+    deployedLink: { type: String, default: null },
+    githubLink: { type: String, default: null },
+    versions: [VersionSchema],
+    gallery: { type: [GalleryImageSchema], default: [] },
   },
-  image: { type: String, required: true },
-  videoDemo: { type: String, default: null },
-  socialLinks: [{ platform: { type: String, required: true }, url: { type: String, required: true } }],
-  threeDModel: {
-    fileUrl: { type: String, default: null },
-    initialRotation: { type: [Number], default: [0, 0, 0] },
-    enableExplodedView: { type: Boolean, default: false },
-  },
-  deployedLink: { type: String, default: null },
-  githubLink: { type: String, default: null },
-  versions: [VersionSchema],
-  gallery: { type: [GalleryImageSchema], default: [] },
-}, { timestamps: true });
+  { timestamps: true, strict: false }
+);
 
 export const Project = model<IProject>("Project", ProjectSchema);
 ```
@@ -373,6 +411,49 @@ const LogEntrySchema = new Schema<ILogEntry>(
 );
 
 export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
+```
+
+### 1.8 `Contributor.ts`
+```typescript
+import { Schema, model, Document } from "mongoose";
+
+export interface IContributorDocument extends Document {
+  name: string;
+  profilePicUrl: string;
+  profileLink?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const ContributorSchema = new Schema<IContributorDocument>(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+      unique: true,
+    },
+    profilePicUrl: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    profileLink: {
+      type: String,
+      trim: true,
+      validate: {
+        validator: function (v: string): boolean {
+          if (!v) return true;
+          return /^https?:\/\/.+/.test(v);
+        },
+        message: "Profile link must be a valid http or https URL",
+      },
+    },
+  },
+  { timestamps: true }
+);
+
+export const Contributor = model<IContributorDocument>("Contributor", ContributorSchema);
 ```
 
 ---

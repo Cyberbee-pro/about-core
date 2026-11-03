@@ -57,7 +57,9 @@ const fileFilter = (
   if (isImage || isVideo || is3DModel || isPdf) {
     cb(null, true);
   } else {
-    cb(new Error(`Unsupported file type: ${file.mimetype} (${file.originalname})`));
+    const err = new Error(`Unsupported file type: ${file.mimetype} (${file.originalname})`) as Error & { statusCode?: number };
+    err.statusCode = 400;
+    cb(err);
   }
 };
 
@@ -79,6 +81,10 @@ export const projectUploadFields = upload.fields([
 
 export const skillUploadFields = upload.fields([
   { name: "logoUrl", maxCount: 1 },
+]);
+
+export const contributorUploadFields = upload.fields([
+  { name: "profilePicUrl", maxCount: 1 },
 ]);
 
 export const certificateUploadFields = upload.fields([
@@ -689,6 +695,17 @@ export const deriveSkillName = (name: unknown): string => {
   return "skill";
 };
 
+export const deriveContributorName = (name: unknown): string => {
+  if (typeof name === "string" && name.trim()) {
+    return name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+  }
+  return "contributor";
+};
+
 export const deriveCertPublicId = (
   organization: unknown,
   title: unknown,
@@ -740,6 +757,68 @@ export const processSkillUploads = async (
         public_id: skillName,
       });
       req.body.logoUrl = result.secure_url;
+    }
+
+    next();
+  } catch (error) {
+    await cleanupUploadedVersionMedia(req);
+    next(error);
+  }
+};
+
+export const processContributorUploads = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.files) {
+      return next();
+    }
+
+    const files = req.files as MulterFilesMap;
+    if (files.profilePicUrl && files.profilePicUrl.length > 0) {
+      const file = files.profilePicUrl[0];
+
+      const allowedImageMimes = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "image/svg+xml",
+      ];
+      const isAllowedImage =
+        file.mimetype.startsWith("image/") || allowedImageMimes.includes(file.mimetype);
+
+      if (!isAllowedImage) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: `Unsupported file type for contributor picture: ${file.mimetype}. Allowed types: images only.`,
+        });
+        return;
+      }
+
+      const contributorName = deriveContributorName(req.body.name);
+      const folder = `portfolio/contributors/${contributorName}`;
+      const publicId = contributorName;
+
+      if (!req.uploadedMediaAssets) {
+        req.uploadedMediaAssets = [];
+      }
+
+      const result = await uploadBufferToCloudinary(file.buffer, {
+        folder,
+        resource_type: "image",
+        public_id: publicId,
+      });
+
+      req.body.profilePicUrl = result.secure_url;
+      req.uploadedMediaAssets.push({
+        publicId: result.public_id,
+        resourceType: "image",
+      });
     }
 
     next();

@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { Certificate } from "../models/Certificate";
-import { escapeRegex } from "../utils/stringUtils";
+import { escapeRegex, isValidHttpUrl } from "../utils/stringUtils";
 
 export const getCertificates = async (
   _req: Request,
@@ -72,11 +72,37 @@ export const createCertificate = async (
     const weight =
       req.body.weight !== undefined ? Number(req.body.weight) || 0 : 0;
 
+    const mediaUrl = typeof req.body.mediaUrl === "string" ? req.body.mediaUrl.trim() : "";
+    if (mediaUrl !== "") {
+      if (!isValidHttpUrl(mediaUrl)) {
+        res.status(400).json({
+          success: false,
+          message: "mediaUrl must be a valid http or https URL",
+        });
+        return;
+      }
+    }
+
+    let link: string | undefined = undefined;
+    if (req.body.link !== undefined && req.body.link !== null) {
+      const trimmedLink = String(req.body.link).trim();
+      if (trimmedLink !== "") {
+        if (!isValidHttpUrl(trimmedLink)) {
+          res.status(400).json({
+            success: false,
+            message: "link must be a valid http or https URL",
+          });
+          return;
+        }
+        link = trimmedLink;
+      }
+    }
+
     const certificate = await Certificate.create({
       title: trimmedTitle,
       description: req.body.description || "",
-      link: req.body.link,
-      mediaUrl: req.body.mediaUrl || "",
+      link,
+      mediaUrl,
       organization: (req.body.organization || "").trim(),
       weight,
     });
@@ -118,10 +144,34 @@ export const updateCertificate = async (
       updateData.description = req.body.description;
     }
     if (req.body.link !== undefined) {
-      updateData.link = req.body.link;
+      if (req.body.link === null || (typeof req.body.link === "string" && req.body.link.trim() === "")) {
+        updateData.link = undefined;
+      } else {
+        const link = String(req.body.link).trim();
+        if (!isValidHttpUrl(link)) {
+          res.status(400).json({
+            success: false,
+            message: "link must be a valid http or https URL",
+          });
+          return;
+        }
+        updateData.link = link;
+      }
     }
     if (req.body.mediaUrl !== undefined) {
-      updateData.mediaUrl = req.body.mediaUrl;
+      const mediaUrl = typeof req.body.mediaUrl === "string" ? req.body.mediaUrl.trim() : "";
+      if (mediaUrl !== "") {
+        if (!isValidHttpUrl(mediaUrl)) {
+          res.status(400).json({
+            success: false,
+            message: "mediaUrl must be a valid http or https URL",
+          });
+          return;
+        }
+        updateData.mediaUrl = mediaUrl;
+      } else {
+        updateData.mediaUrl = "";
+      }
     }
     if (req.body.organization !== undefined) {
       updateData.organization = req.body.organization.trim();

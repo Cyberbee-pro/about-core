@@ -79,7 +79,7 @@ const validExperiencePayload = {
   organization: "Tech Corp",
   tag: "focus",
   type: "internship",
-  iconUrl: "portfolio/experience/techcorp.png",
+  iconUrl: "https://example.com/experience/techcorp.png",
   skills: [],
   weight: 0,
   positions: [

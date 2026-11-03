@@ -8,7 +8,8 @@
     "start": "node dist/src/server.js",
     "dev": "ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/server.ts",
     "test": "jest --runInBand",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "clear-legacy-contributors": "ts-node -r tsconfig-paths/register scripts/clear-legacy-contributors.ts"
   },
   "keywords": [
     "express",

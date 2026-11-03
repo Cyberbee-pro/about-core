@@ -54,6 +54,20 @@ HTTP Request
   - **Allowed Headers**: `Content-Type`, `Authorization`, `x-admin-token`.
   - **Credentials**: `true` (`Access-Control-Allow-Credentials: true`).
   - **Rejected Origins**: Return HTTP `403 Forbidden` with `{ "success": false, "message": "Not allowed by CORS" }`.
+- **URL Validation Rules**:
+  - Every URL string written to the database (when provided and non-empty) is strictly validated via WHATWG `new URL` and must use an absolute `http:` or `https:` protocol.
+  - Dangerous protocols (`javascript:`, `data:`, `vbscript:`, `file:`, `ftp:`), protocol-relative URLs (`//host`), relative paths, embedded whitespace, and control characters (`\x00-\x1f`, `\x7f`) are rejected with `400 Bad Request` naming the offending field.
+  - Applies to all writable URL fields across collections:
+    - **Contributor**: `profilePicUrl`, `profileLink`
+    - **Project**: `image`, `videoDemo`, `deployedLink`, `githubLink`, `threeDModel.fileUrl`, `socialLinks[].url`, and inline/nested `versions[].image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url`
+    - **Version**: `image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url`
+    - **Skill**: `logoUrl`
+    - **Certificate**: `mediaUrl`, `link`
+    - **Experience**: `iconUrl`, `positions[].mediaUrls`, `positions[].certificateUrls`
+    - **SiteConfig**: `pfpUrl`, `resumeUrl`
+    - **Gallery**: `galleryImage` (PUT `/gallery/:imageId`)
+  - **Clearing Rule**: Empty strings (`""`) continue to clear optional fields without triggering URL validation.
+  - Uploaded multipart files via Cloudinary middleware are unaffected as they receive validated `https://res.cloudinary.com/...` delivery URLs.
 - **Response Format**: All responses are JSON.
   - **Success (Single Resource)**:
     ```json
@@ -107,6 +121,12 @@ HTTP Request
 | `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/order` | Admin | `application/json` | Reorder project version gallery items. Must provide all current image IDs. |
 | `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | JSON / Multipart | Partial update of a version gallery image (tags, caption, optional file replacement). |
 | `DELETE` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | `application/json` | Remove image from project version gallery. Cloudinary assets retained. |
+| **Contributors** | | | | |
+| `GET` | `/api/v1/contributors` | Public | `application/json` | List all shared contributors sorted case-insensitively by name. |
+| `GET` | `/api/v1/contributors/:id` | Public | `application/json` | Get single contributor by MongoDB ObjectId. |
+| `POST` | `/api/v1/contributors` | Admin | JSON / Multipart | Create a contributor (`name`, `profilePicUrl` file/URL, `profileLink`). Unique name. |
+| `PUT` | `/api/v1/contributors/:id` | Admin | JSON / Multipart | Update contributor fields (`name`, picture file/URL, `profileLink`). |
+| `DELETE` | `/api/v1/contributors/:id` | Admin | `application/json` | Delete contributor by ObjectId. Rejects with 409 if referenced by any project or version. |
 | **Skills** | | | | |
 | `GET` | `/api/v1/skills` | Public | `application/json` | List all skills sorted by `{ weight: 1, name: 1 }`. |
 | `GET` | `/api/v1/skills/:id` | Public | `application/json` | Get single skill by MongoDB ObjectId. |
@@ -209,9 +229,11 @@ HTTP Request
       "videoDemo": "https://res.cloudinary.com/.../video_1.mp4",
       "contributors": [
         {
-          "name": "Cyberbee",
-          "profilePicUrl": "https://res.cloudinary.com/.../pfp.jpg",
-          "profileLink": "https://github.com/cyberbee"
+          "_id": "670fa123456789abcdef0099",
+          "name": "Alice",
+          "profilePicUrl": "https://res.cloudinary.com/.../alice.jpg",
+          "profileLink": "https://alice.dev",
+          "role": "Lead Architect"
         }
       ],
       "socialLinks": [
@@ -270,7 +292,7 @@ HTTP Request
   - `endDate` (optional Date/ISO string)
   - `tags` (optional string array, JSON string array, or comma-separated string)
   - `skills` (optional array of `Skill` ObjectIds, JSON array string, or comma-separated string)
-  - `contributors` (optional array of `{ name, profilePicUrl, profileLink? }`, JSON string in multipart)
+  - `contributors` (optional array of `{ contributor: "<id>", role?: "<role>" }` or bare ID strings, JSON string in multipart)
   - `socialLinks` (optional array of `{ platform, url }`, JSON string in multipart)
   - `videoDemo` (optional string URL or file upload)
   - `deployedLink` (optional string URL)
@@ -330,6 +352,13 @@ HTTP Request
   - `demoUrl` (optional string URL)
   - `threeDFileUrl` (optional string URL or file upload on `threeDModel`)
   - `isLatest` (optional boolean, default `false`)
+  - `status` (optional enum: `"invisible"` | `"planning"` | `"work_in_progress"` | `"delay_hold"` | `"active"`, default `"planning"`)
+  - `startDate` (optional Date/ISO string; leaves unset if omitted, no auto-stamping today's date)
+  - `endDate` (optional Date/ISO string; must not be earlier than `startDate`)
+  - `deployedLink` (optional string, valid http/https URL)
+  - `githubLink` (optional string, valid http/https URL)
+  - `contributors` (optional array of `{ contributor: "<id>", role?: "<role>" }` or bare ID strings, JSON-array string in multipart; validates IDs against Contributor collection)
+  - `socialLinks` (optional array of `{ platform, url }`, JSON-array string in multipart; url must be valid http/https)
   - `galleryMeta` (optional JSON string array in multipart aligned with `galleryImages`, e.g. `'[{"tags":["preview"],"caption":"Initial release"}]'`)
 - **Single-Truth**: If `isLatest` is `true`, all previous versions in this project are automatically updated to `isLatest: false`.
 - **Rollback on Failure**: If media files are uploaded and request processing subsequently fails (`400`, `404`, `500`), uploaded Cloudinary assets are cleaned up via `cleanupUploadedVersionMedia(req)` using their exact `resource_type` (`image`, `video`, `raw`).
@@ -360,6 +389,13 @@ HTTP Request
   - `videoDemo` (optional string URL or file upload): Empty string `""` clears URL in document (Cloudinary asset retained).
   - `threeDFileUrl` (optional string URL or file upload on `threeDModel`): Empty string `""` clears URL in document (Cloudinary asset retained).
   - `isLatest` (optional boolean or `"true"`/`"false"`): If `true`, resets `isLatest: false` on all other versions of the project. If `false` on current latest, allowed and leaves project without a latest version.
+  - `status` (optional enum: `"invisible"` | `"planning"` | `"work_in_progress"` | `"delay_hold"` | `"active"`): Cannot be cleared (empty string `""` is a 400).
+  - `startDate` (optional Date/ISO string): Validated date; empty string `""` clears the field.
+  - `endDate` (optional Date/ISO string): Validated date; cannot be earlier than `startDate` (checked against stored date if only one sent); empty string `""` clears the field.
+  - `deployedLink` (optional string): Valid http/https URL; empty string `""` clears the field.
+  - `githubLink` (optional string): Valid http/https URL; empty string `""` clears the field.
+  - `contributors` (optional array of `{ contributor: "<id>", role?: "<role>" }` or bare ID strings): JSON-array string in multipart; validated against DB; duplicate check; empty array `[]` clears contributors.
+  - `socialLinks` (optional array of `{ platform, url }`): JSON-array string in multipart; valid http/https URLs; empty array `[]` clears socialLinks.
 - **Gallery Invariant**: `PUT /api/v1/projects/:slug/versions/:versionId` must **NOT** change `gallery` (it is ignored if sent). Version gallery items are managed via dedicated version gallery endpoints.
 - **Rollback on Failure**: If media files are uploaded and request subsequent processing fails (`400`, `404`, `409`, `500`), uploaded Cloudinary assets are cleaned up via `cleanupUploadedVersionMedia(req)` using their exact `resource_type` (`image`, `video`, `raw`).
 - **Response**: `200 OK`
@@ -975,6 +1011,106 @@ Tags are free-form strings validated and normalized strictly in this sequential 
 
 ---
 
+### 4.9 Contributors (`/api/v1/contributors`)
+
+#### `GET /api/v1/contributors`
+- **Access**: Public
+- **Description**: Returns all shared contributors, sorted case-insensitively by `name` ascending.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "count": 2,
+  "data": [
+    {
+      "_id": "670fa123456789abcdef0099",
+      "name": "Ada Lovelace",
+      "profilePicUrl": "https://res.cloudinary.com/.../ada-lovelace.jpg",
+      "profileLink": "https://ada.dev",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+#### `GET /api/v1/contributors/:id`
+- **Access**: Public
+- **Path Parameters**: `:id` (MongoDB ObjectId string)
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "670fa123456789abcdef0099",
+    "name": "Ada Lovelace",
+    "profilePicUrl": "https://res.cloudinary.com/.../ada-lovelace.jpg",
+    "profileLink": "https://ada.dev"
+  }
+}
+```
+
+#### `POST /api/v1/contributors`
+- **Access**: Admin (Requires `ADMIN_SECRET`)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Field**: `profilePicUrl` (single file, image MIME only, 100 MB max)
+- **Folder Structure**: `portfolio/contributors/<derived-name>/<derived-name>`
+- **Body Fields**:
+  - `name` (required, trimmed string; case-insensitive unique across all contributors, returns `409 Conflict` on collision)
+  - `profilePicUrl` (required string URL or attached picture file; returns `400 Bad Request` if neither is provided)
+  - `profileLink` (optional string URL, must be valid http or https URL)
+- **Rollback on Failure**: If picture is uploaded and request fails validation or database write, uploaded Cloudinary asset is automatically destroyed via `cleanupUploadedVersionMedia(req)`.
+- **Response**: `201 Created`
+```json
+{
+  "success": true,
+  "message": "Contributor created successfully",
+  "data": { ...contributor }
+}
+```
+
+#### `PUT /api/v1/contributors/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId string)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Field**: `profilePicUrl` (optional replacement picture)
+- **Body Fields**: Partial updates:
+  - `name` (optional non-empty trimmed string; duplicate check excluding current contributor `_id`)
+  - `profilePicUrl` (optional string URL or attached file; replacing picture keeps previous Cloudinary asset)
+  - `profileLink` (optional string; empty string `""` clears the field)
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Contributor updated successfully",
+  "data": { ...updatedContributor }
+}
+```
+
+#### `DELETE /api/v1/contributors/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId string)
+- **Reference Integrity Enforcement**: Checks whether the contributor is currently referenced in `Project.contributors` or `Version.contributors` across all projects.
+  - If in use, rejects deletion with `409 Conflict` reporting project and version reference counts:
+    `{ "success": false, "message": "Cannot delete contributor: referenced by 1 project(s) and 2 project version(s)" }`
+  - If unused, deletes the contributor document. Cloudinary media assets are retained.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Contributor deleted successfully"
+}
+```
+
+#### Legacy Contributor Cleanup Script
+- **NPM Script**: `npm run clear-legacy-contributors`
+- **Usage**:
+  - `npm run clear-legacy-contributors` (dry run; reports project slugs, version tags, and legacy names without modifying data)
+  - `npm run clear-legacy-contributors -- --apply` (clears legacy contributor arrays and saves affected documents)
+- **Safety**: Standalone maintenance script; never runs on server boot.
+
+---
+
 ## 5. Authentication
 
 All admin endpoints (mutations and log queries) are protected by a shared static secret:
@@ -1018,6 +1154,7 @@ All media uploads are buffered in memory (100 MB file size limit) via Multer, va
 | **Experiences** | `iconUrl` | `portfolio/experiences/<tag>/<orgSlug>/icons` | `experience_icon` |
 | | `mediaUrls` | `portfolio/experiences/<tag>/<orgSlug>/media` | `experience_media_<n>` |
 | | `certificateUrls` | `portfolio/experiences/<tag>/<orgSlug>/certificates` | `experience_certificate_<n>` |
+| **Contributors** | `profilePicUrl` | `portfolio/contributors/<derivedName>` | `<derivedName>` |
 | **Site Config** | `pfp`, `pfpUrl`, `image` | `portfolio/site_config` | `pfp_<timestamp>` |
 
 - **Sequential Naming**: Assets using `<base>_<n>` query existing files via the Cloudinary Search API and pick `<base>_<max+1>` (cached per request). If the Search API is unavailable, it falls back to timestamp-based naming (`<base>_<timestamp>`).
@@ -1030,10 +1167,17 @@ All media uploads are buffered in memory (100 MB file size limit) via Multer, va
 ```ts
 export type ProjectStatus = "invisible" | "planning" | "work_in_progress" | "delay_hold" | "active";
 
-export interface IContributor {
+export interface IProjectContributor {
+  contributor?: string;
+  role?: string;
+}
+
+export interface IContributorResponse {
+  _id: string;
   name: string;
   profilePicUrl: string;
-  profileLink?: string;
+  profileLink: string | null;
+  role: string | null;
 }
 
 export interface ISocialLink {
@@ -1059,6 +1203,13 @@ export interface IProjectVersion {
   threeDFileUrl?: string;
   isLatest: boolean;
   gallery: IGalleryImage[];
+  status?: ProjectStatus | null;
+  startDate?: Date | null;
+  endDate?: Date | null;
+  deployedLink?: string | null;
+  githubLink?: string | null;
+  contributors?: IContributorResponse[];
+  socialLinks?: ISocialLink[];
 }
 
 export interface IProject {
@@ -1072,7 +1223,7 @@ export interface IProject {
   skills: string[]; // ObjectId ref to Skill
   startDate: Date;
   endDate?: Date;
-  contributors: IContributor[];
+  contributors: IContributorResponse[];
   status: ProjectStatus;
   image: string;
   videoDemo?: string;

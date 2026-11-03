@@ -18,6 +18,7 @@ This document provides a comprehensive technical reference for how every API end
    - [4.6 Experiences API (`/api/v1/experiences`)](#46-experiences-api-apiv1experiences)
    - [4.7 Site Configuration API (`/api/v1/config`)](#47-site-configuration-api-apiv1config)
    - [4.8 Admin Logs API (`/api/v1/admin/logs`)](#48-admin-logs-api-apiv1adminlogs)
+   - [4.9 Contributors API (`/api/v1/contributors`)](#49-contributors-api-apiv1contributors)
 5. [Cloudinary & Database Consistency Safeguards](#5-cloudinary--database-consistency-safeguards)
 6. [Summary Matrix](#6-summary-matrix)
 
@@ -43,7 +44,7 @@ This document provides a comprehensive technical reference for how every API end
 
 ## 2. Data Models & Schema Architecture
 
-The database contains **7 core collections**:
+The database contains **8 core collections**:
 
 ```
                        +-------------------+
@@ -58,33 +59,56 @@ The database contains **7 core collections**:
 | - slug (unique)   |                         | - organization      |
 | - versions[]      |                         | - positions[]       |
 +-------------------+                         +---------------------+
-
-+-------------------+  +-------------------+  +---------------------+
-|       Skill       |  |    Certificate    |  |     Achievement     |
-|-------------------|  |-------------------|  |---------------------|
-| - name (unique)   |  | - title           |  | - title             |
-| - type (enum)     |  | - organization    |  | - date              |
-+-------------------+  +-------------------+  +---------------------+
-
-                       +-------------------+
-                       |     LogEntry      |
-                       |-------------------|
-                       | - timestamp (idx) |
-                       | - level (enum)    |
-                       +-------------------+
+       ^       ^
+       |       | contributors.contributor (ObjectId)
+       +-------+-----------------------------+
+                                             |
++-------------------+  +-------------------+ | +--------------------+
+|       Skill       |  |    Certificate    | | |    Contributor     |
+|-------------------|  |-------------------| | |--------------------|
+| - name (unique)   |  | - title           | | | - name (unique)    |
+| - type (enum)     |  | - organization    | | | - profilePicUrl    |
++-------------------+  +-------------------+ | | - profileLink      |
+                                             | +--------------------+
++-------------------+  +-------------------+ |
+|    Achievement    |  |     LogEntry      | |
+|-------------------|  |-------------------| |
+| - title           |  | - timestamp (idx) | |
+| - date            |  | - level (enum)    | |
++-------------------+  +-------------------+ |
+                                             |
+                                             v
 ```
 
 ### 2.1 Collection Schemas & Indexes
 
 | Collection | Schema File | Key Indexes & Constraints | Key Relations / Subdocuments |
 | :--- | :--- | :--- | :--- |
-| `projects` | `src/models/Project.ts` | `slug` (Unique, Lowercase)<br>`timestamps: true` | `skills`: `Types.ObjectId[]` referencing `Skill`<br>`contributors`: subdocuments<br>`versions`: subdocuments (with nested `gallery: IGalleryImage[]`)<br>`gallery`: subdocuments (`IGalleryImage[]`) |
+| `projects` | `src/models/Project.ts` | `slug` (Unique, Lowercase)<br>`timestamps: true` | `skills`: `Types.ObjectId[]` referencing `Skill`<br>`contributors`: join subdocuments referencing `Contributor` (`{ contributor: ObjectId, role?: string }`, `_id: false`)<br>`versions`: subdocuments (with metadata fields, `contributors`, `socialLinks`, `gallery`)<br>`gallery`: subdocuments (`IGalleryImage[]`) |
+| `contributors` | `src/models/Contributor.ts` | `name` (Unique, Trimmed, case-insensitive)<br>`timestamps: true` | Referenced by `Project.contributors` and `Version.contributors` |
 | `skills` | `src/models/Skill.ts` | `name` (Unique, Trimmed)<br>`type` enum (`tool`, `language`, `framework`)<br>`timestamps: true` | Referenced by `Project` and `Experience` |
 | `certificates` | `src/models/Certificate.ts` | `timestamps: true`<br>Case-insensitive title uniqueness enforced in controller | Self-contained |
 | `achievements` | `src/models/Achievement.ts` | `timestamps: true`<br>Case-insensitive title uniqueness enforced in controller | Self-contained |
 | `experiences` | `src/models/Experience.ts` | `tag` enum (`focus`, `extracurricular`)<br>`type` enum (`internship`, `contract`, `freelance`, `full_time`, `part_time`, `club`, `volunteering`)<br>`timestamps: true` | `skills`: `Types.ObjectId[]` referencing `Skill`<br>`positions`: subdocuments |
 | `siteconfigs` | `src/models/SiteConfig.ts` | Singleton document model<br>`timestamps: true` | `pfpHistory`: subdocuments array (`IPfpItem[]`) |
 | `logentries` | `src/models/LogEntry.ts` | `timestamp` (Indexed, Descending)<br>`level` enum (`INFO`, `WARN`, `ERROR`)<br>`timestamps: false` | Self-contained (writes raw request metadata and stack traces) |
+
+### 2.2 Global URL Validation Rules
+
+Every URL string field written to the database (on create or update, when provided and non-empty) is strictly validated via WHATWG `new URL` (`isValidHttpUrl` in `src/utils/stringUtils.ts`).
+- **Protocols Enforced:** Must strictly use absolute `http:` or `https:` protocols.
+- **Rejected Schemes & Formats:** Dangerous schemes (`javascript:`, `data:`, `vbscript:`, `file:`, `ftp:`), protocol-relative URLs (`//host`), relative paths, embedded whitespace, and control characters (`\x00-\x1f`, `\x7f`) return `400 Bad Request` naming the invalid field.
+- **Audited & Validated Fields Across Collections:**
+  - `Contributor`: `profilePicUrl`, `profileLink` (create & update)
+  - `Project`: `image`, `videoDemo`, `deployedLink`, `githubLink`, `threeDModel.fileUrl`, `socialLinks[].url` (create & update), plus inline/nested version fields (`image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url`) during create and `versions` array overwrite on `PUT /:id`
+  - `Version`: `image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url` (`POST /:slug/versions` & `PUT /:slug/versions/:versionId`)
+  - `Skill`: `logoUrl` (create & update)
+  - `Certificate`: `mediaUrl`, `link` (create & update)
+  - `Experience`: `iconUrl`, `positions[].mediaUrls`, `positions[].certificateUrls` (create, update, & `addExperiencePosition`)
+  - `SiteConfig`: `pfpUrl`, `resumeUrl` (create & update)
+  - `Gallery`: `galleryImage` URL strings on `PUT /gallery/:imageId`, and item URLs on `POST /gallery`
+- **Clearing Semantics:** An empty string (`""`) continues to clear optional fields without triggering URL validation.
+- **Upload Safety & Consistency:** Uploaded multipart files via Cloudinary middleware receive trusted `https://res.cloudinary.com/...` delivery URLs. If a multipart request includes an invalid URL field alongside uploaded files, all newly uploaded assets from that request are rolled back before returning `400 Bad Request`.
 
 ---
 
@@ -863,6 +887,78 @@ The `SiteConfig` model manages global metadata as a **singleton document** in th
 
 ---
 
+### 4.9 Contributors API (`/api/v1/contributors`)
+
+#### `GET /api/v1/contributors`
+- **Scope:** Public
+- **Target Model:** `Contributor`
+- **DB Operations:**
+  ```typescript
+  const query = Contributor.find();
+  query.collation({ locale: "en", strength: 2 });
+  const contributors = await query.sort({ name: 1 });
+  ```
+- **Sorting:** Case-insensitively ascending by `name`.
+
+#### `GET /api/v1/contributors/:id`
+- **Scope:** Public
+- **Target Model:** `Contributor`
+- **DB Operation:** `Contributor.findById(id)`
+- **Validation:** Validates 24-character hex `ObjectId` (`400 Bad Request` if invalid). Returns `404 Not Found` if missing.
+
+#### `POST /api/v1/contributors`
+- **Scope:** Protected (`authMiddleware`)
+- **Content-Type:** JSON or Multipart (`profilePicUrl` file field or URL text field).
+- **Target Model:** `Contributor`
+- **DB Operations:**
+  1. Case-insensitive duplicate check on `name`:
+     ```typescript
+     const existing = await Contributor.findOne({
+       name: { $regex: new RegExp(`^${escapeRegex(name)}$`, "i") }
+     });
+     ```
+     Returns `409 Conflict` if duplicate.
+  2. Create contributor:
+     ```typescript
+     const contributor = await Contributor.create({ name, profilePicUrl, profileLink });
+     ```
+- **Rollback:** If validation fails or database error occurs after file upload, the uploaded picture is rolled back via `cleanupUploadedVersionMedia(req)` with `{ resource_type: "image" }`.
+
+#### `PUT /api/v1/contributors/:id`
+- **Scope:** Protected (`authMiddleware`)
+- **Content-Type:** JSON or Multipart (optional `profilePicUrl` file replacement).
+- **Target Model:** `Contributor`
+- **DB Operations:**
+  1. Partial validation of fields. Empty string `""` clears `profileLink`.
+  2. Duplicate name check excluding current contributor `_id != id` (`409 Conflict`).
+  3. `Contributor.findByIdAndUpdate(id, updateData, { new: true, runValidators: true })`.
+- **Cloudinary Asset Retention:** Replacing a profile picture keeps the existing Cloudinary asset (consistent with project edits).
+
+#### `DELETE /api/v1/contributors/:id`
+- **Scope:** Protected (`authMiddleware`)
+- **Target Model:** `Contributor`, `Project`
+- **DB Operations:**
+  1. Reference Check across projects and versions:
+     ```typescript
+     const matchingProjects = await Project.find({
+       $or: [
+         { "contributors.contributor": id },
+         { "versions.contributors.contributor": id },
+       ]
+     });
+     ```
+  2. If in use, rejects deletion with `409 Conflict` reporting exact project and version usage counts (e.g. `"Cannot delete contributor: referenced by 1 project(s) and 2 project version(s)"`).
+  3. If unused, deletes contributor via `Contributor.findByIdAndDelete(id)`. Cloudinary assets are retained.
+
+#### Legacy Contributor Cleanup Script (`scripts/clear-legacy-contributors.ts`)
+- **NPM Script:** `npm run clear-legacy-contributors`
+- **Behavior:** Reads all projects and version subdocuments for legacy embedded contributors (`{ name, profilePicUrl }` lacking `contributor` ObjectId reference).
+- **Dry-run Mode (Default):** Prints affected project slugs, version tags, and legacy contributor names without modifying database documents.
+- **Apply Mode (`--apply`):** Clears the legacy contributor arrays and saves affected documents.
+- **Execution Rule:** Never invoked at server boot; manual CLI maintenance tool only.
+
+---
+
 ## 5. Cloudinary & Database Consistency Safeguards
 
 Because file uploads occur during the Express middleware pipeline **before** the database write occurs in the controller, network interruptions or MongoDB validation errors could leave orphaned assets in Cloudinary. The codebase implements rollback mechanisms:
@@ -893,6 +989,7 @@ Because file uploads occur during the Express middleware pipeline **before** the
   The newly uploaded PDF asset is deleted from Cloudinary using `cloudinary.uploader.destroy(resumePublicId)`, keeping storage clean and synchronized with database state.
 - **Version Media Cleanup (`cleanupUploadedVersionMedia`):** If `POST /api/v1/projects/:slug/versions` or `PUT /api/v1/projects/:slug/versions/:versionId` fails due to validation error (`400`), missing project/version (`404`), duplicate tag collision (`409`), or database failure (`500`), newly uploaded assets recorded in `req.uploadedMediaAssets` are immediately destroyed via `cloudinary.uploader.destroy(publicId, { resource_type: asset.resourceType })`, ensuring images, videos, and raw 3D models are rolled back with their exact respective resource types.
 - **Gallery Upload Rollback (`cleanupUploadedVersionMedia`):** If adding or updating gallery images on a project (`POST /api/v1/projects`, `POST /api/v1/projects/:slug/gallery`, `PUT /api/v1/projects/:slug/gallery/:imageId`) or version (`POST /api/v1/projects/:slug/versions`, `POST /api/v1/projects/:slug/versions/:versionId/gallery`, `PUT /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`) fails due to validation errors, invalid file MIME types, batch size >10, exceeding 30 gallery items cap, missing project/version, or database failure, all newly uploaded gallery assets are rolled back and destroyed via `cleanupUploadedVersionMedia(req)` with `{ resource_type: "image" }`. Successful mutations and deletions keep Cloudinary assets intact.
+- **URL Validation Upload Rollback:** If any multipart mutation (such as creating/updating a project version, contributor, experience, site config, or gallery image) successfully processes uploaded files to Cloudinary but subsequently fails due to an invalid URL string in an accompanying field (e.g., malformed `demoUrl`, `deployedLink`, `profileLink`, `resumeUrl`, etc.), all newly uploaded assets from that request are immediately rolled back and destroyed from Cloudinary (`cleanupUploadedVersionMedia`, `cleanupUploadedResume`, or `destroyCloudinaryAsset`), ensuring no orphaned files persist in cloud storage.
 
 ---
 
@@ -921,6 +1018,11 @@ Because file uploads occur during the Express middleware pipeline **before** the
 | `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/order` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Reorders version gallery items by full array of `_id`s |
 | `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | `Project` | `findOneAndUpdate()` | Atomic positional `$set` on `versions.$[v].gallery.$[g]` with `arrayFilters` |
 | `DELETE` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | `Project` | `findOneAndUpdate()` | Atomic `$pull` from `versions.$.gallery` by `_id`; assets kept |
+| `GET` | `/api/v1/contributors` | Public | `Contributor` | `find().collation().sort()` | Sorted case-insensitively by `name: 1` |
+| `GET` | `/api/v1/contributors/:id` | Public | `Contributor` | `findById()` | By `_id` |
+| `POST` | `/api/v1/contributors` | Admin | `Contributor` | `findOne()` $\rightarrow$ `create()` | Multipart pic or URL; case-insensitive duplicate check on `name`; rollback on failure |
+| `PUT` | `/api/v1/contributors/:id` | Admin | `Contributor` | `findOne()` $\rightarrow$ `findByIdAndUpdate()` | Duplicate check excluding self; replaces pic keeping old Cloudinary asset; clears link with `""` |
+| `DELETE` | `/api/v1/contributors/:id` | Admin | `Contributor` | `Project.find()` $\rightarrow$ `findByIdAndDelete()` | Rejects with 409 if referenced in project or version with count; deletes and keeps Cloudinary asset |
 | `GET` | `/api/v1/skills` | Public | `Skill` | `find().sort()` | Optional `type` filter; sorted by `weight: 1, name: 1` |
 | `GET` | `/api/v1/skills/:id` | Public | `Skill` | `findById()` | By `_id` |
 | `POST` | `/api/v1/skills` | Admin | `Skill` | `findOne()` $\rightarrow$ `create()` | Case-insensitive duplicate check on `name` |

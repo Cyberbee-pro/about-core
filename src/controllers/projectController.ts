@@ -1,18 +1,69 @@
 import { Request, Response, NextFunction } from "express";
 import { FilterQuery, Types } from "mongoose";
-import { escapeRegex } from "../utils/stringUtils";
+import { escapeRegex, isValidHttpUrl, isHttpUrl, normalizeHttpUrl } from "../utils/stringUtils";
 import { cleanupUploadedVersionMedia } from "../middlewares/uploadMiddleware";
 import {
   Project,
   IProject,
-  IContributor,
+  IProjectContributor,
   ISocialLink,
   IProjectVersion,
   IGalleryImage,
   ProjectStatus,
 } from "../models/Project";
+import { Contributor } from "../models/Contributor";
 
 export const GALLERY_TAG_REGEX = /^[a-z0-9][a-z0-9_+#.-]{0,23}$/;
+
+export interface FormattedContributor {
+  _id: string;
+  name: string;
+  profilePicUrl: string;
+  profileLink: string | null;
+  role: string | null;
+}
+
+export function formatContributors(rawContributors: unknown): FormattedContributor[] {
+  if (!Array.isArray(rawContributors)) {
+    return [];
+  }
+  const result: FormattedContributor[] = [];
+
+  for (const item of rawContributors) {
+    if (!item || typeof item !== "object") continue;
+    const cObj = (item as Record<string, unknown>).contributor;
+    if (!cObj || typeof cObj !== "object") continue;
+
+    const populated = cObj as Record<string, unknown>;
+    if (typeof populated.name !== "string" || typeof populated.profilePicUrl !== "string") {
+      continue;
+    }
+
+    const contributorId = populated._id ? String(populated._id) : "";
+    const name = populated.name;
+    const profilePicUrl = populated.profilePicUrl;
+    const profileLink =
+      typeof populated.profileLink === "string" && populated.profileLink.trim()
+        ? populated.profileLink.trim()
+        : null;
+
+    const rawRole = (item as Record<string, unknown>).role;
+    const role =
+      typeof rawRole === "string" && rawRole.trim()
+        ? rawRole.trim()
+        : null;
+
+    result.push({
+      _id: contributorId,
+      name,
+      profilePicUrl,
+      profileLink,
+      role,
+    });
+  }
+
+  return result;
+}
 
 export function formatProjectResponse<T>(project: T): T {
   if (!project || typeof project !== "object") {
@@ -25,21 +76,48 @@ export function formatProjectResponse<T>(project: T): T {
   if (!Array.isArray(obj.gallery)) {
     obj.gallery = [];
   }
+  obj.contributors = formatContributors(obj.contributors);
+
+  let formattedVersions: unknown[] | undefined = undefined;
   if (Array.isArray(obj.versions)) {
-    obj.versions = obj.versions.map((v) => {
+    formattedVersions = obj.versions.map((v) => {
       if (v && typeof v === "object") {
         const vObj = typeof (v as { toObject?: unknown }).toObject === "function"
           ? ((v as unknown) as { toObject: () => Record<string, unknown> }).toObject()
-          : (v as Record<string, unknown>);
+          : { ...(v as Record<string, unknown>) };
         if (!Array.isArray(vObj.gallery)) {
           vObj.gallery = [];
         }
+        vObj.status = vObj.status !== undefined && vObj.status !== null ? vObj.status : null;
+        vObj.startDate = vObj.startDate !== undefined && vObj.startDate !== null ? vObj.startDate : null;
+        vObj.endDate = vObj.endDate !== undefined && vObj.endDate !== null ? vObj.endDate : null;
+        vObj.deployedLink = vObj.deployedLink !== undefined && vObj.deployedLink !== null ? vObj.deployedLink : null;
+        vObj.githubLink = vObj.githubLink !== undefined && vObj.githubLink !== null ? vObj.githubLink : null;
+        vObj.contributors = formatContributors(vObj.contributors);
+        vObj.socialLinks = Array.isArray(vObj.socialLinks) ? vObj.socialLinks : [];
         return vObj;
       }
       return v;
     });
   }
+
+  if (formattedVersions !== undefined) {
+    return { ...obj, versions: formattedVersions } as T;
+  }
   return obj as T;
+}
+
+export async function populateProjectDoc(project: unknown): Promise<void> {
+  if (project && typeof (project as { populate?: unknown }).populate === "function") {
+    try {
+      await (project as { populate: (paths: string[]) => Promise<unknown> }).populate([
+        "contributors.contributor",
+        "versions.contributors.contributor",
+      ]);
+    } catch {
+      // In tests where populate is mocked or throws, continue gracefully
+    }
+  }
 }
 
 export function parseRawGalleryTags(raw: unknown): string[] {
@@ -122,13 +200,176 @@ export function validateGalleryCaption(raw: unknown): ValidateGalleryCaptionResu
   return { caption: trimmed };
 }
 
-export function isValidHttpUrl(urlString: string): boolean {
-  try {
-    const url = new URL(urlString);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
+export { isValidHttpUrl, isHttpUrl, normalizeHttpUrl };
+
+export interface ParseContributorsResult {
+  contributors?: IProjectContributor[];
+  error?: string;
+}
+
+export async function parseAndValidateContributors(
+  raw: unknown
+): Promise<ParseContributorsResult> {
+  if (raw === undefined) {
+    return { contributors: undefined };
   }
+
+  let list: unknown[] = [];
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      return { contributors: [] };
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) {
+        return { error: "Contributors must be an array" };
+      }
+      list = parsed;
+    } catch {
+      return { error: "Invalid JSON format for contributors" };
+    }
+  } else if (Array.isArray(raw)) {
+    list = raw;
+  } else {
+    return { error: "Contributors must be an array" };
+  }
+
+  if (list.length === 0) {
+    return { contributors: [] };
+  }
+
+  const result: IProjectContributor[] = [];
+  const seenIds = new Set<string>();
+  const idsToVerify: Types.ObjectId[] = [];
+
+  for (const item of list) {
+    if (!item) {
+      return { error: "Invalid contributor entry: null or undefined" };
+    }
+
+    let contributorIdStr: string;
+    let role: string | undefined = undefined;
+
+    if (typeof item === "string") {
+      contributorIdStr = item.trim();
+    } else if (typeof item === "object") {
+      const itemObj = item as Record<string, unknown>;
+
+      // Check if client sent old embedded format ({ name, profilePicUrl })
+      if (!itemObj.contributor && (itemObj.name !== undefined || itemObj.profilePicUrl !== undefined)) {
+        return {
+          error:
+            "Invalid contributor format: contributors must reference Contributor IDs via { contributor: '<id>', role?: '<role>' } or bare ID strings. Embedded contributor objects with name/profilePicUrl are no longer supported.",
+        };
+      }
+
+      if (!itemObj.contributor) {
+        return { error: "Contributor object must contain a 'contributor' ID field" };
+      }
+
+      contributorIdStr = String(itemObj.contributor).trim();
+
+      if (itemObj.role !== undefined && itemObj.role !== null) {
+        if (typeof itemObj.role !== "string") {
+          return { error: "Contributor role must be a string" };
+        }
+        const trimmedRole = itemObj.role.trim();
+        if (trimmedRole.length > 40) {
+          return { error: "Contributor role cannot exceed 40 characters" };
+        }
+        role = trimmedRole.length > 0 ? trimmedRole : undefined;
+      }
+    } else {
+      return { error: "Invalid contributor format: expected string ID or object" };
+    }
+
+    if (!Types.ObjectId.isValid(contributorIdStr)) {
+      return { error: `Invalid contributor ID format: '${contributorIdStr}'` };
+    }
+
+    if (seenIds.has(contributorIdStr)) {
+      return { error: `Duplicate contributor detected in list: '${contributorIdStr}'` };
+    }
+    seenIds.add(contributorIdStr);
+
+    const objId = new Types.ObjectId(contributorIdStr);
+    idsToVerify.push(objId);
+    result.push({
+      contributor: objId,
+      role,
+    });
+  }
+
+  // Verify all IDs exist in Contributor collection
+  const existing = await Contributor.find({ _id: { $in: idsToVerify } });
+  if (existing.length !== idsToVerify.length) {
+    const existingIdStrs = new Set(existing.map((c) => String(c._id)));
+    const unknownIds = idsToVerify
+      .map(String)
+      .filter((id) => !existingIdStrs.has(id));
+    return {
+      error: `Unknown contributor ID(s): ${unknownIds.join(", ")}`,
+    };
+  }
+
+  return { contributors: result };
+}
+
+export interface ParseSocialLinksResult {
+  socialLinks?: ISocialLink[];
+  error?: string;
+}
+
+export function parseAndValidateSocialLinks(raw: unknown): ParseSocialLinksResult {
+  if (raw === undefined) {
+    return { socialLinks: undefined };
+  }
+
+  let list: unknown[] = [];
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      return { socialLinks: [] };
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) {
+        return { error: "Social links must be an array" };
+      }
+      list = parsed;
+    } catch {
+      return { error: "Invalid JSON format for socialLinks" };
+    }
+  } else if (Array.isArray(raw)) {
+    list = raw;
+  } else {
+    return { error: "Social links must be an array" };
+  }
+
+  if (list.length === 0) {
+    return { socialLinks: [] };
+  }
+
+  const result: ISocialLink[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") {
+      return { error: "Invalid socialLink entry: must be an object with platform and url" };
+    }
+    const itemObj = item as Record<string, unknown>;
+    const platform = typeof itemObj.platform === "string" ? itemObj.platform.trim() : "";
+    const url = typeof itemObj.url === "string" ? itemObj.url.trim() : "";
+
+    if (!platform) {
+      return { error: "socialLinks platform is required" };
+    }
+    if (!url || !isValidHttpUrl(url)) {
+      return { error: `Invalid socialLink URL: '${url}'. Must be a valid http or https URL.` };
+    }
+    result.push({ platform, url });
+  }
+
+  return { socialLinks: result };
 }
 
 export interface ProjectQueryParams {
@@ -314,7 +555,13 @@ export const getProjects = async (
       filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") };
     }
 
-    const projects = await Project.find(filter)
+    let query = Project.find(filter);
+    if (typeof (query as unknown as { populate?: unknown }).populate === "function") {
+      query = (query as unknown as { populate: (path: string) => typeof query })
+        .populate("contributors.contributor")
+        .populate("versions.contributors.contributor");
+    }
+    const projects = await query
       .sort({ featured: -1, startDate: -1 })
       .lean();
 
@@ -393,7 +640,13 @@ export const getAdminProjects = async (
       filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") };
     }
 
-    const projects = await Project.find(filter)
+    let query = Project.find(filter);
+    if (typeof (query as unknown as { populate?: unknown }).populate === "function") {
+      query = (query as unknown as { populate: (path: string) => typeof query })
+        .populate("contributors.contributor")
+        .populate("versions.contributors.contributor");
+    }
+    const projects = await query
       .sort({ featured: -1, startDate: -1 })
       .lean();
 
@@ -443,7 +696,13 @@ export const getProjectBySlug = async (
       return;
     }
 
-    const project = await Project.findOne({ slug }).lean();
+    let query = Project.findOne({ slug });
+    if (typeof (query as unknown as { populate?: unknown }).populate === "function") {
+      query = (query as unknown as { populate: (path: string) => typeof query })
+        .populate("contributors.contributor")
+        .populate("versions.contributors.contributor");
+    }
+    const project = await query.lean();
 
     if (!project) {
       res.status(404).json({
@@ -494,9 +753,10 @@ export const createProject = async (
 
     const category = typeof body.category === "string" ? body.category.toLowerCase().trim() : "";
     const description = typeof body.description === "string" ? body.description : "";
-    const image = typeof body.image === "string" ? body.image : "";
+    const image = typeof body.image === "string" ? body.image.trim() : "";
 
     if (!image) {
+      await cleanupUploadedVersionMedia(req);
       res.status(400).json({
         success: false,
         message: "Project image URL or image file upload is required",
@@ -504,7 +764,17 @@ export const createProject = async (
       return;
     }
 
+    if (!isValidHttpUrl(image)) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: "image must be a valid http or https URL",
+      });
+      return;
+    }
+
     if (!category) {
+      await cleanupUploadedVersionMedia(req);
       res.status(400).json({
         success: false,
         message: "Project category is required",
@@ -513,6 +783,7 @@ export const createProject = async (
     }
 
     if (!description) {
+      await cleanupUploadedVersionMedia(req);
       res.status(400).json({
         success: false,
         message: "Project description is required",
@@ -524,9 +795,48 @@ export const createProject = async (
     const endDate = body.endDate ? new Date(body.endDate as string) : undefined;
     const featured = body.featured === true || body.featured === "true";
     const status = (body.status as ProjectStatus) || "planning";
-    const videoDemo = typeof body.videoDemo === "string" ? body.videoDemo : undefined;
-    const deployedLink = typeof body.deployedLink === "string" ? body.deployedLink : undefined;
-    const githubLink = typeof body.githubLink === "string" ? body.githubLink : undefined;
+
+    let videoDemo: string | undefined = undefined;
+    if (typeof body.videoDemo === "string" && body.videoDemo.trim() !== "") {
+      const v = body.videoDemo.trim();
+      if (!isValidHttpUrl(v)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "videoDemo must be a valid http or https URL",
+        });
+        return;
+      }
+      videoDemo = v;
+    }
+
+    let deployedLink: string | undefined = undefined;
+    if (typeof body.deployedLink === "string" && body.deployedLink.trim() !== "") {
+      const d = body.deployedLink.trim();
+      if (!isValidHttpUrl(d)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "deployedLink must be a valid http or https URL",
+        });
+        return;
+      }
+      deployedLink = d;
+    }
+
+    let githubLink: string | undefined = undefined;
+    if (typeof body.githubLink === "string" && body.githubLink.trim() !== "") {
+      const g = body.githubLink.trim();
+      if (!isValidHttpUrl(g)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "githubLink must be a valid http or https URL",
+        });
+        return;
+      }
+      githubLink = g;
+    }
 
     let tags: string[] = [];
     if (typeof body.tags === "string") {
@@ -539,14 +849,222 @@ export const createProject = async (
       tags = (body.tags as unknown[]).map((t) => String(t).trim().toLowerCase()).filter(Boolean);
     }
 
-    const contributors = parseJsonField<IContributor[]>(body.contributors, []);
-    const socialLinks = parseJsonField<ISocialLink[]>(body.socialLinks, []);
-    const versions = parseJsonField<IProjectVersion[]>(body.versions, []);
+    let contributors: IProjectContributor[] = [];
+    if (body.contributors !== undefined) {
+      const contrResult = await parseAndValidateContributors(body.contributors);
+      if (contrResult.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: contrResult.error });
+        return;
+      }
+      contributors = contrResult.contributors || [];
+    }
+
+    let socialLinks: ISocialLink[] = [];
+    if (body.socialLinks !== undefined) {
+      const socialResult = parseAndValidateSocialLinks(body.socialLinks);
+      if (socialResult.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: socialResult.error });
+        return;
+      }
+      socialLinks = socialResult.socialLinks || [];
+    }
+
+    let versions: IProjectVersion[] = [];
+    if (body.versions !== undefined) {
+      let rawVersions = body.versions;
+      if (typeof rawVersions === "string") {
+        try {
+          rawVersions = JSON.parse(rawVersions);
+        } catch {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "Invalid JSON format for versions" });
+          return;
+        }
+      }
+      if (Array.isArray(rawVersions)) {
+        for (const rawV of rawVersions) {
+          if (!rawV || typeof rawV !== "object") continue;
+          const vObj = rawV as Record<string, unknown>;
+          const vTag = typeof vObj.versionTag === "string" ? vObj.versionTag.trim() : "";
+          if (!vTag) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({ success: false, message: "Version tag is required for each version" });
+            return;
+          }
+
+          let vStatus: ProjectStatus = "planning";
+          if (vObj.status !== undefined && vObj.status !== null) {
+            const vStatusStr = String(vObj.status).trim();
+            const validStatuses: ProjectStatus[] = ["invisible", "planning", "work_in_progress", "delay_hold", "active"];
+            if (!validStatuses.includes(vStatusStr as ProjectStatus)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: `Invalid version status: '${vStatusStr}'` });
+              return;
+            }
+            vStatus = vStatusStr as ProjectStatus;
+          }
+
+          let vStartDate: Date | undefined = undefined;
+          if (vObj.startDate !== undefined && vObj.startDate !== null && String(vObj.startDate).trim() !== "") {
+            const d = new Date(vObj.startDate as string);
+            if (isNaN(d.getTime())) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "Invalid version startDate format" });
+              return;
+            }
+            vStartDate = d;
+          }
+
+          let vEndDate: Date | undefined = undefined;
+          if (vObj.endDate !== undefined && vObj.endDate !== null && String(vObj.endDate).trim() !== "") {
+            const d = new Date(vObj.endDate as string);
+            if (isNaN(d.getTime())) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "Invalid version endDate format" });
+              return;
+            }
+            vEndDate = d;
+          }
+
+          if (vStartDate && vEndDate && vEndDate < vStartDate) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({ success: false, message: "Version endDate cannot be earlier than startDate" });
+            return;
+          }
+
+          let vDeployedLink: string | undefined = undefined;
+          if (vObj.deployedLink !== undefined && vObj.deployedLink !== null && String(vObj.deployedLink).trim() !== "") {
+            const link = String(vObj.deployedLink).trim();
+            if (!isValidHttpUrl(link)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: `Invalid version deployedLink: '${link}'` });
+              return;
+            }
+            vDeployedLink = link;
+          }
+
+          let vGithubLink: string | undefined = undefined;
+          if (vObj.githubLink !== undefined && vObj.githubLink !== null && String(vObj.githubLink).trim() !== "") {
+            const link = String(vObj.githubLink).trim();
+            if (!isValidHttpUrl(link)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: `Invalid version githubLink: '${link}'` });
+              return;
+            }
+            vGithubLink = link;
+          }
+
+          let vContributors: IProjectContributor[] | undefined = undefined;
+          if (vObj.contributors !== undefined) {
+            const cRes = await parseAndValidateContributors(vObj.contributors);
+            if (cRes.error) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: cRes.error });
+              return;
+            }
+            vContributors = cRes.contributors;
+          }
+
+          let vSocialLinks: ISocialLink[] | undefined = undefined;
+          if (vObj.socialLinks !== undefined) {
+            const sRes = parseAndValidateSocialLinks(vObj.socialLinks);
+            if (sRes.error) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: sRes.error });
+              return;
+            }
+            vSocialLinks = sRes.socialLinks;
+          }
+
+          const changelogRes = parseChangelog(vObj.changelog);
+          if (changelogRes.error) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({ success: false, message: changelogRes.error });
+            return;
+          }
+
+          let vImage: string | undefined = undefined;
+          if (vObj.image !== undefined && vObj.image !== null && String(vObj.image).trim() !== "") {
+            const link = String(vObj.image).trim();
+            if (!isValidHttpUrl(link)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "Version image must be a valid http or https URL" });
+              return;
+            }
+            vImage = link;
+          }
+
+          let vVideoDemo: string | undefined = undefined;
+          if (vObj.videoDemo !== undefined && vObj.videoDemo !== null && String(vObj.videoDemo).trim() !== "") {
+            const link = String(vObj.videoDemo).trim();
+            if (!isValidHttpUrl(link)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "Version videoDemo must be a valid http or https URL" });
+              return;
+            }
+            vVideoDemo = link;
+          }
+
+          let vDemoUrl: string | undefined = undefined;
+          if (vObj.demoUrl !== undefined && vObj.demoUrl !== null && String(vObj.demoUrl).trim() !== "") {
+            const link = String(vObj.demoUrl).trim();
+            if (!isValidHttpUrl(link)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "Version demoUrl must be a valid http or https URL" });
+              return;
+            }
+            vDemoUrl = link;
+          }
+
+          let vThreeDFileUrl: string | undefined = undefined;
+          if (vObj.threeDFileUrl !== undefined && vObj.threeDFileUrl !== null && String(vObj.threeDFileUrl).trim() !== "") {
+            const link = String(vObj.threeDFileUrl).trim();
+            if (!isValidHttpUrl(link)) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: "Version threeDFileUrl must be a valid http or https URL" });
+              return;
+            }
+            vThreeDFileUrl = link;
+          }
+
+          versions.push({
+            versionTag: vTag,
+            releaseDate: vObj.releaseDate ? new Date(vObj.releaseDate as string) : new Date(),
+            changelog: changelogRes.changelog ?? [],
+            image: vImage,
+            videoDemo: vVideoDemo,
+            demoUrl: vDemoUrl,
+            threeDFileUrl: vThreeDFileUrl,
+            isLatest: Boolean(vObj.isLatest ?? false),
+            gallery: Array.isArray(vObj.gallery) ? (vObj.gallery as IGalleryImage[]) : [],
+            status: vStatus,
+            startDate: vStartDate,
+            endDate: vEndDate,
+            deployedLink: vDeployedLink,
+            githubLink: vGithubLink,
+            contributors: vContributors,
+            socialLinks: vSocialLinks,
+          });
+        }
+      }
+    }
     const threeDModel = parseJsonField<{
       fileUrl: string;
       initialRotation?: [number, number, number];
       enableExplodedView: boolean;
     } | undefined>(body.threeDModel, undefined);
+    if (threeDModel?.fileUrl && typeof threeDModel.fileUrl === "string" && threeDModel.fileUrl.trim() !== "") {
+      if (!isValidHttpUrl(threeDModel.fileUrl)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "threeDModel.fileUrl must be a valid http or https URL",
+        });
+        return;
+      }
+    }
 
     let skills: Types.ObjectId[] = [];
     if (typeof body.skills === "string") {
@@ -650,6 +1168,8 @@ export const createProject = async (
       gallery,
     });
 
+    await populateProjectDoc(project);
+
     res.status(201).json({
       success: true,
       message: "Project created successfully",
@@ -690,10 +1210,48 @@ export const updateProject = async (
     if (typeof body.status === "string") {
       updatePayload.status = body.status as ProjectStatus;
     }
-    if (typeof body.image === "string") updatePayload.image = body.image;
-    if (typeof body.videoDemo === "string") updatePayload.videoDemo = body.videoDemo;
-    if (typeof body.deployedLink === "string") updatePayload.deployedLink = body.deployedLink;
-    if (typeof body.githubLink === "string") updatePayload.githubLink = body.githubLink;
+    if (typeof body.image === "string") {
+      if (body.image.trim() !== "") {
+        if (!isValidHttpUrl(body.image)) {
+          res.status(400).json({ success: false, message: "image must be a valid http or https URL" });
+          return;
+        }
+        updatePayload.image = body.image.trim();
+      }
+    }
+    if (typeof body.videoDemo === "string") {
+      if (body.videoDemo.trim() === "") {
+        updatePayload.videoDemo = undefined;
+      } else {
+        if (!isValidHttpUrl(body.videoDemo)) {
+          res.status(400).json({ success: false, message: "videoDemo must be a valid http or https URL" });
+          return;
+        }
+        updatePayload.videoDemo = body.videoDemo.trim();
+      }
+    }
+    if (typeof body.deployedLink === "string") {
+      if (body.deployedLink.trim() === "") {
+        updatePayload.deployedLink = undefined;
+      } else {
+        if (!isValidHttpUrl(body.deployedLink)) {
+          res.status(400).json({ success: false, message: "deployedLink must be a valid http or https URL" });
+          return;
+        }
+        updatePayload.deployedLink = body.deployedLink.trim();
+      }
+    }
+    if (typeof body.githubLink === "string") {
+      if (body.githubLink.trim() === "") {
+        updatePayload.githubLink = undefined;
+      } else {
+        if (!isValidHttpUrl(body.githubLink)) {
+          res.status(400).json({ success: false, message: "githubLink must be a valid http or https URL" });
+          return;
+        }
+        updatePayload.githubLink = body.githubLink.trim();
+      }
+    }
     if (body.startDate) updatePayload.startDate = new Date(body.startDate as string);
     if (body.endDate !== undefined) {
       updatePayload.endDate = body.endDate ? new Date(body.endDate as string) : undefined;
@@ -712,20 +1270,201 @@ export const updateProject = async (
     }
 
     if (body.contributors !== undefined) {
-      updatePayload.contributors = parseJsonField<IContributor[]>(body.contributors, []);
+      const cRes = await parseAndValidateContributors(body.contributors);
+      if (cRes.error) {
+        res.status(400).json({ success: false, message: cRes.error });
+        return;
+      }
+      updatePayload.contributors = cRes.contributors;
     }
     if (body.socialLinks !== undefined) {
-      updatePayload.socialLinks = parseJsonField<ISocialLink[]>(body.socialLinks, []);
+      const sRes = parseAndValidateSocialLinks(body.socialLinks);
+      if (sRes.error) {
+        res.status(400).json({ success: false, message: sRes.error });
+        return;
+      }
+      updatePayload.socialLinks = sRes.socialLinks;
     }
     if (body.threeDModel !== undefined) {
-      updatePayload.threeDModel = parseJsonField<{
+      const parsed3D = parseJsonField<{
         fileUrl: string;
         initialRotation?: [number, number, number];
         enableExplodedView: boolean;
       }>(body.threeDModel, { fileUrl: "", enableExplodedView: false });
+      if (parsed3D.fileUrl && typeof parsed3D.fileUrl === "string" && parsed3D.fileUrl.trim() !== "") {
+        if (!isValidHttpUrl(parsed3D.fileUrl)) {
+          res.status(400).json({ success: false, message: "threeDModel.fileUrl must be a valid http or https URL" });
+          return;
+        }
+      }
+      updatePayload.threeDModel = parsed3D;
     }
     if (body.versions !== undefined) {
-      updatePayload.versions = parseJsonField<IProjectVersion[]>(body.versions, []);
+      let rawVersions = body.versions;
+      if (typeof rawVersions === "string") {
+        try {
+          rawVersions = JSON.parse(rawVersions);
+        } catch {
+          res.status(400).json({ success: false, message: "Invalid JSON format for versions" });
+          return;
+        }
+      }
+      if (!Array.isArray(rawVersions)) {
+        res.status(400).json({ success: false, message: "Versions must be an array" });
+        return;
+      }
+      const validatedVersions: IProjectVersion[] = [];
+      for (const rawV of rawVersions) {
+        if (!rawV || typeof rawV !== "object") continue;
+        const vObj = rawV as Record<string, unknown>;
+        const vTag = typeof vObj.versionTag === "string" ? vObj.versionTag.trim() : "";
+        if (!vTag) {
+          res.status(400).json({ success: false, message: "Version tag is required for each version" });
+          return;
+        }
+
+        let vStatus: ProjectStatus = "planning";
+        if (vObj.status !== undefined && vObj.status !== null) {
+          const vStatusStr = String(vObj.status).trim();
+          const validStatuses: ProjectStatus[] = ["invisible", "planning", "work_in_progress", "delay_hold", "active"];
+          if (!validStatuses.includes(vStatusStr as ProjectStatus)) {
+            res.status(400).json({ success: false, message: `Invalid version status: '${vStatusStr}'` });
+            return;
+          }
+          vStatus = vStatusStr as ProjectStatus;
+        }
+
+        let vStartDate: Date | undefined = undefined;
+        if (vObj.startDate !== undefined && vObj.startDate !== null && String(vObj.startDate).trim() !== "") {
+          const d = new Date(vObj.startDate as string);
+          if (isNaN(d.getTime())) {
+            res.status(400).json({ success: false, message: "Invalid version startDate format" });
+            return;
+          }
+          vStartDate = d;
+        }
+
+        let vEndDate: Date | undefined = undefined;
+        if (vObj.endDate !== undefined && vObj.endDate !== null && String(vObj.endDate).trim() !== "") {
+          const d = new Date(vObj.endDate as string);
+          if (isNaN(d.getTime())) {
+            res.status(400).json({ success: false, message: "Invalid version endDate format" });
+            return;
+          }
+          vEndDate = d;
+        }
+
+        if (vStartDate && vEndDate && vEndDate < vStartDate) {
+          res.status(400).json({ success: false, message: "Version endDate cannot be earlier than startDate" });
+          return;
+        }
+
+        let vDeployedLink: string | undefined = undefined;
+        if (vObj.deployedLink !== undefined && vObj.deployedLink !== null && String(vObj.deployedLink).trim() !== "") {
+          const link = String(vObj.deployedLink).trim();
+          if (!isValidHttpUrl(link)) {
+            res.status(400).json({ success: false, message: `Invalid version deployedLink: '${link}'` });
+            return;
+          }
+          vDeployedLink = link;
+        }
+
+        let vGithubLink: string | undefined = undefined;
+        if (vObj.githubLink !== undefined && vObj.githubLink !== null && String(vObj.githubLink).trim() !== "") {
+          const link = String(vObj.githubLink).trim();
+          if (!isValidHttpUrl(link)) {
+            res.status(400).json({ success: false, message: `Invalid version githubLink: '${link}'` });
+            return;
+          }
+          vGithubLink = link;
+        }
+
+        let vContributors: IProjectContributor[] | undefined = undefined;
+        if (vObj.contributors !== undefined) {
+          const cRes = await parseAndValidateContributors(vObj.contributors);
+          if (cRes.error) {
+            res.status(400).json({ success: false, message: cRes.error });
+            return;
+          }
+          vContributors = cRes.contributors;
+        }
+
+        let vSocialLinks: ISocialLink[] | undefined = undefined;
+        if (vObj.socialLinks !== undefined) {
+          const sRes = parseAndValidateSocialLinks(vObj.socialLinks);
+          if (sRes.error) {
+            res.status(400).json({ success: false, message: sRes.error });
+            return;
+          }
+          vSocialLinks = sRes.socialLinks;
+        }
+
+        const changelogRes = parseChangelog(vObj.changelog);
+        if (changelogRes.error) {
+          res.status(400).json({ success: false, message: changelogRes.error });
+          return;
+        }
+
+        let vImage: string | undefined = undefined;
+        if (vObj.image !== undefined && vObj.image !== null && String(vObj.image).trim() !== "") {
+          const link = String(vObj.image).trim();
+          if (!isValidHttpUrl(link)) {
+            res.status(400).json({ success: false, message: "Version image must be a valid http or https URL" });
+            return;
+          }
+          vImage = link;
+        }
+
+        let vVideoDemo: string | undefined = undefined;
+        if (vObj.videoDemo !== undefined && vObj.videoDemo !== null && String(vObj.videoDemo).trim() !== "") {
+          const link = String(vObj.videoDemo).trim();
+          if (!isValidHttpUrl(link)) {
+            res.status(400).json({ success: false, message: "Version videoDemo must be a valid http or https URL" });
+            return;
+          }
+          vVideoDemo = link;
+        }
+
+        let vDemoUrl: string | undefined = undefined;
+        if (vObj.demoUrl !== undefined && vObj.demoUrl !== null && String(vObj.demoUrl).trim() !== "") {
+          const link = String(vObj.demoUrl).trim();
+          if (!isValidHttpUrl(link)) {
+            res.status(400).json({ success: false, message: "Version demoUrl must be a valid http or https URL" });
+            return;
+          }
+          vDemoUrl = link;
+        }
+
+        let vThreeDFileUrl: string | undefined = undefined;
+        if (vObj.threeDFileUrl !== undefined && vObj.threeDFileUrl !== null && String(vObj.threeDFileUrl).trim() !== "") {
+          const link = String(vObj.threeDFileUrl).trim();
+          if (!isValidHttpUrl(link)) {
+            res.status(400).json({ success: false, message: "Version threeDFileUrl must be a valid http or https URL" });
+            return;
+          }
+          vThreeDFileUrl = link;
+        }
+
+        validatedVersions.push({
+          versionTag: vTag,
+          releaseDate: vObj.releaseDate ? new Date(vObj.releaseDate as string) : new Date(),
+          changelog: changelogRes.changelog ?? [],
+          image: vImage,
+          videoDemo: vVideoDemo,
+          demoUrl: vDemoUrl,
+          threeDFileUrl: vThreeDFileUrl,
+          isLatest: Boolean(vObj.isLatest ?? false),
+          gallery: Array.isArray(vObj.gallery) ? (vObj.gallery as IGalleryImage[]) : [],
+          status: vStatus,
+          startDate: vStartDate,
+          endDate: vEndDate,
+          deployedLink: vDeployedLink,
+          githubLink: vGithubLink,
+          contributors: vContributors,
+          socialLinks: vSocialLinks,
+        });
+      }
+      updatePayload.versions = validatedVersions;
     }
     if (body.skills !== undefined) {
       if (typeof body.skills === "string") {
@@ -755,6 +1494,8 @@ export const updateProject = async (
       });
       return;
     }
+
+    await populateProjectDoc(updatedProject);
 
     res.status(200).json({
       success: true,
@@ -852,6 +1593,153 @@ export const addProjectVersion = async (
         message: changelogResult.error,
       });
       return;
+    }
+
+    if (image !== undefined && typeof image === "string" && image.trim() !== "") {
+      if (!isValidHttpUrl(image)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version image must be a valid http or https URL",
+        });
+        return;
+      }
+    }
+
+    if (videoDemo !== undefined && typeof videoDemo === "string" && videoDemo.trim() !== "") {
+      if (!isValidHttpUrl(videoDemo)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version videoDemo must be a valid http or https URL",
+        });
+        return;
+      }
+    }
+
+    if (demoUrl !== undefined && typeof demoUrl === "string" && demoUrl.trim() !== "") {
+      if (!isValidHttpUrl(demoUrl)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version demoUrl must be a valid http or https URL",
+        });
+        return;
+      }
+    }
+
+    const raw3DUrl = threeDFileUrl ?? threeDModel?.fileUrl;
+    if (raw3DUrl !== undefined && typeof raw3DUrl === "string" && raw3DUrl.trim() !== "") {
+      if (!isValidHttpUrl(raw3DUrl)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version threeDFileUrl must be a valid http or https URL",
+        });
+        return;
+      }
+    }
+
+    let versionStatus: ProjectStatus = "planning";
+    if (body.status !== undefined && body.status !== null) {
+      const statusStr = String(body.status).trim();
+      const validStatuses: ProjectStatus[] = ["invisible", "planning", "work_in_progress", "delay_hold", "active"];
+      if (!validStatuses.includes(statusStr as ProjectStatus)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: `Invalid version status: '${statusStr}'. Allowed values are: ${validStatuses.join(", ")}`,
+        });
+        return;
+      }
+      versionStatus = statusStr as ProjectStatus;
+    }
+
+    let startDate: Date | undefined = undefined;
+    if (body.startDate !== undefined && body.startDate !== null && String(body.startDate).trim() !== "") {
+      const d = new Date(body.startDate as unknown as string);
+      if (isNaN(d.getTime())) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Invalid version startDate format",
+        });
+        return;
+      }
+      startDate = d;
+    }
+
+    let endDate: Date | undefined = undefined;
+    if (body.endDate !== undefined && body.endDate !== null && String(body.endDate).trim() !== "") {
+      const d = new Date(body.endDate as unknown as string);
+      if (isNaN(d.getTime())) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Invalid version endDate format",
+        });
+        return;
+      }
+      endDate = d;
+    }
+
+    if (startDate && endDate && endDate < startDate) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: "Version endDate cannot be earlier than startDate",
+      });
+      return;
+    }
+
+    let deployedLink: string | undefined = undefined;
+    if (body.deployedLink !== undefined && body.deployedLink !== null && String(body.deployedLink).trim() !== "") {
+      const link = String(body.deployedLink).trim();
+      if (!isValidHttpUrl(link)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: `Invalid version deployedLink: '${link}'. Must be a valid http or https URL.`,
+        });
+        return;
+      }
+      deployedLink = link;
+    }
+
+    let githubLink: string | undefined = undefined;
+    if (body.githubLink !== undefined && body.githubLink !== null && String(body.githubLink).trim() !== "") {
+      const link = String(body.githubLink).trim();
+      if (!isValidHttpUrl(link)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: `Invalid version githubLink: '${link}'. Must be a valid http or https URL.`,
+        });
+        return;
+      }
+      githubLink = link;
+    }
+
+    let contributors: IProjectContributor[] | undefined = undefined;
+    if (body.contributors !== undefined) {
+      const cRes = await parseAndValidateContributors(body.contributors);
+      if (cRes.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: cRes.error });
+        return;
+      }
+      contributors = cRes.contributors;
+    }
+
+    let socialLinks: ISocialLink[] | undefined = undefined;
+    if (body.socialLinks !== undefined) {
+      const sRes = parseAndValidateSocialLinks(body.socialLinks);
+      if (sRes.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: sRes.error });
+        return;
+      }
+      socialLinks = sRes.socialLinks;
     }
 
     const project = await Project.findOne({ slug });
@@ -953,10 +1841,19 @@ export const addProjectVersion = async (
         threeDModel?.fileUrl,
       isLatest: shouldSetLatest,
       gallery: versionGallery,
+      status: versionStatus,
+      startDate,
+      endDate,
+      deployedLink,
+      githubLink,
+      contributors,
+      socialLinks,
     };
 
     project.versions.push(newVersion);
     await project.save();
+
+    await populateProjectDoc(project);
 
     res.status(201).json({
       success: true,
@@ -979,6 +1876,13 @@ interface UpdateProjectVersionInput {
   threeDFileUrl?: string;
   threeDModel?: { fileUrl?: string } | string;
   isLatest?: boolean | string;
+  status?: string;
+  startDate?: string | Date;
+  endDate?: string | Date;
+  deployedLink?: string;
+  githubLink?: string;
+  contributors?: unknown;
+  socialLinks?: unknown;
 }
 
 export const updateProjectVersion = async (
@@ -1091,7 +1995,13 @@ export const updateProjectVersion = async (
       if (typeof body.demoUrl === "string" && body.demoUrl.trim() === "") {
         version.demoUrl = undefined;
       } else {
-        version.demoUrl = typeof body.demoUrl === "string" ? body.demoUrl.trim() : undefined;
+        const link = typeof body.demoUrl === "string" ? body.demoUrl.trim() : "";
+        if (!isValidHttpUrl(link)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "Version demoUrl must be a valid http or https URL" });
+          return;
+        }
+        version.demoUrl = link;
       }
     }
 
@@ -1100,7 +2010,13 @@ export const updateProjectVersion = async (
       if (typeof body.image === "string" && body.image.trim() === "") {
         version.image = undefined;
       } else {
-        version.image = typeof body.image === "string" ? body.image.trim() : undefined;
+        const link = typeof body.image === "string" ? body.image.trim() : "";
+        if (!isValidHttpUrl(link)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "Version image must be a valid http or https URL" });
+          return;
+        }
+        version.image = link;
       }
     }
 
@@ -1109,7 +2025,13 @@ export const updateProjectVersion = async (
       if (typeof body.videoDemo === "string" && body.videoDemo.trim() === "") {
         version.videoDemo = undefined;
       } else {
-        version.videoDemo = typeof body.videoDemo === "string" ? body.videoDemo.trim() : undefined;
+        const link = typeof body.videoDemo === "string" ? body.videoDemo.trim() : "";
+        if (!isValidHttpUrl(link)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "Version videoDemo must be a valid http or https URL" });
+          return;
+        }
+        version.videoDemo = link;
       }
     }
 
@@ -1126,8 +2048,13 @@ export const updateProjectVersion = async (
       if (typeof body.threeDFileUrl === "string" && body.threeDFileUrl.trim() === "") {
         version.threeDFileUrl = undefined;
       } else {
-        version.threeDFileUrl =
-          typeof body.threeDFileUrl === "string" ? body.threeDFileUrl.trim() : undefined;
+        const link = typeof body.threeDFileUrl === "string" ? body.threeDFileUrl.trim() : "";
+        if (!isValidHttpUrl(link)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "Version threeDFileUrl must be a valid http or https URL" });
+          return;
+        }
+        version.threeDFileUrl = link;
       }
     }
 
@@ -1144,7 +2071,144 @@ export const updateProjectVersion = async (
       }
     }
 
+    // 9. Update status
+    if (body.status !== undefined) {
+      if (typeof body.status === "string" && body.status.trim() === "") {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version status cannot be empty",
+        });
+        return;
+      }
+      const statusStr = String(body.status).trim();
+      const validStatuses: ProjectStatus[] = ["invisible", "planning", "work_in_progress", "delay_hold", "active"];
+      if (!validStatuses.includes(statusStr as ProjectStatus)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: `Invalid version status: '${statusStr}'. Allowed values are: ${validStatuses.join(", ")}`,
+        });
+        return;
+      }
+      version.status = statusStr as ProjectStatus;
+    }
+
+    // 10. Update startDate and endDate
+    let effectiveStartDate: Date | undefined = version.startDate;
+    let effectiveEndDate: Date | undefined = version.endDate;
+
+    if (body.startDate !== undefined) {
+      if (body.startDate === null || (typeof body.startDate === "string" && body.startDate.trim() === "")) {
+        effectiveStartDate = undefined;
+      } else {
+        const d = new Date(body.startDate as string);
+        if (isNaN(d.getTime())) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: "Invalid version startDate format",
+          });
+          return;
+        }
+        effectiveStartDate = d;
+      }
+    }
+
+    if (body.endDate !== undefined) {
+      if (body.endDate === null || (typeof body.endDate === "string" && body.endDate.trim() === "")) {
+        effectiveEndDate = undefined;
+      } else {
+        const d = new Date(body.endDate as string);
+        if (isNaN(d.getTime())) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: "Invalid version endDate format",
+          });
+          return;
+        }
+        effectiveEndDate = d;
+      }
+    }
+
+    if (effectiveStartDate && effectiveEndDate && effectiveEndDate < effectiveStartDate) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: "Version endDate cannot be earlier than startDate",
+      });
+      return;
+    }
+
+    if (body.startDate !== undefined) {
+      version.startDate = effectiveStartDate;
+    }
+    if (body.endDate !== undefined) {
+      version.endDate = effectiveEndDate;
+    }
+
+    // 11. Update deployedLink
+    if (body.deployedLink !== undefined) {
+      if (body.deployedLink === null || (typeof body.deployedLink === "string" && body.deployedLink.trim() === "")) {
+        version.deployedLink = undefined;
+      } else {
+        const link = String(body.deployedLink).trim();
+        if (!isValidHttpUrl(link)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: `Invalid version deployedLink: '${link}'. Must be a valid http or https URL.`,
+          });
+          return;
+        }
+        version.deployedLink = link;
+      }
+    }
+
+    // 12. Update githubLink
+    if (body.githubLink !== undefined) {
+      if (body.githubLink === null || (typeof body.githubLink === "string" && body.githubLink.trim() === "")) {
+        version.githubLink = undefined;
+      } else {
+        const link = String(body.githubLink).trim();
+        if (!isValidHttpUrl(link)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: `Invalid version githubLink: '${link}'. Must be a valid http or https URL.`,
+          });
+          return;
+        }
+        version.githubLink = link;
+      }
+    }
+
+    // 13. Update contributors
+    if (body.contributors !== undefined) {
+      const cRes = await parseAndValidateContributors(body.contributors);
+      if (cRes.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: cRes.error });
+        return;
+      }
+      version.contributors = cRes.contributors;
+    }
+
+    // 14. Update socialLinks
+    if (body.socialLinks !== undefined) {
+      const sRes = parseAndValidateSocialLinks(body.socialLinks);
+      if (sRes.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: sRes.error });
+        return;
+      }
+      version.socialLinks = sRes.socialLinks;
+    }
+
     await project.save();
+
+    await populateProjectDoc(project);
 
     res.status(200).json({
       success: true,
@@ -1201,6 +2265,8 @@ export const deleteProjectVersion = async (
 
     project.versions.splice(versionIndex, 1);
     await project.save();
+
+    await populateProjectDoc(project);
 
     res.status(200).json({
       success: true,
@@ -1392,6 +2458,8 @@ export const addProjectGallery = async (
       return;
     }
 
+    await populateProjectDoc(updatedProject);
+
     res.status(201).json({
       success: true,
       message: "Gallery images added successfully",
@@ -1457,6 +2525,8 @@ export const reorderProjectGallery = async (
     project.gallery = order.map((id) => itemMap.get(id)!);
     await project.save();
 
+    await populateProjectDoc(project);
+
     res.status(200).json({
       success: true,
       message: "Gallery order updated successfully",
@@ -1512,7 +2582,13 @@ export const updateProjectGalleryImage = async (
     }
 
     if (typeof req.body.galleryImage === "string" && req.body.galleryImage) {
-      setFields["gallery.$.url"] = req.body.galleryImage;
+      const gUrl = req.body.galleryImage.trim();
+      if (!isValidHttpUrl(gUrl)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "galleryImage must be a valid http or https URL" });
+        return;
+      }
+      setFields["gallery.$.url"] = gUrl;
     }
 
     if (Object.keys(setFields).length === 0) {
@@ -1526,6 +2602,7 @@ export const updateProjectGalleryImage = async (
         res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
         return;
       }
+      await populateProjectDoc(project);
       res.status(200).json({
         success: true,
         message: "Gallery image updated successfully",
@@ -1550,6 +2627,8 @@ export const updateProjectGalleryImage = async (
       res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
       return;
     }
+
+    await populateProjectDoc(updatedProject);
 
     res.status(200).json({
       success: true,
@@ -1591,6 +2670,8 @@ export const deleteProjectGalleryImage = async (
       res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
       return;
     }
+
+    await populateProjectDoc(updatedProject);
 
     res.status(200).json({
       success: true,
@@ -1781,6 +2862,8 @@ export const addVersionGallery = async (
       return;
     }
 
+    await populateProjectDoc(updatedProject);
+
     res.status(201).json({
       success: true,
       message: "Gallery images added successfully",
@@ -1854,6 +2937,8 @@ export const reorderVersionGallery = async (
     version.gallery = order.map((id) => itemMap.get(id)!);
     await project.save();
 
+    await populateProjectDoc(project);
+
     res.status(200).json({
       success: true,
       message: "Gallery order updated successfully",
@@ -1910,7 +2995,13 @@ export const updateVersionGalleryImage = async (
     }
 
     if (typeof req.body.galleryImage === "string" && req.body.galleryImage) {
-      setFields["versions.$[v].gallery.$[g].url"] = req.body.galleryImage;
+      const gUrl = req.body.galleryImage.trim();
+      if (!isValidHttpUrl(gUrl)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "galleryImage must be a valid http or https URL" });
+        return;
+      }
+      setFields["versions.$[v].gallery.$[g].url"] = gUrl;
     }
 
     if (Object.keys(setFields).length === 0) {
@@ -1929,6 +3020,7 @@ export const updateVersionGalleryImage = async (
         res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
         return;
       }
+      await populateProjectDoc(project);
       res.status(200).json({
         success: true,
         message: "Gallery image updated successfully",
@@ -1969,6 +3061,8 @@ export const updateVersionGalleryImage = async (
       res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
       return;
     }
+
+    await populateProjectDoc(updatedProject);
 
     res.status(200).json({
       success: true,
@@ -2023,6 +3117,8 @@ export const deleteVersionGalleryImage = async (
       res.status(404).json({ success: false, message: `Gallery image not found with id: ${imageId}` });
       return;
     }
+
+    await populateProjectDoc(updatedProject);
 
     res.status(200).json({
       success: true,

@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from "express";
 import { SiteConfig, IPfpItem } from "../models/SiteConfig";
 import cloudinary from "../config/cloudinary";
 import { sanitizeResumePublicId } from "../middlewares/uploadMiddleware";
+import { isValidHttpUrl } from "../utils/stringUtils";
 
 const parseJobTitles = (input: unknown): string[] | undefined => {
   if (typeof input === "string") {
@@ -134,6 +135,27 @@ export const createSiteConfig = async (
       return;
     }
 
+    const cleanResumeUrl = typeof resumeUrl === "string" ? resumeUrl.trim() : "";
+    if (!isValidHttpUrl(cleanResumeUrl)) {
+      await cleanupUploadedResume(req);
+      res.status(400).json({
+        success: false,
+        message: "resumeUrl must be a valid http or https URL",
+      });
+      return;
+    }
+
+    if (pfpUrl && typeof pfpUrl === "string" && pfpUrl.trim() !== "") {
+      if (!isValidHttpUrl(pfpUrl.trim())) {
+        await cleanupUploadedResume(req);
+        res.status(400).json({
+          success: false,
+          message: "pfpUrl must be a valid http or https URL",
+        });
+        return;
+      }
+    }
+
     if ((pfpUrl && !pfpPublicId) || (!pfpUrl && pfpPublicId)) {
       await cleanupUploadedResume(req);
       res.status(400).json({
@@ -205,6 +227,16 @@ export const updateSiteConfig = async (
       res.status(400).json({
         success: false,
         message: `Missing required fields: ${missingFields.join(", ")}`,
+      });
+      return;
+    }
+
+    const cleanResumeUrl = typeof resumeUrl === "string" ? resumeUrl.trim() : "";
+    if (!isValidHttpUrl(cleanResumeUrl)) {
+      await cleanupUploadedResume(req);
+      res.status(400).json({
+        success: false,
+        message: "resumeUrl must be a valid http or https URL",
       });
       return;
     }
