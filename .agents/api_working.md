@@ -100,7 +100,7 @@ Every URL string field written to the database (on create or update, when provid
 - **Rejected Schemes & Formats:** Dangerous schemes (`javascript:`, `data:`, `vbscript:`, `file:`, `ftp:`), protocol-relative URLs (`//host`), relative paths, embedded whitespace, and control characters (`\x00-\x1f`, `\x7f`) return `400 Bad Request` naming the invalid field.
 - **Audited & Validated Fields Across Collections:**
   - `Contributor`: `profilePicUrl`, `profileLink` (create & update)
-  - `Project`: `image`, `videoDemo`, `deployedLink`, `githubLink`, `threeDModel.fileUrl`, `socialLinks[].url` (create & update), plus inline/nested version fields (`image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url`) during create and `versions` array overwrite on `PUT /:id`
+  - `Project`: `image`, `videoDemo`, `deployedLink`, `githubLink`, `threeDModel.fileUrl`, `socialLinks[].url` (create & update)
   - `Version`: `image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url` (`POST /:slug/versions` & `PUT /:slug/versions/:versionId`)
   - `Skill`: `logoUrl` (create & update)
   - `Certificate`: `mediaUrl`, `link` (create & update)
@@ -225,6 +225,7 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
   - `tags`: Normalized to lowercase trimmed strings.
   - `status`: Default `"planning"`.
   - `gallery`: Creation-time gallery items parsed and validated (max 30 items).
+  - `versions`: Explicitly ignored if sent in the payload; every newly created project always starts with `versions: []`. Version releases must be appended via `POST /api/v1/projects/:slug/versions`.
 - **Rollback Hook:** On failure (`400`, `409`, `500`), calls `cleanupUploadedVersionMedia(req)` destroying all uploaded gallery and project assets in Cloudinary.
 - **DB Error Handling:** Duplicate slug triggers Mongo Error 11000 $\rightarrow$ translated to `409 Conflict`.
 
@@ -233,7 +234,7 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
 - **Validation:** Verifies `Types.ObjectId.isValid(req.params.id)`.
 - **Target Model:** `Project`
 - **DB Operation:** `Project.findByIdAndUpdate(id, updatePayload, { new: true, runValidators: true })`
-- **Behavior:** Updates provided fields (including nested objects such as `threeDModel`, `contributors`, `socialLinks`, and `skills`). Explicitly excludes and ignores any `gallery` field sent in the payload so project updates can never overwrite or clear the gallery. Returns updated document with `gallery: []` guaranteed.
+- **Behavior:** Updates provided fields (including nested objects such as `threeDModel`, `contributors`, `socialLinks`, and `skills`). Explicitly excludes and ignores any `gallery` and `versions` fields sent in the payload so project updates can never overwrite or clear gallery items or version releases. Returns updated document with `gallery: []` guaranteed.
 
 #### `DELETE /api/v1/projects/:id`
 - **Scope:** Protected (`authMiddleware`)
@@ -1004,8 +1005,8 @@ Because file uploads occur during the Express middleware pipeline **before** the
 | `GET` | `/api/v1/projects/categories` | Public | `Project` | `distinct()` | Categories where `status != invisible` |
 | `GET` | `/api/v1/projects/:slug` | Public* | `Project` | `findOne().lean()` | By `slug`; rejects `invisible` if not admin (guarantees `gallery: []`) |
 | `GET` | `/api/v1/admin/projects` | Admin | `Project` | `find().sort().lean()` | No status filter (includes `invisible`/drafts); optional `status`, `category`, `featured`, `tag` (guarantees `gallery: []`) |
-| `POST` | `/api/v1/projects` | Admin | `Project` | `create()` | Creates project, normalizes tags/skills, verifies unique slug, creation-time gallery |
-| `PUT` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndUpdate()` | Partial update by `_id`, runs validators (ignores `gallery`) |
+| `POST` | `/api/v1/projects` | Admin | `Project` | `create()` | Creates project, normalizes tags/skills, verifies unique slug, creation-time gallery (ignores `versions`, starts with `versions: []`) |
+| `PUT` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndUpdate()` | Partial update by `_id`, runs validators (ignores `gallery` and `versions`) |
 | `DELETE` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndDelete()` | Removes project by `_id` |
 | `POST` | `/api/v1/projects/:slug/versions` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Appends version; resets `isLatest` if new is latest, creation-time gallery |
 | `PUT` | `/api/v1/projects/:slug/versions/:versionId` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | In-place update of version; tag duplicate check; single-truth `isLatest`; upload cleanup on failure (ignores `gallery`) |

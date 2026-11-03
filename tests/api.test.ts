@@ -223,6 +223,36 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
     });
+
+    it("POST /api/v1/projects ignores versions field and always starts with versions: []", async () => {
+      (Project.create as jest.Mock).mockImplementation((data) =>
+        Promise.resolve({ _id: "60c72b2f9b1d8b2bad000001", ...data })
+      );
+
+      const res = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "Project Zero",
+          category: "web",
+          description: "Testing versions ignore",
+          image: "https://example.com/test.png",
+          versions: [
+            {
+              versionTag: "x",
+              gallery: [{ url: "javascript:alert(1)" }],
+            },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(Project.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          versions: [],
+        })
+      );
+    });
   });
 
   describe("Multer & Cloudinary Media Upload Routing", () => {
@@ -406,6 +436,37 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.title).toBe("Updated Title");
+    });
+
+    it("PUT /api/v1/projects/:id ignores versions field in payload", async () => {
+      const updatedProject = {
+        _id: "60c72b2f9b1d8b2bad000001",
+        title: "Updated Title",
+        versions: [{ versionTag: "v1.0.0" }],
+      };
+
+      (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue(updatedProject);
+
+      const res = await request(app)
+        .put("/api/v1/projects/60c72b2f9b1d8b2bad000001")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "Updated Title",
+          versions: [
+            {
+              versionTag: "malicious",
+              gallery: [{ url: "javascript:alert(1)" }],
+            },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+        "60c72b2f9b1d8b2bad000001",
+        expect.not.objectContaining({ versions: expect.anything() }),
+        expect.any(Object)
+      );
     });
 
     it("DELETE /api/v1/projects/:id deletes project", async () => {

@@ -59,7 +59,7 @@ HTTP Request
   - Dangerous protocols (`javascript:`, `data:`, `vbscript:`, `file:`, `ftp:`), protocol-relative URLs (`//host`), relative paths, embedded whitespace, and control characters (`\x00-\x1f`, `\x7f`) are rejected with `400 Bad Request` naming the offending field.
   - Applies to all writable URL fields across collections:
     - **Contributor**: `profilePicUrl`, `profileLink`
-    - **Project**: `image`, `videoDemo`, `deployedLink`, `githubLink`, `threeDModel.fileUrl`, `socialLinks[].url`, and inline/nested `versions[].image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url`
+    - **Project**: `image`, `videoDemo`, `deployedLink`, `githubLink`, `threeDModel.fileUrl`, `socialLinks[].url`
     - **Version**: `image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url`
     - **Skill**: `logoUrl`
     - **Certificate**: `mediaUrl`, `link`
@@ -298,9 +298,9 @@ HTTP Request
   - `deployedLink` (optional string URL)
   - `githubLink` (optional string URL)
   - `threeDModel` (optional object `{ fileUrl, initialRotation: [x,y,z], enableExplodedView }`, JSON string in multipart, or file upload)
-  - `versions` (optional array of `IProjectVersion`, JSON string in multipart)
   - `galleryMeta` (optional JSON string array in multipart aligned with `galleryImages`, e.g. `'[{"tags":["hero"],"caption":"Main banner"}]'`)
-- **Response Guarantee**: Response `data` includes `gallery: []` if empty.
+- **Versions Invariant**: `POST /api/v1/projects` ignores any `versions` field sent in the payload; a newly created project always starts with `versions: []`. Version releases must be added through the dedicated version endpoint (`POST /api/v1/projects/:slug/versions`).
+- **Response Guarantee**: Response `data` includes `gallery: []` and `versions: []` if empty.
 - **Response**: `201 Created`
 ```json
 {
@@ -317,6 +317,7 @@ HTTP Request
 - **Upload Fields**: `image`, `videoDemo`, `threeDModel`
 - **Behavior**: Partial update of supplied fields. Empty string for `endDate` clears the date.
 - **Gallery Invariant**: `PUT /api/v1/projects/:id` must **NOT** change `gallery` (the field is ignored if sent) so a general project edit can never overwrite gallery items.
+- **Versions Invariant**: `PUT /api/v1/projects/:id` must **NOT** change `versions` (the field is ignored if sent); stored project versions remain unchanged. Version modifications must be performed through the dedicated version endpoints (`POST/PUT/DELETE /api/v1/projects/:slug/versions...`).
 - **Response**: `200 OK`
 ```json
 {

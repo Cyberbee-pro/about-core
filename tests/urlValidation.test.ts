@@ -260,14 +260,60 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
         }
       );
 
-      it("rejects invalid URL in inline version and rolls back uploaded gallery files", async () => {
+      it("ignores versions payload on POST /api/v1/projects and creates project with versions: []", async () => {
         (Project.findOne as jest.Mock).mockResolvedValue(null);
+        (Project.create as jest.Mock).mockImplementation((data) =>
+          Promise.resolve({ _id: validId, ...data })
+        );
+
+        const maliciousPayload = [
+          {
+            versionTag: "x",
+            tags: ["INVALID TAG!"],
+            contributors: ["non-existent-id"],
+            gallery: [
+              {
+                url: "javascript:alert(1)",
+                tags: ["bad-tag!"],
+                caption: "x".repeat(300),
+              },
+            ],
+          },
+        ];
+
+        const res = await request(app)
+          .post("/api/v1/projects")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({
+            title: "Project With Ignored Versions",
+            category: "web",
+            description: "A project",
+            image: "https://example.com/img.png",
+            versions: maliciousPayload,
+          });
+
+        expect(res.status).toBe(201);
+        expect(res.body.success).toBe(true);
+        expect(res.body.data.versions).toEqual([]);
+        expect(Project.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "Project With Ignored Versions",
+            versions: [],
+          })
+        );
+      });
+
+      it("ignores versions in multipart POST /api/v1/projects without rolling back valid uploads", async () => {
+        (Project.findOne as jest.Mock).mockResolvedValue(null);
+        (Project.create as jest.Mock).mockImplementation((data) =>
+          Promise.resolve({ _id: validId, ...data })
+        );
 
         const fakeBuffer = Buffer.from("fake-png-bytes");
         const res = await request(app)
           .post("/api/v1/projects")
           .set("Authorization", "Bearer test-secret-token")
-          .field("title", "Project With Gallery")
+          .field("title", "Multipart Project With Versions")
           .field("category", "web")
           .field("description", "A project")
           .field("image", "https://example.com/img.png")
@@ -275,8 +321,8 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
             "versions",
             JSON.stringify([
               {
-                versionTag: "v1.0.0",
-                image: "javascript:alert(1)",
+                versionTag: "x",
+                gallery: [{ url: "javascript:alert(1)" }],
               },
             ])
           )
@@ -285,9 +331,15 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
             contentType: "image/png",
           });
 
-        expect(res.status).toBe(400);
-        expect(res.body.message).toMatch(/Version image.*http.*https/i);
-        expect(mockDestroy).toHaveBeenCalled();
+        expect(res.status).toBe(201);
+        expect(res.body.success).toBe(true);
+        expect(res.body.data.versions).toEqual([]);
+        expect(Project.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            versions: [],
+          })
+        );
+        expect(mockDestroy).not.toHaveBeenCalled();
       });
     });
 
@@ -390,21 +442,46 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
         );
       });
 
-      it("rejects invalid URLs in versions overwrite on PUT /:id", async () => {
+      it("ignores versions payload on PUT /api/v1/projects/:id (including javascript: gallery URL, bad tags and invalid contributors)", async () => {
+        const existingVersions = [
+          {
+            _id: "60c72b2f9b1d8b2bad000088",
+            versionTag: "v1.0.0",
+            gallery: [],
+          },
+        ];
+        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+          _id: validId,
+          title: "Existing Project",
+          slug: "existing-project",
+          category: "web",
+          versions: existingVersions,
+        });
+
+        const maliciousVersions = [
+          {
+            versionTag: "x",
+            tags: ["INVALID TAG!"],
+            contributors: ["non-existent-contributor-id"],
+            gallery: [{ url: "javascript:alert(1)" }],
+          },
+        ];
+
         const res = await request(app)
           .put(`/api/v1/projects/${validId}`)
           .set("Authorization", "Bearer test-secret-token")
           .send({
-            versions: [
-              {
-                versionTag: "v1.0.0",
-                demoUrl: "ftp://invalid-demo",
-              },
-            ],
+            title: "Updated Title",
+            versions: maliciousVersions,
           });
 
-        expect(res.status).toBe(400);
-        expect(res.body.message).toMatch(/Version demoUrl.*http.*https/i);
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+          validId,
+          expect.not.objectContaining({ versions: expect.anything() }),
+          expect.anything()
+        );
       });
     });
   });
