@@ -5,7 +5,7 @@ import { Experience } from "@/models/Experience";
 import { Certificate } from "@/models/Certificate";
 import { Project } from "@/models/Project";
 import { SiteConfig, migrateSiteConfigResumeUrl } from "@/models/SiteConfig";
-import { Contributor } from "@/models/Contributor";
+import { Person } from "@/models/Person";
 
 /**
  * These tests validate Mongoose schema definitions using `document.validate()`
@@ -393,47 +393,47 @@ describe("Certificate Model", () => {
   });
 });
 
-// ─── Contributor Model ────────────────────────────────────────────────────────
+// ─── Person Model ─────────────────────────────────────────────────────────────
 
-describe("Contributor Model", () => {
-  const validContributorData = {
+describe("Person Model", () => {
+  const validPersonData = {
     name: "Ada Lovelace",
-    profilePicUrl: "https://cdn.example.com/contributors/ada.png",
+    profilePicUrl: "https://cdn.example.com/people/ada.png",
     profileLink: "https://ada.dev",
   };
 
-  it("validates a well-formed contributor document", () => {
-    const doc = new Contributor(validContributorData);
+  it("validates a well-formed person document", () => {
+    const doc = new Person(validPersonData);
     const error = doc.validateSync();
     expect(error).toBeUndefined();
   });
 
   it("trims the name field", () => {
-    const doc = new Contributor({
-      ...validContributorData,
+    const doc = new Person({
+      ...validPersonData,
       name: "   Ada Lovelace   ",
     });
     expect(doc.name).toBe("Ada Lovelace");
   });
 
   it("fails validation when name is missing", () => {
-    const { name: _n, ...noName } = validContributorData;
-    const doc = new Contributor(noName);
+    const { name: _n, ...noName } = validPersonData;
+    const doc = new Person(noName);
     const error = doc.validateSync();
     expect(error).toBeDefined();
     expect(error!.errors.name).toBeDefined();
   });
 
   it("fails validation when profilePicUrl is missing", () => {
-    const { profilePicUrl: _p, ...noPic } = validContributorData;
-    const doc = new Contributor(noPic);
+    const { profilePicUrl: _p, ...noPic } = validPersonData;
+    const doc = new Person(noPic);
     const error = doc.validateSync();
     expect(error).toBeDefined();
     expect(error!.errors.profilePicUrl).toBeDefined();
   });
 
   it("accepts valid optional profileLink", () => {
-    const doc = new Contributor({
+    const doc = new Person({
       name: "Ada Lovelace",
       profilePicUrl: "https://cdn.example.com/ada.png",
       profileLink: "https://ada.dev",
@@ -444,8 +444,8 @@ describe("Contributor Model", () => {
   });
 
   it("fails validation when profileLink is not a valid http/https URL", () => {
-    const doc = new Contributor({
-      ...validContributorData,
+    const doc = new Person({
+      ...validPersonData,
       profileLink: "ftp://invalid-url.com",
     });
     const error = doc.validateSync();
@@ -453,8 +453,9 @@ describe("Contributor Model", () => {
     expect(error!.errors.profileLink).toBeDefined();
   });
 
-  it("sets the correct model name", () => {
-    expect(Contributor.modelName).toBe("Contributor");
+  it("sets the correct model name and collection name", () => {
+    expect(Person.modelName).toBe("Person");
+    expect(Person.collection.collectionName).toBe("people");
   });
 });
 
@@ -651,6 +652,132 @@ describe("Project Model - Version Metadata & Contributors Join", () => {
     const raw = project.toObject() as unknown as { contributors: Array<Record<string, unknown>> };
     expect(raw.contributors[0]._id).toBeUndefined();
     expect(raw.contributors[0].role).toBe("Tester");
+  });
+
+  it("references Person model in contributor join subdocuments", () => {
+    const projContrRef = (Project.schema.path("contributors") as unknown as { schema: { path: (p: string) => { options: { ref: string } } } })
+      .schema.path("contributor").options.ref;
+    expect(projContrRef).toBe("Person");
+
+    const verSchema = (Project.schema.path("versions") as unknown as { schema: mongoose.Schema }).schema;
+    const verContrRef = (verSchema.path("contributors") as unknown as { schema: { path: (p: string) => { options: { ref: string } } } })
+      .schema.path("contributor").options.ref;
+    expect(verContrRef).toBe("Person");
+  });
+
+  it("has correct defaults and types for host, hostedBy, and forkedFrom on Project", () => {
+    const project = new Project({
+      title: "Host Defaults Project",
+      slug: "host-defaults-project",
+      category: "web",
+      description: "Testing host defaults.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+    });
+
+    expect(project.host).toBe("self");
+    expect(project.hostedBy).toEqual([]);
+    expect(project.forkedFrom).toBeNull();
+    expect(project.validateSync()).toBeUndefined();
+  });
+
+  it("accepts valid host 'people' and hostedBy references on Project", () => {
+    const hostPersonId = new mongoose.Types.ObjectId();
+    const project = new Project({
+      title: "People Hosted Project",
+      slug: "people-hosted-project",
+      category: "web",
+      description: "Testing people hosted project.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      host: "people",
+      hostedBy: [hostPersonId],
+      forkedFrom: "https://github.com/upstream/repo",
+    });
+
+    expect(project.validateSync()).toBeUndefined();
+    expect(project.host).toBe("people");
+    expect(project.hostedBy).toHaveLength(1);
+    expect(project.hostedBy[0].toString()).toBe(hostPersonId.toString());
+    expect(project.forkedFrom).toBe("https://github.com/upstream/repo");
+  });
+
+  it("rejects invalid host enum on Project", () => {
+    const project = new Project({
+      title: "Bad Host Project",
+      slug: "bad-host-project",
+      category: "web",
+      description: "Testing invalid host enum.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      host: "other",
+    });
+
+    const error = project.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.host).toBeDefined();
+  });
+
+  it("does not inject schema defaults for version host or hostedBy", () => {
+    const project = new Project({
+      title: "Version Host Defaults Project",
+      slug: "version-host-defaults-project",
+      category: "web",
+      description: "Testing version host defaults.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [{ versionTag: "v1.0.0" }],
+    });
+
+    const v = project.versions[0];
+    expect(v.host).toBeUndefined();
+    expect(v.hostedBy).toBeUndefined();
+  });
+
+  it("accepts version host override and hostedBy on version subdocument", () => {
+    const hostPersonId = new mongoose.Types.ObjectId();
+    const project = new Project({
+      title: "Version Override Project",
+      slug: "version-override-project",
+      category: "web",
+      description: "Testing version host override.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [
+        {
+          versionTag: "v1.0.0",
+          host: "people",
+          hostedBy: [hostPersonId],
+        },
+      ],
+    });
+
+    expect(project.validateSync()).toBeUndefined();
+    const v = project.versions[0];
+    expect(v.host).toBe("people");
+    expect(v.hostedBy).toHaveLength(1);
+    expect(v.hostedBy![0].toString()).toBe(hostPersonId.toString());
+  });
+
+  it("rejects invalid version host enum value", () => {
+    const project = new Project({
+      title: "Bad Version Host Project",
+      slug: "bad-version-host-project",
+      category: "web",
+      description: "Testing invalid version host enum.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [
+        {
+          versionTag: "v1.0.0",
+          host: "invalid_host",
+        },
+      ],
+    });
+
+    const error = project.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors["versions.0.host"]).toBeDefined();
   });
 });
 
@@ -904,8 +1031,9 @@ describe("Models barrel export (src/models/index.ts)", () => {
     expect(barrel.LogEntry.modelName).toBe("LogEntry");
   });
 
-  it("exports Contributor model", () => {
-    expect(barrel.Contributor).toBeDefined();
-    expect(barrel.Contributor.modelName).toBe("Contributor");
+  it("exports Person model and does not export Contributor", () => {
+    expect(barrel.Person).toBeDefined();
+    expect(barrel.Person.modelName).toBe("Person");
+    expect(barrel.Contributor).toBeUndefined();
   });
 });

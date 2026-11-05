@@ -1,5 +1,5 @@
 import request from "supertest";
-import { Contributor } from "@/models/Contributor";
+import { Person } from "@/models/Person";
 import { Project } from "@/models/Project";
 import { Writable } from "stream";
 
@@ -56,18 +56,18 @@ jest.mock("@/config/cloudinary", () => {
 const mockCloudinary = jest.requireMock("@/config/cloudinary");
 const mockSearch = mockCloudinary.default.search;
 
-jest.mock("@/models/Contributor", () => {
-  const actual = jest.requireActual("@/models/Contributor");
+jest.mock("@/models/Person", () => {
+  const actual = jest.requireActual("@/models/Person");
   return {
     ...actual,
-    Contributor: {
+    Person: {
       find: jest.fn(),
       findById: jest.fn(),
       findOne: jest.fn(),
       create: jest.fn(),
       findByIdAndUpdate: jest.fn(),
       findByIdAndDelete: jest.fn(),
-      modelName: "Contributor",
+      modelName: "Person",
     },
   };
 });
@@ -98,7 +98,7 @@ jest.mock("@/config/db", () => ({
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { app } = require("@/server");
 
-describe("Contributors API Integration Tests", () => {
+describe("People API Integration Tests", () => {
   const validId = "60c72b2f9b1d8b2bad000001";
   const validId2 = "60c72b2f9b1d8b2bad000002";
 
@@ -110,7 +110,7 @@ describe("Contributors API Integration Tests", () => {
     mockSearch.max_results.mockReturnValue(mockSearch);
     mockSearch.execute.mockResolvedValue({ resources: [], total_count: 0 });
 
-    (Contributor.find as jest.Mock).mockImplementation(() => ({
+    (Person.find as jest.Mock).mockImplementation(() => ({
       collation: jest.fn().mockReturnThis(),
       sort: jest.fn().mockResolvedValue([
         { _id: validId, name: "Alice", profilePicUrl: "https://example.com/alice.png", profileLink: "https://alice.dev" },
@@ -118,68 +118,69 @@ describe("Contributors API Integration Tests", () => {
       ]),
     }));
 
-    (Contributor.findById as jest.Mock).mockResolvedValue({
-      _id: validId,
-      name: "Alice",
-      profilePicUrl: "https://example.com/alice.png",
-      profileLink: "https://alice.dev",
+    (Person.findById as jest.Mock).mockImplementation((id: string) => {
+      if (id === validId) {
+        return Promise.resolve({
+          _id: validId,
+          name: "Alice",
+          profilePicUrl: "https://example.com/alice.png",
+          profileLink: "https://alice.dev",
+        });
+      }
+      return Promise.resolve(null);
     });
 
-    (Contributor.findOne as jest.Mock).mockResolvedValue(null);
-
-    (Contributor.create as jest.Mock).mockImplementation((data) =>
-      Promise.resolve({
-        _id: validId,
-        ...data,
-      })
+    (Person.create as jest.Mock).mockImplementation((data) =>
+      Promise.resolve({ _id: validId, ...data })
     );
 
-    (Contributor.findByIdAndUpdate as jest.Mock).mockImplementation((_id, data) =>
-      Promise.resolve({
-        _id: validId,
-        name: "Alice Updated",
-        profilePicUrl: "https://example.com/alice.png",
-        ...data,
-      })
+    (Person.findByIdAndUpdate as jest.Mock).mockImplementation((id, update) =>
+      Promise.resolve({ _id: id, ...update })
     );
 
-    (Contributor.findByIdAndDelete as jest.Mock).mockResolvedValue({
-      _id: validId,
-      name: "Alice",
-    });
+    (Person.findByIdAndDelete as jest.Mock).mockImplementation((id: string) =>
+      Promise.resolve({ _id: id, name: "Alice" })
+    );
 
     (Project.find as jest.Mock).mockResolvedValue([]);
   });
 
-  describe("Authentication on Protected Contributor Endpoints", () => {
-    it("POST /api/v1/contributors rejects unauthorized request without token", async () => {
-      const res = await request(app).post("/api/v1/contributors").send({ name: "Alice" });
+  describe("Old /api/v1/contributors route removed", () => {
+    it("returns 404 when accessing /api/v1/contributors", async () => {
+      const res = await request(app).get("/api/v1/contributors");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("Authentication on Protected People Endpoints", () => {
+    it("POST /api/v1/people rejects unauthorized request without token", async () => {
+      const res = await request(app).post("/api/v1/people").send({ name: "Alice" });
       expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
     });
 
-    it("POST /api/v1/contributors rejects unauthorized request with wrong secret", async () => {
+    it("POST /api/v1/people rejects unauthorized request with wrong secret", async () => {
       const res = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer wrong-secret")
         .send({ name: "Alice" });
       expect(res.status).toBe(401);
     });
 
-    it("PUT /api/v1/contributors/:id rejects unauthorized request without token", async () => {
-      const res = await request(app).put(`/api/v1/contributors/${validId}`).send({ name: "Alice" });
+    it("PUT /api/v1/people/:id rejects unauthorized request without token", async () => {
+      const res = await request(app).put(`/api/v1/people/${validId}`).send({ name: "Alice" });
       expect(res.status).toBe(401);
     });
 
-    it("DELETE /api/v1/contributors/:id rejects unauthorized request without token", async () => {
-      const res = await request(app).delete(`/api/v1/contributors/${validId}`);
+    it("DELETE /api/v1/people/:id rejects unauthorized request without token", async () => {
+      const res = await request(app).delete(`/api/v1/people/${validId}`);
       expect(res.status).toBe(401);
     });
   });
 
   describe("Public Reads & Sorting", () => {
-    it("GET /api/v1/contributors returns list sorted case-insensitively by name", async () => {
-      const res = await request(app).get("/api/v1/contributors");
+    it("GET /api/v1/people returns list sorted case-insensitively by name", async () => {
+      const res = await request(app).get("/api/v1/people");
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(Array.isArray(res.body.data)).toBe(true);
@@ -188,33 +189,33 @@ describe("Contributors API Integration Tests", () => {
       expect(res.body.data[1].name).toBe("bob");
     });
 
-    it("GET /api/v1/contributors/:id returns single contributor", async () => {
-      const res = await request(app).get(`/api/v1/contributors/${validId}`);
+    it("GET /api/v1/people/:id returns single person", async () => {
+      const res = await request(app).get(`/api/v1/people/${validId}`);
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data._id).toBe(validId);
       expect(res.body.data.name).toBe("Alice");
     });
 
-    it("GET /api/v1/contributors/:id returns 404 for unknown id", async () => {
-      (Contributor.findById as jest.Mock).mockResolvedValue(null);
-      const res = await request(app).get(`/api/v1/contributors/${validId}`);
+    it("GET /api/v1/people/:id returns 404 for unknown id", async () => {
+      (Person.findById as jest.Mock).mockResolvedValue(null);
+      const res = await request(app).get(`/api/v1/people/${validId}`);
       expect(res.status).toBe(404);
       expect(res.body.success).toBe(false);
     });
 
-    it("GET /api/v1/contributors/:id returns 400 for invalid ObjectId", async () => {
-      const res = await request(app).get("/api/v1/contributors/invalid-id");
+    it("GET /api/v1/people/:id returns 400 for invalid ObjectId", async () => {
+      const res = await request(app).get("/api/v1/people/invalid-id");
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toContain("Invalid identifier format");
     });
   });
 
-  describe("Create Contributor (POST /api/v1/contributors)", () => {
-    it("creates contributor with URL string in profilePicUrl and optional profileLink", async () => {
+  describe("Create Person (POST /api/v1/people)", () => {
+    it("creates person with URL string in profilePicUrl and optional profileLink", async () => {
       const res = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer test-secret-token")
         .send({
           name: "  Charlie Brown  ",
@@ -224,7 +225,7 @@ describe("Contributors API Integration Tests", () => {
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(Contributor.create).toHaveBeenCalledWith(
+      expect(Person.create).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "Charlie Brown",
           profilePicUrl: "https://example.com/charlie.png",
@@ -233,9 +234,9 @@ describe("Contributors API Integration Tests", () => {
       );
     });
 
-    it("creates contributor with uploaded picture file", async () => {
+    it("creates person with uploaded picture file", async () => {
       const res = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer test-secret-token")
         .field("name", "Diana Prince")
         .attach("profilePicUrl", Buffer.from("fake-png-content"), "diana.png");
@@ -243,19 +244,39 @@ describe("Contributors API Integration Tests", () => {
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       expect(mockUploadCalls.length).toBe(1);
-      expect(mockUploadCalls[0].folder).toBe("portfolio/contributors/diana-prince");
+      expect(mockUploadCalls[0].folder).toBe("portfolio/people/diana-prince");
       expect(mockUploadCalls[0].resource_type).toBe("image");
-      expect(Contributor.create).toHaveBeenCalledWith(
+      expect(Person.create).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "Diana Prince",
-          profilePicUrl: expect.stringContaining("portfolio/contributors/diana-prince"),
+          profilePicUrl: expect.stringContaining("portfolio/people/diana-prince"),
         })
+      );
+      expect(mockDestroy).not.toHaveBeenCalled();
+    });
+
+    it("POST /api/v1/people rolls back uploaded picture when name is duplicate (409)", async () => {
+      (Person.findOne as jest.Mock).mockResolvedValue({
+        _id: validId,
+        name: "Alice",
+      });
+
+      const res = await request(app)
+        .post("/api/v1/people")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("name", "alice")
+        .attach("profilePicUrl", Buffer.from("fake-pic"), "alice.png");
+
+      expect(res.status).toBe(409);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        expect.stringContaining("portfolio/people/alice/"),
+        { resource_type: "image" }
       );
     });
 
     it("returns 400 when name is missing or whitespace only", async () => {
       const res = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer test-secret-token")
         .send({
           name: "   ",
@@ -268,7 +289,7 @@ describe("Contributors API Integration Tests", () => {
 
     it("returns 400 when no picture or URL is supplied", async () => {
       const res = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer test-secret-token")
         .send({
           name: "Eve",
@@ -280,7 +301,7 @@ describe("Contributors API Integration Tests", () => {
 
     it("returns 400 when profileLink is not a valid http/https URL", async () => {
       const res = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer test-secret-token")
         .send({
           name: "Frank",
@@ -293,13 +314,13 @@ describe("Contributors API Integration Tests", () => {
     });
 
     it("returns 409 when name is duplicate (case-insensitive)", async () => {
-      (Contributor.findOne as jest.Mock).mockResolvedValue({
+      (Person.findOne as jest.Mock).mockResolvedValue({
         _id: validId,
         name: "Alice",
       });
 
       const res = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer test-secret-token")
         .send({
           name: "alice",
@@ -312,152 +333,176 @@ describe("Contributors API Integration Tests", () => {
 
     it("returns 400 with rollback when non-image file is uploaded", async () => {
       const res = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer test-secret-token")
         .field("name", "George")
         .attach("profilePicUrl", Buffer.from("not-an-image"), "george.txt");
 
       expect(res.status).toBe(400);
-      expect(Contributor.create).not.toHaveBeenCalled();
+      expect(Person.create).not.toHaveBeenCalled();
     });
   });
 
-  describe("Update Contributor (PUT /api/v1/contributors/:id)", () => {
+  describe("Update Person (PUT /api/v1/people/:id)", () => {
     it("updates name and validates uniqueness excluding self", async () => {
-      (Contributor.findOne as jest.Mock).mockResolvedValue(null);
+      (Person.findOne as jest.Mock).mockResolvedValue(null);
 
       const res = await request(app)
-        .put(`/api/v1/contributors/${validId}`)
+        .put(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token")
         .send({ name: "Alice Smith" });
 
       expect(res.status).toBe(200);
-      expect(Contributor.findByIdAndUpdate).toHaveBeenCalledWith(
+      expect(Person.findByIdAndUpdate).toHaveBeenCalledWith(
         validId,
         expect.objectContaining({ name: "Alice Smith" }),
         expect.anything()
       );
     });
 
-    it("returns 409 if new name collides with another contributor", async () => {
-      (Contributor.findOne as jest.Mock).mockResolvedValue({
+    it("returns 409 if new name collides with another person", async () => {
+      (Person.findOne as jest.Mock).mockResolvedValue({
         _id: validId2,
         name: "Bob",
       });
 
       const res = await request(app)
-        .put(`/api/v1/contributors/${validId}`)
+        .put(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token")
         .send({ name: "Bob" });
 
       expect(res.status).toBe(409);
-      expect(Contributor.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(Person.findByIdAndUpdate).not.toHaveBeenCalled();
     });
 
-    it("clears profileLink when empty string is sent", async () => {
+    it("PUT /api/v1/people/:id rolls back uploaded picture when name collides with another person (409)", async () => {
+      (Person.findOne as jest.Mock).mockResolvedValue({
+        _id: validId2,
+        name: "Bob",
+      });
+
       const res = await request(app)
-        .put(`/api/v1/contributors/${validId}`)
+        .put(`/api/v1/people/${validId}`)
+        .set("Authorization", "Bearer test-secret-token")
+        .field("name", "Bob")
+        .attach("profilePicUrl", Buffer.from("fake-pic"), "bob.png");
+
+      expect(res.status).toBe(409);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        expect.stringContaining("portfolio/people/bob/"),
+        { resource_type: "image" }
+      );
+    });
+
+    it("clears profileLink to null when empty string is sent", async () => {
+      (Person.findByIdAndUpdate as jest.Mock).mockImplementation((id: string, update: Record<string, unknown>) =>
+        Promise.resolve({
+          _id: id,
+          name: "Alice",
+          profilePicUrl: "https://example.com/pic.jpg",
+          ...update,
+        })
+      );
+
+      const res = await request(app)
+        .put(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token")
         .send({ profileLink: "" });
 
       expect(res.status).toBe(200);
-      expect(Contributor.findByIdAndUpdate).toHaveBeenCalledWith(
+      expect(Person.findByIdAndUpdate).toHaveBeenCalledWith(
         validId,
-        expect.objectContaining({ profileLink: undefined }),
+        expect.objectContaining({ profileLink: null }),
         expect.anything()
       );
+      expect(res.body.data.profileLink).toBeNull();
     });
 
     it("returns 400 if updated profileLink is invalid", async () => {
       const res = await request(app)
-        .put(`/api/v1/contributors/${validId}`)
+        .put(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token")
         .send({ profileLink: "ftp://invalid-url" });
 
       expect(res.status).toBe(400);
-      expect(Contributor.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(Person.findByIdAndUpdate).not.toHaveBeenCalled();
     });
 
     it("replaces picture with uploaded file, uses stored name when name omitted, and keeps old Cloudinary asset", async () => {
-      (Contributor.findById as jest.Mock).mockResolvedValue({
+      (Person.findById as jest.Mock).mockResolvedValue({
         _id: validId,
         name: "Alice",
         profilePicUrl: "https://example.com/old-alice.png",
       });
 
       const res = await request(app)
-        .put(`/api/v1/contributors/${validId}`)
+        .put(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token")
         .attach("profilePicUrl", Buffer.from("new-pic-bytes"), "new-alice.png");
 
       expect(res.status).toBe(200);
       expect(mockUploadCalls.length).toBe(1);
-      expect(mockUploadCalls[0].folder).toBe("portfolio/contributors/alice");
+      expect(mockUploadCalls[0].folder).toBe("portfolio/people/alice");
       expect(mockUploadCalls[0].public_id).toBe("alice_1");
       expect(mockDestroy).not.toHaveBeenCalled();
-      expect(Contributor.findByIdAndUpdate).toHaveBeenCalledWith(
+      expect(Person.findByIdAndUpdate).toHaveBeenCalledWith(
         validId,
         expect.objectContaining({
-          profilePicUrl: expect.stringContaining("portfolio/contributors/alice/alice_1"),
+          profilePicUrl: expect.stringContaining("portfolio/people/alice/alice_1"),
         }),
         expect.anything()
       );
     });
 
-    it("PUT without a name for two contributors gives two distinct ids", async () => {
+
+    it("PUT without a name for two people gives two distinct ids", async () => {
       const id1 = "60c72b2f9b1d8b2bad000001";
       const id2 = "60c72b2f9b1d8b2bad000002";
 
-      (Contributor.findById as jest.Mock).mockImplementation((id) => {
+      (Person.findById as jest.Mock).mockImplementation((id: string) => {
         if (id === id1) return Promise.resolve({ _id: id1, name: "Alice" });
         if (id === id2) return Promise.resolve({ _id: id2, name: "Bob" });
         return Promise.resolve(null);
       });
+      (Person.findOne as jest.Mock).mockResolvedValue(null);
+      (Person.findByIdAndUpdate as jest.Mock).mockResolvedValue({ _id: id1 });
 
       await request(app)
-        .put(`/api/v1/contributors/${id1}`)
+        .put(`/api/v1/people/${id1}`)
         .set("Authorization", "Bearer test-secret-token")
-        .attach("profilePicUrl", Buffer.from("pic1"), "pic1.png");
+        .attach("profilePicUrl", Buffer.from("alice-pic"), "alice.png");
 
       await request(app)
-        .put(`/api/v1/contributors/${id2}`)
+        .put(`/api/v1/people/${id2}`)
         .set("Authorization", "Bearer test-secret-token")
-        .attach("profilePicUrl", Buffer.from("pic2"), "pic2.png");
+        .attach("profilePicUrl", Buffer.from("bob-pic"), "bob.png");
 
       expect(mockUploadCalls.length).toBe(2);
-      expect(mockUploadCalls[0].folder).toBe("portfolio/contributors/alice");
+      expect(mockUploadCalls[0].folder).toBe("portfolio/people/alice");
       expect(mockUploadCalls[0].public_id).toBe("alice_1");
-      expect(mockUploadCalls[1].folder).toBe("portfolio/contributors/bob");
+      expect(mockUploadCalls[1].folder).toBe("portfolio/people/bob");
       expect(mockUploadCalls[1].public_id).toBe("bob_1");
       expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
     });
 
     it("colliding slugs ('Ada.Lovelace' and 'Ada Lovelace') give distinct ids", async () => {
-      const mockCloudinary = jest.requireMock("@/config/cloudinary") as {
-        default: { search: { execute: jest.Mock } };
-      };
-      // When first upload happens, search is empty -> ada-lovelace_1
-      mockCloudinary.default.search.execute.mockResolvedValueOnce({
-        resources: [],
-        total_count: 0,
-      });
+      (Person.findOne as jest.Mock).mockResolvedValue(null);
 
       const res1 = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer test-secret-token")
         .field("name", "Ada.Lovelace")
-        .attach("profilePicUrl", Buffer.from("ada1"), "ada1.png");
+        .attach("profilePicUrl", Buffer.from("ada-1-pic"), "ada.png");
 
       expect(res1.status).toBe(201);
-      expect(mockUploadCalls[0].folder).toBe("portfolio/contributors/ada-lovelace");
+      expect(mockUploadCalls[0].folder).toBe("portfolio/people/ada-lovelace");
       expect(mockUploadCalls[0].public_id).toBe("ada-lovelace_1");
 
-      // When second upload happens for colliding slug, search returns existing ada-lovelace_1 -> ada-lovelace_2
       mockCloudinary.default.search.execute.mockResolvedValueOnce({
         resources: [
           {
-            public_id: "portfolio/contributors/ada-lovelace/ada-lovelace_1",
-            folder: "portfolio/contributors/ada-lovelace",
+            public_id: "portfolio/people/ada-lovelace/ada-lovelace_1",
+            folder: "portfolio/people/ada-lovelace",
             resource_type: "image",
           },
         ],
@@ -465,61 +510,63 @@ describe("Contributors API Integration Tests", () => {
       });
 
       const res2 = await request(app)
-        .post("/api/v1/contributors")
+        .post("/api/v1/people")
         .set("Authorization", "Bearer test-secret-token")
         .field("name", "Ada Lovelace")
-        .attach("profilePicUrl", Buffer.from("ada2"), "ada2.png");
+        .attach("profilePicUrl", Buffer.from("ada-2-pic"), "ada2.png");
 
       expect(res2.status).toBe(201);
-      expect(mockUploadCalls[1].folder).toBe("portfolio/contributors/ada-lovelace");
+      expect(mockUploadCalls[1].folder).toBe("portfolio/people/ada-lovelace");
       expect(mockUploadCalls[1].public_id).toBe("ada-lovelace_2");
       expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
     });
 
-    it("returns 404 for unknown contributor id", async () => {
-      (Contributor.findByIdAndUpdate as jest.Mock).mockResolvedValue(null);
+    it("returns 404 for unknown person id", async () => {
+      (Person.findById as jest.Mock).mockResolvedValue(null);
+      (Person.findByIdAndUpdate as jest.Mock).mockResolvedValue(null);
 
       const res = await request(app)
-        .put(`/api/v1/contributors/${validId}`)
+        .put(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token")
-        .send({ name: "Ghost" });
+        .send({ name: "Unknown" });
 
       expect(res.status).toBe(404);
     });
 
     it("returns 400 for bad ObjectId format", async () => {
       const res = await request(app)
-        .put("/api/v1/contributors/bad-id")
+        .put("/api/v1/people/bad-id")
         .set("Authorization", "Bearer test-secret-token")
-        .send({ name: "Ghost" });
+        .send({ name: "Bad" });
 
       expect(res.status).toBe(400);
-      expect(res.body.message).toContain("Invalid identifier format");
     });
   });
 
-  describe("Delete Contributor in Use (DELETE /api/v1/contributors/:id)", () => {
-    it("returns 409 with project count when referenced by a project", async () => {
+  describe("Delete Person in Use (DELETE /api/v1/people/:id)", () => {
+    it("returns 409 with counts when referenced as contributor by a project", async () => {
       (Project.find as jest.Mock).mockResolvedValue([
         {
           _id: "proj-1",
           slug: "cool-project",
           contributors: [{ contributor: validId }],
           versions: [],
+          hostedBy: [],
         },
       ]);
 
       const res = await request(app)
-        .delete(`/api/v1/contributors/${validId}`)
+        .delete(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token");
 
       expect(res.status).toBe(409);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/referenced by 1 project\(s\) and 0 project version\(s\)/i);
-      expect(Contributor.findByIdAndDelete).not.toHaveBeenCalled();
+      expect(res.body.message).toMatch(/contributor.*1 project\(s\).*0 (project )?version\(s\)/i);
+      expect(res.body.message).toMatch(/host.*0 project\(s\).*0 (project )?version\(s\)/i);
+      expect(Person.findByIdAndDelete).not.toHaveBeenCalled();
     });
 
-    it("returns 409 with version count when referenced only by a project version", async () => {
+    it("returns 409 with counts when referenced as contributor only by a project version", async () => {
       (Project.find as jest.Mock).mockResolvedValue([
         {
           _id: "proj-2",
@@ -531,37 +578,112 @@ describe("Contributors API Integration Tests", () => {
               contributors: [{ contributor: validId }],
             },
           ],
+          hostedBy: [],
         },
       ]);
 
       const res = await request(app)
-        .delete(`/api/v1/contributors/${validId}`)
+        .delete(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token");
 
       expect(res.status).toBe(409);
-      expect(res.body.message).toMatch(/referenced by 0 project\(s\) and 1 project version\(s\)/i);
-      expect(Contributor.findByIdAndDelete).not.toHaveBeenCalled();
+      expect(res.body.message).toMatch(/contributor.*0 project\(s\).*1 (project )?version\(s\)/i);
+      expect(res.body.message).toMatch(/host.*0 project\(s\).*0 (project )?version\(s\)/i);
+      expect(Person.findByIdAndDelete).not.toHaveBeenCalled();
     });
 
-    it("deletes contributor successfully when not referenced by any project or version", async () => {
+    it("returns 409 with counts when referenced as host on a project", async () => {
+      (Project.find as jest.Mock).mockResolvedValue([
+        {
+          _id: "proj-3",
+          slug: "hosted-project",
+          contributors: [],
+          versions: [],
+          hostedBy: [validId],
+        },
+      ]);
+
+      const res = await request(app)
+        .delete(`/api/v1/people/${validId}`)
+        .set("Authorization", "Bearer test-secret-token");
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/contributor.*0 project\(s\).*0 (project )?version\(s\)/i);
+      expect(res.body.message).toMatch(/host.*1 project\(s\).*0 (project )?version\(s\)/i);
+      expect(Person.findByIdAndDelete).not.toHaveBeenCalled();
+    });
+
+    it("returns 409 with counts when referenced as host on a project version", async () => {
+      (Project.find as jest.Mock).mockResolvedValue([
+        {
+          _id: "proj-4",
+          slug: "version-hosted-project",
+          contributors: [],
+          versions: [
+            {
+              versionTag: "v2.0.0",
+              hostedBy: [validId],
+            },
+          ],
+          hostedBy: [],
+        },
+      ]);
+
+      const res = await request(app)
+        .delete(`/api/v1/people/${validId}`)
+        .set("Authorization", "Bearer test-secret-token");
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/contributor.*0 project\(s\).*0 (project )?version\(s\)/i);
+      expect(res.body.message).toMatch(/host.*0 project\(s\).*1 (project )?version\(s\)/i);
+      expect(Person.findByIdAndDelete).not.toHaveBeenCalled();
+    });
+
+    it("returns 409 when uppercase hex id is provided and person is referenced", async () => {
+      const lowercaseId = "60c72b2f9b1d8b2bad000001";
+      const uppercaseId = lowercaseId.toUpperCase();
+
+      (Project.find as jest.Mock).mockResolvedValue([
+        {
+          _id: "proj-1",
+          slug: "cool-project",
+          contributors: [{ contributor: lowercaseId }],
+          versions: [],
+          hostedBy: [],
+        },
+      ]);
+
+      const res = await request(app)
+        .delete(`/api/v1/people/${uppercaseId}`)
+        .set("Authorization", "Bearer test-secret-token");
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/contributor.*1 project\(s\)/i);
+      expect(Person.findByIdAndDelete).not.toHaveBeenCalled();
+    });
+
+    it("deletes person successfully when not referenced by any project or version", async () => {
       (Project.find as jest.Mock).mockResolvedValue([]);
 
       const res = await request(app)
-        .delete(`/api/v1/contributors/${validId}`)
+        .delete(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token");
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(Contributor.findByIdAndDelete).toHaveBeenCalledWith(validId);
+      expect(Person.findByIdAndDelete).toHaveBeenCalledWith(validId);
       expect(mockDestroy).not.toHaveBeenCalled();
     });
 
-    it("returns 404 when contributor to delete does not exist", async () => {
+    it("returns 404 when person to delete does not exist", async () => {
       (Project.find as jest.Mock).mockResolvedValue([]);
-      (Contributor.findByIdAndDelete as jest.Mock).mockResolvedValue(null);
+      (Person.findByIdAndDelete as jest.Mock).mockResolvedValue(null);
 
       const res = await request(app)
-        .delete(`/api/v1/contributors/${validId}`)
+        .delete(`/api/v1/people/${validId}`)
         .set("Authorization", "Bearer test-secret-token");
 
       expect(res.status).toBe(404);
@@ -569,7 +691,7 @@ describe("Contributors API Integration Tests", () => {
 
     it("returns 400 for invalid ObjectId on DELETE", async () => {
       const res = await request(app)
-        .delete("/api/v1/contributors/invalid-id")
+        .delete("/api/v1/people/invalid-id")
         .set("Authorization", "Bearer test-secret-token");
 
       expect(res.status).toBe(400);

@@ -30,6 +30,8 @@ export interface IProjectVersion {
   githubLink?: string;
   contributors?: IProjectContributor[];
   socialLinks?: ISocialLink[];
+  host?: "self" | "people";
+  hostedBy?: Types.ObjectId[];
 }
 
 export type ProjectStatus = "invisible" | "planning" | "work_in_progress" | "delay_hold" | "active";
@@ -58,13 +60,16 @@ export interface IProject extends Document {
   socialLinks: ISocialLink[];
   versions: IProjectVersion[];
   gallery: IGalleryImage[];
+  host: "self" | "people";
+  hostedBy: Types.ObjectId[];
+  forkedFrom: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
 const ProjectContributorSchema = new Schema<IProjectContributor>(
   {
-    contributor: { type: Schema.Types.ObjectId, ref: "Contributor" },
+    contributor: { type: Schema.Types.ObjectId, ref: "Person" },
     role: { type: String, trim: true, maxlength: 40 },
   },
   { _id: false, strict: false }
@@ -105,6 +110,8 @@ const VersionSchema = new Schema<IProjectVersion>(
     githubLink: { type: String },
     contributors: { type: [ProjectContributorSchema], default: undefined },
     socialLinks: { type: [SocialLinkSchema], default: undefined },
+    host: { type: String, enum: ["self", "people"], default: undefined },
+    hostedBy: { type: [{ type: Schema.Types.ObjectId, ref: "Person" }], default: undefined },
   },
   { strict: false }
 );
@@ -137,6 +144,9 @@ const ProjectSchema = new Schema<IProject>({
   githubLink: { type: String, default: null },
   versions: [VersionSchema],
   gallery: { type: [GalleryImageSchema], default: [] },
+  host: { type: String, enum: ["self", "people"], default: "self" },
+  hostedBy: [{ type: Schema.Types.ObjectId, ref: "Person" }],
+  forkedFrom: { type: String, default: null },
 }, { timestamps: true, strict: false });
 
 export const Project = model<IProject>("Project", ProjectSchema);

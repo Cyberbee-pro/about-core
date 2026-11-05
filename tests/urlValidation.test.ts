@@ -39,7 +39,7 @@ jest.mock("@/config/cloudinary", () => {
 });
 
 // Mock models and DB
-jest.mock("@/models/Contributor");
+jest.mock("@/models/Person");
 jest.mock("@/models/Project");
 jest.mock("@/models/Skill");
 jest.mock("@/models/Certificate");
@@ -51,7 +51,7 @@ jest.mock("@/config/db", () => ({
   disconnectDB: jest.fn().mockResolvedValue(undefined),
 }));
 
-import { Contributor } from "@/models/Contributor";
+import { Person } from "@/models/Person";
 import { Project } from "@/models/Project";
 import { Skill } from "@/models/Skill";
 import { Certificate } from "@/models/Certificate";
@@ -78,16 +78,16 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 1. Contributor Endpoints
+  // 1. Person Endpoints
   // ─────────────────────────────────────────────────────────────
-  describe("Contributor URL Validation", () => {
-    describe("POST /api/v1/contributors", () => {
+  describe("Person URL Validation", () => {
+    describe("POST /api/v1/people", () => {
       it.each(INVALID_URL_PAYLOADS)(
         "rejects invalid profilePicUrl: '%s' with 400",
         async (badUrl) => {
-          (Contributor.findOne as jest.Mock).mockResolvedValue(null);
+          (Person.findOne as jest.Mock).mockResolvedValue(null);
           const res = await request(app)
-            .post("/api/v1/contributors")
+            .post("/api/v1/people")
             .set("Authorization", "Bearer test-secret-token")
             .send({
               name: "Alice",
@@ -97,18 +97,18 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
           expect(res.status).toBe(400);
           expect(res.body.success).toBe(false);
           expect(res.body.message).toMatch(/profilePicUrl.*http.*https/i);
-          expect(Contributor.create).not.toHaveBeenCalled();
+          expect(Person.create).not.toHaveBeenCalled();
         }
       );
 
       it("accepts valid https and http profilePicUrl (201)", async () => {
-        (Contributor.findOne as jest.Mock).mockResolvedValue(null);
-        (Contributor.create as jest.Mock).mockImplementation((data) =>
+        (Person.findOne as jest.Mock).mockResolvedValue(null);
+        (Person.create as jest.Mock).mockImplementation((data) =>
           Promise.resolve({ _id: validId, ...data })
         );
 
         const res1 = await request(app)
-          .post("/api/v1/contributors")
+          .post("/api/v1/people")
           .set("Authorization", "Bearer test-secret-token")
           .send({
             name: "Alice",
@@ -117,7 +117,7 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
         expect(res1.status).toBe(201);
 
         const res2 = await request(app)
-          .post("/api/v1/contributors")
+          .post("/api/v1/people")
           .set("Authorization", "Bearer test-secret-token")
           .send({
             name: "Bob",
@@ -127,26 +127,26 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
       });
     });
 
-    describe("PUT /api/v1/contributors/:id", () => {
+    describe("PUT /api/v1/people/:id", () => {
       it.each(INVALID_URL_PAYLOADS)(
         "rejects invalid profilePicUrl: '%s' with 400",
         async (badUrl) => {
-          (Contributor.findOne as jest.Mock).mockResolvedValue(null);
+          (Person.findOne as jest.Mock).mockResolvedValue(null);
           const res = await request(app)
-            .put(`/api/v1/contributors/${validId}`)
+            .put(`/api/v1/people/${validId}`)
             .set("Authorization", "Bearer test-secret-token")
             .send({ profilePicUrl: badUrl });
 
           expect(res.status).toBe(400);
           expect(res.body.success).toBe(false);
           expect(res.body.message).toMatch(/profilePicUrl.*http.*https/i);
-          expect(Contributor.findByIdAndUpdate).not.toHaveBeenCalled();
+          expect(Person.findByIdAndUpdate).not.toHaveBeenCalled();
         }
       );
 
       it("rejects empty string profilePicUrl with 400 (cannot be empty)", async () => {
         const res = await request(app)
-          .put(`/api/v1/contributors/${validId}`)
+          .put(`/api/v1/people/${validId}`)
           .set("Authorization", "Bearer test-secret-token")
           .send({ profilePicUrl: "" });
 
@@ -155,15 +155,15 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
       });
 
       it("accepts valid https and http profilePicUrl (200)", async () => {
-        (Contributor.findOne as jest.Mock).mockResolvedValue(null);
-        (Contributor.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+        (Person.findOne as jest.Mock).mockResolvedValue(null);
+        (Person.findByIdAndUpdate as jest.Mock).mockResolvedValue({
           _id: validId,
           name: "Alice",
           profilePicUrl: "https://example.com/new.png",
         });
 
         const res = await request(app)
-          .put(`/api/v1/contributors/${validId}`)
+          .put(`/api/v1/people/${validId}`)
           .set("Authorization", "Bearer test-secret-token")
           .send({ profilePicUrl: "https://example.com/new.png" });
 
@@ -259,6 +259,194 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
           expect(res.body.message).toMatch(/threeDModel.*fileUrl.*http.*https/i);
         }
       );
+
+      it.each(INVALID_URL_PAYLOADS)(
+        "rejects invalid forkedFrom: '%s' on PUT with 400",
+        async (badUrl) => {
+          const res = await request(app)
+            .put(`/api/v1/projects/${validId}`)
+            .set("Authorization", "Bearer test-secret-token")
+            .send({ forkedFrom: badUrl });
+
+          expect(res.status).toBe(400);
+          expect(res.body.message).toMatch(/forkedFrom.*http.*https/i);
+          expect(Project.findByIdAndUpdate).not.toHaveBeenCalled();
+        }
+      );
+
+      it("rejects forkedFrom longer than 2048 chars on PUT with 400", async () => {
+        const longUrl = "https://example.com/" + "a".repeat(2040);
+        const res = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ forkedFrom: longUrl });
+
+        expect(res.status).toBe(400);
+        expect(res.body.message).toMatch(/forkedFrom.*2048/i);
+        expect(Project.findByIdAndUpdate).not.toHaveBeenCalled();
+      });
+
+      it("accepts valid http and https forkedFrom on PUT (200)", async () => {
+        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+          _id: validId,
+          title: "P1",
+          slug: "p1",
+          category: "web",
+          forkedFrom: "https://github.com/upstream/new-repo",
+          versions: [],
+        });
+
+        const res = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ forkedFrom: " https://github.com/upstream/new-repo " });
+
+        expect(res.status).toBe(200);
+        expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+          validId,
+          expect.objectContaining({
+            forkedFrom: "https://github.com/upstream/new-repo",
+          }),
+          expect.anything()
+        );
+      });
+
+      it("clears forkedFrom to null when empty string or null is sent on PUT", async () => {
+        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+          _id: validId,
+          title: "P1",
+          slug: "p1",
+          category: "web",
+          forkedFrom: null,
+          versions: [],
+        });
+
+        const res1 = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ forkedFrom: "" });
+
+        expect(res1.status).toBe(200);
+        expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+          validId,
+          expect.objectContaining({
+            forkedFrom: null,
+          }),
+          expect.anything()
+        );
+
+        const res2 = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ forkedFrom: null });
+
+        expect(res2.status).toBe(200);
+      });
+
+      it("omitted forkedFrom on PUT leaves it unchanged", async () => {
+        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+          _id: validId,
+          title: "Updated Title",
+          slug: "updated-title",
+          category: "web",
+          versions: [],
+        });
+
+        const res = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ title: "Updated Title" });
+
+        expect(res.status).toBe(200);
+        const updateArg = (Project.findByIdAndUpdate as jest.Mock).mock.calls[0][1];
+        expect(updateArg).not.toHaveProperty("forkedFrom");
+      });
+
+      it.each(INVALID_URL_PAYLOADS)(
+        "rejects invalid forkedFrom: '%s' with 400",
+        async (badUrl) => {
+          (Project.findOne as jest.Mock).mockResolvedValue(null);
+          const res = await request(app)
+            .post("/api/v1/projects")
+            .set("Authorization", "Bearer test-secret-token")
+            .send({
+              ...baseProjectPayload,
+              forkedFrom: badUrl,
+            });
+
+          expect(res.status).toBe(400);
+          expect(res.body.message).toMatch(/forkedFrom.*http.*https/i);
+          expect(Project.create).not.toHaveBeenCalled();
+        }
+      );
+
+      it("rejects forkedFrom longer than 2048 chars with 400", async () => {
+        (Project.findOne as jest.Mock).mockResolvedValue(null);
+        const longUrl = "https://example.com/" + "a".repeat(2040);
+        const res = await request(app)
+          .post("/api/v1/projects")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({
+            ...baseProjectPayload,
+            forkedFrom: longUrl,
+          });
+
+        expect(res.status).toBe(400);
+        expect(res.body.message).toMatch(/forkedFrom.*2048/i);
+        expect(Project.create).not.toHaveBeenCalled();
+      });
+
+      it("accepts valid http and https forkedFrom on POST (201)", async () => {
+        (Project.findOne as jest.Mock).mockResolvedValue(null);
+        (Project.create as jest.Mock).mockImplementation((data) =>
+          Promise.resolve({ _id: validId, ...data })
+        );
+
+        const res = await request(app)
+          .post("/api/v1/projects")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({
+            ...baseProjectPayload,
+            forkedFrom: "  https://github.com/upstream/original-repo  ",
+          });
+
+        expect(res.status).toBe(201);
+        expect(Project.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            forkedFrom: "https://github.com/upstream/original-repo",
+          })
+        );
+      });
+
+      it("accepts empty string or null forkedFrom on POST, storing null", async () => {
+        (Project.findOne as jest.Mock).mockResolvedValue(null);
+        (Project.create as jest.Mock).mockImplementation((data) =>
+          Promise.resolve({ _id: validId, ...data })
+        );
+
+        const res1 = await request(app)
+          .post("/api/v1/projects")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({
+            ...baseProjectPayload,
+            forkedFrom: "",
+          });
+        expect(res1.status).toBe(201);
+        expect(Project.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            forkedFrom: null,
+          })
+        );
+
+        const res2 = await request(app)
+          .post("/api/v1/projects")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({
+            ...baseProjectPayload,
+            forkedFrom: null,
+          });
+        expect(res2.status).toBe(201);
+      });
 
       it("ignores versions payload on POST /api/v1/projects and creates project with versions: []", async () => {
         (Project.findOne as jest.Mock).mockResolvedValue(null);
@@ -412,6 +600,108 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
         }
       );
 
+      it.each(INVALID_URL_PAYLOADS)(
+        "rejects invalid forkedFrom: '%s' on PUT with 400",
+        async (badUrl) => {
+          const res = await request(app)
+            .put(`/api/v1/projects/${validId}`)
+            .set("Authorization", "Bearer test-secret-token")
+            .send({ forkedFrom: badUrl });
+
+          expect(res.status).toBe(400);
+          expect(res.body.message).toMatch(/forkedFrom.*http.*https/i);
+          expect(Project.findByIdAndUpdate).not.toHaveBeenCalled();
+        }
+      );
+
+      it("rejects forkedFrom longer than 2048 chars on PUT with 400", async () => {
+        const longUrl = "https://example.com/" + "a".repeat(2040);
+        const res = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ forkedFrom: longUrl });
+
+        expect(res.status).toBe(400);
+        expect(res.body.message).toMatch(/forkedFrom.*2048/i);
+        expect(Project.findByIdAndUpdate).not.toHaveBeenCalled();
+      });
+
+      it("accepts valid http and https forkedFrom on PUT (200)", async () => {
+        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+          _id: validId,
+          title: "P1",
+          slug: "p1",
+          category: "web",
+          forkedFrom: "https://github.com/upstream/new-repo",
+          versions: [],
+        });
+
+        const res = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ forkedFrom: " https://github.com/upstream/new-repo " });
+
+        expect(res.status).toBe(200);
+        expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+          validId,
+          expect.objectContaining({
+            forkedFrom: "https://github.com/upstream/new-repo",
+          }),
+          expect.anything()
+        );
+      });
+
+      it("clears forkedFrom to null when empty string or null is sent on PUT", async () => {
+        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+          _id: validId,
+          title: "P1",
+          slug: "p1",
+          category: "web",
+          forkedFrom: null,
+          versions: [],
+        });
+
+        const res1 = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ forkedFrom: "" });
+
+        expect(res1.status).toBe(200);
+        expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+          validId,
+          expect.objectContaining({
+            forkedFrom: null,
+          }),
+          expect.anything()
+        );
+
+        const res2 = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ forkedFrom: null });
+
+        expect(res2.status).toBe(200);
+      });
+
+      it("omitted forkedFrom on PUT leaves it unchanged", async () => {
+        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+          _id: validId,
+          title: "Updated Title",
+          slug: "updated-title",
+          category: "web",
+          versions: [],
+        });
+
+        const res = await request(app)
+          .put(`/api/v1/projects/${validId}`)
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ title: "Updated Title" });
+
+        expect(res.status).toBe(200);
+        const updateArg = (Project.findByIdAndUpdate as jest.Mock).mock.calls[0][1];
+        expect(updateArg).not.toHaveProperty("forkedFrom");
+      });
+
       it("clears videoDemo, deployedLink, githubLink when empty string is sent", async () => {
         (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
           _id: validId,
@@ -434,9 +724,9 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
         expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
           validId,
           expect.objectContaining({
-            videoDemo: undefined,
-            deployedLink: undefined,
-            githubLink: undefined,
+            videoDemo: null,
+            deployedLink: null,
+            githubLink: null,
           }),
           expect.anything()
         );

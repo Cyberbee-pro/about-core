@@ -18,7 +18,7 @@ This document provides a comprehensive technical reference for how every API end
    - [4.6 Experiences API (`/api/v1/experiences`)](#46-experiences-api-apiv1experiences)
    - [4.7 Site Configuration API (`/api/v1/config`)](#47-site-configuration-api-apiv1config)
    - [4.8 Admin Logs API (`/api/v1/admin/logs`)](#48-admin-logs-api-apiv1adminlogs)
-   - [4.9 Contributors API (`/api/v1/contributors`)](#49-contributors-api-apiv1contributors)
+   - [4.9 People API (`/api/v1/people`)](#49-people-api-apiv1people)
 5. [Cloudinary & Database Consistency Safeguards](#5-cloudinary--database-consistency-safeguards)
 6. [Summary Matrix](#6-summary-matrix)
 
@@ -60,11 +60,11 @@ The database contains **8 core collections**:
 | - versions[]      |                         | - positions[]       |
 +-------------------+                         +---------------------+
        ^       ^
-       |       | contributors.contributor (ObjectId)
+       |       | contributors.contributor (ObjectId) & hostedBy (ObjectId)
        +-------+-----------------------------+
                                              |
 +-------------------+  +-------------------+ | +--------------------+
-|       Skill       |  |    Certificate    | | |    Contributor     |
+|       Skill       |  |    Certificate    | | |       Person       |
 |-------------------|  |-------------------| | |--------------------|
 | - name (unique)   |  | - title           | | | - name (unique)    |
 | - type (enum)     |  | - organization    | | | - profilePicUrl    |
@@ -84,8 +84,8 @@ The database contains **8 core collections**:
 
 | Collection | Schema File | Key Indexes & Constraints | Key Relations / Subdocuments |
 | :--- | :--- | :--- | :--- |
-| `projects` | `src/models/Project.ts` | `slug` (Unique, Lowercase)<br>`timestamps: true` | `skills`: `Types.ObjectId[]` referencing `Skill`<br>`contributors`: join subdocuments referencing `Contributor` (`{ contributor: ObjectId, role?: string }`, `_id: false`)<br>`versions`: subdocuments (with metadata fields, `contributors`, `socialLinks`, `gallery`)<br>`gallery`: subdocuments (`IGalleryImage[]`) |
-| `contributors` | `src/models/Contributor.ts` | `name` (Unique, Trimmed, case-insensitive)<br>`timestamps: true` | Referenced by `Project.contributors` and `Version.contributors` |
+| `projects` | `src/models/Project.ts` | `slug` (Unique, Lowercase)<br>`host` enum (`self`, `people`, default `self`)<br>`forkedFrom` (string/null, default `null`)<br>`timestamps: true` | `skills`: `Types.ObjectId[]` referencing `Skill`<br>`contributors`: join subdocuments referencing `Person` (`{ contributor: ObjectId, role?: string }`, `_id: false`)<br>`hostedBy`: `Types.ObjectId[]` referencing `Person` (empty if `host === "self"`)<br>`versions`: subdocuments (with metadata fields, `contributors`, `socialLinks`, `gallery`, optional `host`, optional `hostedBy`)<br>`gallery`: subdocuments (`IGalleryImage[]`) |
+| `people` | `src/models/Person.ts` | `name` (Unique, Trimmed, case-insensitive)<br>`timestamps: true` | Referenced by `Project.contributors`, `Project.hostedBy`, `Version.contributors`, `Version.hostedBy` |
 | `skills` | `src/models/Skill.ts` | `name` (Unique, Trimmed)<br>`type` enum (`tool`, `language`, `framework`)<br>`timestamps: true` | Referenced by `Project` and `Experience` |
 | `certificates` | `src/models/Certificate.ts` | `timestamps: true`<br>Case-insensitive title uniqueness enforced in controller | Self-contained |
 | `achievements` | `src/models/Achievement.ts` | `timestamps: true`<br>Case-insensitive title uniqueness enforced in controller | Self-contained |
@@ -99,8 +99,8 @@ Every URL string field written to the database (on create or update, when provid
 - **Protocols Enforced:** Must strictly use absolute `http:` or `https:` protocols.
 - **Rejected Schemes & Formats:** Dangerous schemes (`javascript:`, `data:`, `vbscript:`, `file:`, `ftp:`), protocol-relative URLs (`//host`), relative paths, embedded whitespace, and control characters (`\x00-\x1f`, `\x7f`) return `400 Bad Request` naming the invalid field.
 - **Audited & Validated Fields Across Collections:**
-  - `Contributor`: `profilePicUrl`, `profileLink` (create & update)
-  - `Project`: `image`, `videoDemo`, `deployedLink`, `githubLink`, `threeDModel.fileUrl`, `socialLinks[].url` (create & update)
+  - `Person`: `profilePicUrl`, `profileLink` (create & update)
+  - `Project`: `image`, `videoDemo`, `deployedLink`, `githubLink`, `forkedFrom`, `threeDModel.fileUrl`, `socialLinks[].url` (create & update)
   - `Version`: `image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url` (`POST /:slug/versions` & `PUT /:slug/versions/:versionId`)
   - `Skill`: `logoUrl` (create & update)
   - `Certificate`: `mediaUrl`, `link` (create & update)
@@ -196,10 +196,14 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
   - `?category=<category>` $\rightarrow$ `filter.category = category.toLowerCase().trim()`
   - `?featured=<true|false>` $\rightarrow$ `filter.featured = featured === "true"`
   - `?tag=<tag>` $\rightarrow$ `filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") }` (case-insensitive regex match)
-- **Query Parameter Validation:** `category`, `featured`, `tag`, `status` are validated as strings (arrays coerced to `param[0]`; unexpected array shapes return `400 Bad Request`).
+  - `?host=<self|people>` $\rightarrow$ filters by host (`self` matches `"self"`, null, or missing; `people` matches `"people"`). Invalid returns `400 Bad Request`.
+  - `?forked=<true|false>` $\rightarrow$ filters by whether `forkedFrom` is a non-null string (`true`) or null/missing/empty (`false`). Invalid returns `400 Bad Request`.
+- **Query Parameter Validation:** `category`, `featured`, `tag`, `status`, `host`, `forked` are validated as strings (arrays coerced to `param[0]`; unexpected array shapes return `400 Bad Request`).
 - **Sorting:** Featured projects first (`featured: -1`), then newest start date (`startDate: -1`).
 - **Read Mode:** `.lean()` (returns plain JS objects for optimal memory/speed).
-- **Response Format Guarantee:** Processed through shared `formatProjectResponse` helper ensuring `gallery: []` on the project root and on each version in `versions` when none is stored in MongoDB.
+- **Response Format Guarantee:** Processed through shared `formatProjectResponse` helper ensuring:
+  - Project level: `host` (`"self" | "people"`, defaults to `"self"`), `hostedBy` (flattened person objects `[{ _id, name, profilePicUrl, profileLink }]`), `forkedFrom` (string or `null`), and `gallery: []` when none is stored in MongoDB.
+  - Version level: `gallery: []`, version overrides `host` and `hostedBy` (if set), plus computed `effectiveHost` and `effectiveHostedBy` inherited from project root.
 
 #### `GET /api/v1/projects/categories`
 - **Scope:** Public
@@ -224,6 +228,9 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
   - `skills`: Stringified array or JSON parsed into `Types.ObjectId[]`.
   - `tags`: Normalized to lowercase trimmed strings.
   - `status`: Default `"planning"`.
+  - `host`: Enum `"self" | "people"`, default `"self"`. If `"people"`, requires non-empty `hostedBy` array. If `"self"`, requires empty `hostedBy` (`400` if provided).
+  - `hostedBy`: Stringified or JSON array of `Person` ObjectIds (validated for existence and uniqueness; invalid/missing IDs return `400`).
+  - `forkedFrom`: Optional string repository URL (trimmed, validated via WHATWG `new URL` http/https only, max 2048 chars, returns `400` on invalid scheme/format; empty string or null stores `null`).
   - `gallery`: Creation-time gallery items parsed and validated (max 30 items).
   - `versions`: Explicitly ignored if sent in the payload; every newly created project always starts with `versions: []`. Version releases must be appended via `POST /api/v1/projects/:slug/versions`.
 - **Rollback Hook:** On failure (`400`, `409`, `500`), calls `cleanupUploadedVersionMedia(req)` destroying all uploaded gallery and project assets in Cloudinary.
@@ -234,7 +241,10 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
 - **Validation:** Verifies `Types.ObjectId.isValid(req.params.id)`.
 - **Target Model:** `Project`
 - **DB Operation:** `Project.findByIdAndUpdate(id, updatePayload, { new: true, runValidators: true })`
-- **Behavior:** Updates provided fields (including nested objects such as `threeDModel`, `contributors`, `socialLinks`, and `skills`). Explicitly excludes and ignores any `gallery` and `versions` fields sent in the payload so project updates can never overwrite or clear gallery items or version releases. Returns updated document with `gallery: []` guaranteed.
+- **Behavior:** Updates provided fields (including nested objects such as `threeDModel`, `contributors`, `socialLinks`, and `skills`).
+  - `host` & `hostedBy`: Switching `host` to `"self"` automatically clears `hostedBy` to `[]`. Switching or setting `host` to `"people"` requires non-empty `hostedBy`. Supplying non-empty `hostedBy` while stored `host` is `"self"` returns `400 Bad Request`.
+  - `forkedFrom`: Trimming and http/https validation via `isValidHttpUrl` (max 2048 chars); empty string `""` or `null` clears the field to `null`; omitted leaves existing value unchanged.
+  - Explicitly excludes and ignores any `gallery` and `versions` fields sent in the payload so project updates can never overwrite or clear gallery items or version releases. Returns updated document with `gallery: []` guaranteed.
 
 #### `DELETE /api/v1/projects/:id`
 - **Scope:** Protected (`authMiddleware`)
@@ -248,6 +258,7 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
 - **Multipart Uploads:** Version-specific assets (`image`, `videoDemo`, `threeDModel`, and optional `galleryImages` up to 10 files with `galleryMeta`). Folder: `portfolio/projects/{slug}/{safeVersionTag}/[images|videos|models|gallery]` (dots preserved in version tag, e.g. `v1.0.0`).
 - **Target Model:** `Project`
 - **Changelog Parsing:** Uses shared `parseChangelog` helper supporting real arrays, JSON-array strings (`'["a","b"]'`), or repeated multipart fields (`changelog=one`). Entries are trimmed, empty ones dropped, and non-string entries return `400 Bad Request`. Omitted, empty string, or `[]` default to `[]`.
+- **Version Host Overrides:** Optional `host` (`"self" | "people"`) and `hostedBy` (array of `Person` ObjectIds). When omitted, version inherits project-level `effectiveHost` and `effectiveHostedBy`. If version `host: "people"` is provided, `hostedBy` must be non-empty. If version `host: "self"` is provided, `hostedBy` must be empty. Sending `hostedBy` without `host` returns `400 Bad Request`.
 - **DB Operations (Two-step):**
   1. `const project = await Project.findOne({ slug })`
   2. If `isLatest === true`, resets existing versions: `project.versions.forEach(v => v.isLatest = false)`
@@ -262,12 +273,13 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
 - **Validation:** Verifies `Types.ObjectId.isValid(req.params.versionId)` and `req.params.slug`.
 - **Target Model:** `Project`
 - **Changelog Parsing:** Uses shared `parseChangelog` helper. An omitted changelog leaves existing entries unchanged. An explicit empty string `""` or empty array `[]` clears the changelog to `[]`.
+- **Version Host Overrides:** Can partially update or clear version `host` and `hostedBy`. Supplying `host: ""` or `host: null` unsets the override, restoring inheritance from project root. Setting `host: "people"` requires non-empty `hostedBy`. Setting `host: "self"` requires empty `hostedBy` (and clears `hostedBy`).
 - **Gallery Protection:** Does not mutate the version's `gallery` array; gallery modifications must use the dedicated version gallery endpoints.
 - **DB Operations:**
   1. `const project = await Project.findOne({ slug })`
   2. Subdocument lookup: `project.versions.find(v => String(v._id) === versionId)`
   3. Case-insensitive JS duplicate check: ensures no other version in `project.versions` shares `trimmedTag.toLowerCase()` (renaming to self allowed).
-  4. Updates modified fields (`versionTag`, `releaseDate`, `changelog`, `demoUrl`, `image`, `videoDemo`, `threeDFileUrl`), clearing fields set to `""`.
+  4. Updates modified fields (`versionTag`, `releaseDate`, `changelog`, `demoUrl`, `image`, `videoDemo`, `threeDFileUrl`, `host`, `hostedBy`), clearing fields set to `""`.
   5. Single-truth `isLatest`: if `true`, resets all versions in `project.versions` to `false`, sets current version to `true`. If `false`, leaves project without a latest version.
   6. `await project.save()` (runs schema validators).
 - **Rollback Hook:** On error (`400`, `404`, `409`, `500`), calls `cleanupUploadedVersionMedia(req)` to destroy just-uploaded Cloudinary assets using their exact `resource_type` (`image`, `video`, `raw`).
@@ -409,7 +421,9 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
   - `?category=<category>` $\rightarrow$ `filter.category = category.toLowerCase().trim()`
   - `?featured=<true|false>` $\rightarrow$ `filter.featured = featured === "true"`
   - `?tag=<tag>` $\rightarrow$ `filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") }` (case-insensitive regex match)
-- **Query Parameter Validation:** `category`, `featured`, `tag`, `status` are validated as strings (arrays coerced to `param[0]`; unexpected array shapes return `400 Bad Request`).
+  - `?host=<self|people>` $\rightarrow$ filters by host (`self` matches `"self"`, null, or missing; `people` matches `"people"`). Invalid returns `400 Bad Request`.
+  - `?forked=<true|false>` $\rightarrow$ filters by whether `forkedFrom` is a non-null string (`true`) or null/missing/empty (`false`). Invalid returns `400 Bad Request`.
+- **Query Parameter Validation:** `category`, `featured`, `tag`, `status`, `host`, `forked` are validated as strings (arrays coerced to `param[0]`; unexpected array shapes return `400 Bad Request`).
 - **Sorting:** Featured projects first (`featured: -1`), then newest start date (`startDate: -1`).
 - **Read Mode:** `.lean()` (returns plain JS objects for optimal memory/speed).
 - **Response Shape:**
@@ -774,68 +788,78 @@ The `SiteConfig` model manages global metadata as a **singleton document** in th
 
 ---
 
-### 4.9 Contributors API (`/api/v1/contributors`)
+### 4.9 People API (`/api/v1/people`)
 
-#### `GET /api/v1/contributors`
+#### `GET /api/v1/people`
 - **Scope:** Public
-- **Target Model:** `Contributor`
+- **Target Model:** `Person`
 - **DB Operations:**
   ```typescript
-  const query = Contributor.find();
+  const query = Person.find();
   query.collation({ locale: "en", strength: 2 });
-  const contributors = await query.sort({ name: 1 });
+  const people = await query.sort({ name: 1 });
   ```
 - **Sorting:** Case-insensitively ascending by `name`.
 
-#### `GET /api/v1/contributors/:id`
+#### `GET /api/v1/people/:id`
 - **Scope:** Public
-- **Target Model:** `Contributor`
-- **DB Operation:** `Contributor.findById(id)`
+- **Target Model:** `Person`
+- **DB Operation:** `Person.findById(id)`
 - **Validation:** Validates 24-character hex `ObjectId` (`400 Bad Request` if invalid). Returns `404 Not Found` if missing.
 
-#### `POST /api/v1/contributors`
+#### `POST /api/v1/people`
 - **Scope:** Protected (`authMiddleware`)
 - **Content-Type:** JSON or Multipart (`profilePicUrl` file field or URL text field).
-- **Target Model:** `Contributor`
+- **Target Model:** `Person`
 - **DB Operations:**
   1. Case-insensitive duplicate check on `name`:
      ```typescript
-     const existing = await Contributor.findOne({
+     const existing = await Person.findOne({
        name: { $regex: new RegExp(`^${escapeRegex(name)}$`, "i") }
      });
      ```
      Returns `409 Conflict` if duplicate.
-  2. Create contributor:
+  2. Create person:
      ```typescript
-     const contributor = await Contributor.create({ name, profilePicUrl, profileLink });
+     const person = await Person.create({ name, profilePicUrl, profileLink });
      ```
 - **Rollback:** If validation fails or database error occurs after file upload, the uploaded picture is rolled back via `cleanupUploadedVersionMedia(req)` with `{ resource_type: "image" }`.
 
-#### `PUT /api/v1/contributors/:id`
+#### `PUT /api/v1/people/:id`
 - **Scope:** Protected (`authMiddleware`)
 - **Content-Type:** JSON or Multipart (optional `profilePicUrl` file replacement).
-- **Target Model:** `Contributor`
+- **Target Model:** `Person`
 - **DB Operations:**
   1. Partial validation of fields. Empty string `""` clears `profileLink`.
-  2. Duplicate name check excluding current contributor `_id != id` (`409 Conflict`).
-  3. `Contributor.findByIdAndUpdate(id, updateData, { new: true, runValidators: true })`.
+  2. Duplicate name check excluding current person `_id != id` (`409 Conflict`).
+  3. `Person.findByIdAndUpdate(id, updateData, { new: true, runValidators: true })`.
 - **Cloudinary Asset Retention:** Replacing a profile picture keeps the existing Cloudinary asset (consistent with project edits).
 
-#### `DELETE /api/v1/contributors/:id`
+#### `DELETE /api/v1/people/:id`
 - **Scope:** Protected (`authMiddleware`)
-- **Target Model:** `Contributor`, `Project`
+- **Target Model:** `Person`, `Project`
 - **DB Operations:**
-  1. Reference Check across projects and versions:
+  1. Reference Check across projects and versions (both as contributor and as host):
      ```typescript
      const matchingProjects = await Project.find({
        $or: [
          { "contributors.contributor": id },
          { "versions.contributors.contributor": id },
+         { hostedBy: id },
+         { "versions.hostedBy": id },
        ]
      });
      ```
-  2. If in use, rejects deletion with `409 Conflict` reporting exact project and version usage counts (e.g. `"Cannot delete contributor: referenced by 1 project(s) and 2 project version(s)"`).
-  3. If unused, deletes contributor via `Contributor.findByIdAndDelete(id)`. Cloudinary assets are retained.
+  2. If in use, rejects deletion with `409 Conflict` reporting exact project and version usage counts for both roles:
+     `"Cannot delete person: referenced as contributor in X project(s) and Y project version(s), and as host in A project(s) and B project version(s)"`.
+  3. If unused, deletes person via `Person.findByIdAndDelete(id)`. Cloudinary assets are retained.
+
+#### Contributors Collection Migration Script (`scripts/rename-contributors-collection.ts`)
+- **NPM Script:** `npm run rename-contributors-collection`
+- **Behavior:** Migrates MongoDB collection from `contributors` to `people`.
+- **Dry-run Mode (Default):** Inspects counts of documents in `contributors` and `people` collections without performing changes.
+- **Apply Mode (`--apply`):** Renames collection `contributors` to `people`. Refuses to run if `people` collection already has documents.
+- **Execution Rule:** Manual operational script; never run automatically at server start.
 
 #### Legacy Contributor Cleanup Script (`scripts/clear-legacy-contributors.ts`)
 - **NPM Script:** `npm run clear-legacy-contributors`
@@ -876,7 +900,7 @@ Because file uploads occur during the Express middleware pipeline **before** the
   The newly uploaded PDF asset is deleted from Cloudinary using `cloudinary.uploader.destroy(resumePublicId)`, keeping storage clean and synchronized with database state.
 - **Version Media Cleanup (`cleanupUploadedVersionMedia`):** If `POST /api/v1/projects/:slug/versions` or `PUT /api/v1/projects/:slug/versions/:versionId` fails due to validation error (`400`), missing project/version (`404`), duplicate tag collision (`409`), or database failure (`500`), newly uploaded assets recorded in `req.uploadedMediaAssets` are immediately destroyed via `cloudinary.uploader.destroy(publicId, { resource_type: asset.resourceType })`, ensuring images, videos, and raw 3D models are rolled back with their exact respective resource types.
 - **Gallery Upload Rollback (`cleanupUploadedVersionMedia`):** If adding or updating gallery images on a project (`POST /api/v1/projects`, `POST /api/v1/projects/:slug/gallery`, `PUT /api/v1/projects/:slug/gallery/:imageId`) or version (`POST /api/v1/projects/:slug/versions`, `POST /api/v1/projects/:slug/versions/:versionId/gallery`, `PUT /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`) fails due to validation errors, invalid file MIME types, batch size >10, exceeding 30 gallery items cap, missing project/version, or database failure, all newly uploaded gallery assets are rolled back and destroyed via `cleanupUploadedVersionMedia(req)` with `{ resource_type: "image" }`. Successful mutations and deletions keep Cloudinary assets intact.
-- **URL Validation Upload Rollback:** If any multipart mutation (such as creating/updating a project version, contributor, experience, site config, or gallery image) successfully processes uploaded files to Cloudinary but subsequently fails due to an invalid URL string in an accompanying field (e.g., malformed `demoUrl`, `deployedLink`, `profileLink`, `resumeUrl`, etc.), all newly uploaded assets from that request are immediately rolled back and destroyed from Cloudinary (`cleanupUploadedVersionMedia`, `cleanupUploadedResume`, or `destroyCloudinaryAsset`), ensuring no orphaned files persist in cloud storage.
+- **URL Validation Upload Rollback:** If any multipart mutation (such as creating/updating a project version, person, experience, site config, or gallery image) successfully processes uploaded files to Cloudinary but subsequently fails due to an invalid URL string in an accompanying field (e.g., malformed `demoUrl`, `deployedLink`, `profileLink`, `resumeUrl`, etc.), all newly uploaded assets from that request are immediately rolled back and destroyed from Cloudinary (`cleanupUploadedVersionMedia`, `cleanupUploadedResume`, or `destroyCloudinaryAsset`), ensuring no orphaned files persist in cloud storage.
 
 ---
 
@@ -887,15 +911,15 @@ Because file uploads occur during the Express middleware pipeline **before** the
 | `ALL` | *All Endpoints* | Public / Admin | `LogEntry` | `create()` | Logs request time, level, method, endpoint, status, IP, and duration |
 | `GET` | `/health` | Public | None | Connection readyState check | None |
 | `GET` | `/api/v1/health` | Public | None | Connection readyState check | None |
-| `GET` | `/api/v1/projects` | Public | `Project` | `find().sort().lean()` | `status != invisible`, `category`, `featured`, `tag` (guarantees `gallery: []`) |
+| `GET` | `/api/v1/projects` | Public | `Project` | `find().sort().lean()` | `status != invisible`, `category`, `featured`, `tag`, `host`, `forked` (guarantees `gallery: []`, `host`, `hostedBy`, `forkedFrom`) |
 | `GET` | `/api/v1/projects/categories` | Public | `Project` | `distinct()` | Categories where `status != invisible` |
-| `GET` | `/api/v1/projects/:slug` | Public* | `Project` | `findOne().lean()` | By `slug`; rejects `invisible` if not admin (guarantees `gallery: []`) |
-| `GET` | `/api/v1/admin/projects` | Admin | `Project` | `find().sort().lean()` | No status filter (includes `invisible`/drafts); optional `status`, `category`, `featured`, `tag` (guarantees `gallery: []`) |
-| `POST` | `/api/v1/projects` | Admin | `Project` | `create()` | Creates project, normalizes tags/skills, verifies unique slug, creation-time gallery (ignores `versions`, starts with `versions: []`) |
-| `PUT` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndUpdate()` | Partial update by `_id`, runs validators (ignores `gallery` and `versions`) |
+| `GET` | `/api/v1/projects/:slug` | Public* | `Project` | `findOne().lean()` | By `slug`; rejects `invisible` if not admin (guarantees `gallery: []`, `host`, `hostedBy`, `forkedFrom`) |
+| `GET` | `/api/v1/admin/projects` | Admin | `Project` | `find().sort().lean()` | No status filter (includes `invisible`/drafts); optional `status`, `category`, `featured`, `tag`, `host`, `forked` |
+| `POST` | `/api/v1/projects` | Admin | `Project` | `create()` | Creates project, validates `host`/`hostedBy`/`forkedFrom`, normalizes tags/skills, verifies unique slug, creation-time gallery (ignores `versions`) |
+| `PUT` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndUpdate()` | Partial update by `_id`, runs validators (handles `host`/`hostedBy`/`forkedFrom`; ignores `gallery` and `versions`) |
 | `DELETE` | `/api/v1/projects/:id` | Admin | `Project` | `findByIdAndDelete()` | Removes project by `_id` |
-| `POST` | `/api/v1/projects/:slug/versions` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Appends version; resets `isLatest` if new is latest, creation-time gallery |
-| `PUT` | `/api/v1/projects/:slug/versions/:versionId` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | In-place update of version; tag duplicate check; single-truth `isLatest`; upload cleanup on failure (ignores `gallery`) |
+| `POST` | `/api/v1/projects/:slug/versions` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Appends version; optional version `host`/`hostedBy`; resets `isLatest` if new is latest, creation-time gallery |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | In-place update of version; tag duplicate check; single-truth `isLatest`; version `host`/`hostedBy` overrides; upload cleanup on failure |
 | `DELETE` | `/api/v1/projects/:slug/versions/:versionId` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Removes version from `versions` array; Cloudinary assets kept |
 | `POST` | `/api/v1/projects/:slug/gallery` | Admin | `Project` | `findOneAndUpdate()` | Atomic `$push` `$each` new gallery items (max 30 items) |
 | `PUT` | `/api/v1/projects/:slug/gallery/order` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Reorders project gallery items by full array of `_id`s |
@@ -905,11 +929,11 @@ Because file uploads occur during the Express middleware pipeline **before** the
 | `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/order` | Admin | `Project` | `findOne()` $\rightarrow$ `save()` | Reorders version gallery items by full array of `_id`s |
 | `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | `Project` | `findOneAndUpdate()` | Atomic positional `$set` on `versions.$[v].gallery.$[g]` with `arrayFilters` |
 | `DELETE` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | `Project` | `findOneAndUpdate()` | Atomic `$pull` from `versions.$.gallery` by `_id`; assets kept |
-| `GET` | `/api/v1/contributors` | Public | `Contributor` | `find().collation().sort()` | Sorted case-insensitively by `name: 1` |
-| `GET` | `/api/v1/contributors/:id` | Public | `Contributor` | `findById()` | By `_id` |
-| `POST` | `/api/v1/contributors` | Admin | `Contributor` | `findOne()` $\rightarrow$ `create()` | Multipart pic or URL; case-insensitive duplicate check on `name`; rollback on failure |
-| `PUT` | `/api/v1/contributors/:id` | Admin | `Contributor` | `findOne()` $\rightarrow$ `findByIdAndUpdate()` | Duplicate check excluding self; replaces pic keeping old Cloudinary asset; clears link with `""` |
-| `DELETE` | `/api/v1/contributors/:id` | Admin | `Contributor` | `Project.find()` $\rightarrow$ `findByIdAndDelete()` | Rejects with 409 if referenced in project or version with count; deletes and keeps Cloudinary asset |
+| `GET` | `/api/v1/people` | Public | `Person` | `find().collation().sort()` | Sorted case-insensitively by `name: 1` |
+| `GET` | `/api/v1/people/:id` | Public | `Person` | `findById()` | By `_id` |
+| `POST` | `/api/v1/people` | Admin | `Person` | `findOne()` $\rightarrow$ `create()` | Multipart pic or URL; case-insensitive duplicate check on `name`; rollback on failure |
+| `PUT` | `/api/v1/people/:id` | Admin | `Person` | `findOne()` $\rightarrow$ `findByIdAndUpdate()` | Duplicate check excluding self; replaces pic keeping old Cloudinary asset; clears link with `""` |
+| `DELETE` | `/api/v1/people/:id` | Admin | `Person` | `Project.find()` $\rightarrow$ `findByIdAndDelete()` | Rejects with 409 if referenced in project or version as contributor or host with counts; deletes and keeps Cloudinary asset |
 | `GET` | `/api/v1/skills` | Public | `Skill` | `find().sort()` | Optional `type` filter; sorted by `weight: 1, name: 1` |
 | `GET` | `/api/v1/skills/:id` | Public | `Skill` | `findById()` | By `_id` |
 | `POST` | `/api/v1/skills` | Admin | `Skill` | `findOne()` $\rightarrow$ `create()` | Case-insensitive duplicate check on `name` |

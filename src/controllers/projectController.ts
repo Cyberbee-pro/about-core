@@ -11,7 +11,7 @@ import {
   IGalleryImage,
   ProjectStatus,
 } from "../models/Project";
-import { Contributor } from "../models/Contributor";
+import { Person } from "../models/Person";
 
 export const GALLERY_TAG_REGEX = /^[a-z0-9][a-z0-9_+#.-]{0,23}$/;
 
@@ -21,6 +21,13 @@ export interface FormattedContributor {
   profilePicUrl: string;
   profileLink: string | null;
   role: string | null;
+}
+
+export interface FormattedPerson {
+  _id: string;
+  name: string;
+  profilePicUrl: string;
+  profileLink: string | null;
 }
 
 export function formatContributors(rawContributors: unknown): FormattedContributor[] {
@@ -65,18 +72,65 @@ export function formatContributors(rawContributors: unknown): FormattedContribut
   return result;
 }
 
+export function formatHostedBy(rawHostedBy: unknown): FormattedPerson[] {
+  if (!Array.isArray(rawHostedBy)) {
+    return [];
+  }
+  const result: FormattedPerson[] = [];
+
+  for (const item of rawHostedBy) {
+    if (!item || typeof item !== "object") continue;
+    const populated = item as Record<string, unknown>;
+    if (typeof populated.name !== "string" || typeof populated.profilePicUrl !== "string") {
+      continue;
+    }
+
+    const personId = populated._id ? String(populated._id) : "";
+    const name = populated.name;
+    const profilePicUrl = populated.profilePicUrl;
+    const profileLink =
+      typeof populated.profileLink === "string" && populated.profileLink.trim()
+        ? populated.profileLink.trim()
+        : null;
+
+    result.push({
+      _id: personId,
+      name,
+      profilePicUrl,
+      profileLink,
+    });
+  }
+
+  return result;
+}
+
 export function formatProjectResponse<T>(project: T): T {
   if (!project || typeof project !== "object") {
     return project;
   }
   const obj = typeof (project as { toObject?: unknown }).toObject === "function"
     ? ((project as unknown) as { toObject: () => Record<string, unknown> }).toObject()
-    : (project as Record<string, unknown>);
+    : { ...(project as Record<string, unknown>) };
 
   if (!Array.isArray(obj.gallery)) {
     obj.gallery = [];
   }
   obj.contributors = formatContributors(obj.contributors);
+  obj.host = obj.host === "people" ? "people" : "self";
+  obj.hostedBy = formatHostedBy(obj.hostedBy);
+  obj.forkedFrom = typeof obj.forkedFrom === "string" && obj.forkedFrom.trim() ? obj.forkedFrom.trim() : null;
+  if (obj.deployedLink !== undefined) {
+    obj.deployedLink = typeof obj.deployedLink === "string" && obj.deployedLink.trim() ? obj.deployedLink.trim() : null;
+  }
+  if (obj.githubLink !== undefined) {
+    obj.githubLink = typeof obj.githubLink === "string" && obj.githubLink.trim() ? obj.githubLink.trim() : null;
+  }
+  if (obj.videoDemo !== undefined) {
+    obj.videoDemo = typeof obj.videoDemo === "string" && obj.videoDemo.trim() ? obj.videoDemo.trim() : null;
+  }
+
+  const projectHost = obj.host;
+  const projectHostedBy = obj.hostedBy;
 
   let formattedVersions: unknown[] | undefined = undefined;
   if (Array.isArray(obj.versions)) {
@@ -95,6 +149,19 @@ export function formatProjectResponse<T>(project: T): T {
         vObj.githubLink = vObj.githubLink !== undefined && vObj.githubLink !== null ? vObj.githubLink : null;
         vObj.contributors = formatContributors(vObj.contributors);
         vObj.socialLinks = Array.isArray(vObj.socialLinks) ? vObj.socialLinks : [];
+
+        const hasHostOverride = vObj.host === "self" || vObj.host === "people";
+        vObj.host = hasHostOverride ? vObj.host : null;
+        vObj.hostedBy = hasHostOverride ? formatHostedBy(vObj.hostedBy) : [];
+
+        if (hasHostOverride) {
+          vObj.effectiveHost = vObj.host;
+          vObj.effectiveHostedBy = vObj.host === "self" ? [] : vObj.hostedBy;
+        } else {
+          vObj.effectiveHost = projectHost;
+          vObj.effectiveHostedBy = projectHostedBy;
+        }
+
         return vObj;
       }
       return v;
@@ -113,6 +180,8 @@ export async function populateProjectDoc(project: unknown): Promise<void> {
       await (project as { populate: (paths: string[]) => Promise<unknown> }).populate([
         "contributors.contributor",
         "versions.contributors.contributor",
+        "hostedBy",
+        "versions.hostedBy",
       ]);
     } catch {
       // In tests where populate is mocked or throws, continue gracefully
@@ -301,8 +370,8 @@ export async function parseAndValidateContributors(
     });
   }
 
-  // Verify all IDs exist in Contributor collection
-  const existing = await Contributor.find({ _id: { $in: idsToVerify } });
+  // Verify all IDs exist in Person collection
+  const existing = await Person.find({ _id: { $in: idsToVerify } });
   if (existing.length !== idsToVerify.length) {
     const existingIdStrs = new Set(existing.map((c) => String(c._id)));
     const unknownIds = idsToVerify
@@ -314,6 +383,99 @@ export async function parseAndValidateContributors(
   }
 
   return { contributors: result };
+}
+
+export interface ParseHostedByResult {
+  hostedBy?: Types.ObjectId[];
+  error?: string;
+}
+
+export async function parseAndValidateHostedBy(
+  raw: unknown
+): Promise<ParseHostedByResult> {
+  if (raw === undefined) {
+    return { hostedBy: undefined };
+  }
+
+  let list: unknown[] = [];
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      return { hostedBy: [] };
+    }
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          list = parsed;
+        } else {
+          list = [trimmed];
+        }
+      } catch {
+        list = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+      }
+    } else {
+      list = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+  } else if (Array.isArray(raw)) {
+    list = raw;
+  } else {
+    list = [raw];
+  }
+
+  if (list.length === 0) {
+    return { hostedBy: [] };
+  }
+
+  const result: Types.ObjectId[] = [];
+  const seenIds = new Set<string>();
+  const idsToVerify: Types.ObjectId[] = [];
+
+  for (const item of list) {
+    if (!item) {
+      return { error: "Invalid hostedBy entry: null or undefined" };
+    }
+
+    let idStr: string;
+    if (typeof item === "string") {
+      idStr = item.trim();
+    } else if (typeof item === "object" && item !== null) {
+      if ((item as { _id?: unknown })._id) {
+        idStr = String((item as { _id?: unknown })._id).trim();
+      } else {
+        idStr = String(item).trim();
+      }
+    } else {
+      idStr = String(item).trim();
+    }
+
+    if (!Types.ObjectId.isValid(idStr)) {
+      return { error: `Invalid identifier format for hostedBy ID: '${idStr}'` };
+    }
+
+    if (seenIds.has(idStr)) {
+      return { error: `Duplicate person detected in hostedBy list: '${idStr}'` };
+    }
+    seenIds.add(idStr);
+
+    const objId = new Types.ObjectId(idStr);
+    idsToVerify.push(objId);
+    result.push(objId);
+  }
+
+  // Verify all IDs exist in Person collection in one query
+  const existing = await Person.find({ _id: { $in: idsToVerify } });
+  if (existing.length !== idsToVerify.length) {
+    const existingIdStrs = new Set(existing.map((p) => String(p._id)));
+    const unknownIds = idsToVerify
+      .map(String)
+      .filter((id) => !existingIdStrs.has(id));
+    return {
+      error: `Unknown Person ID(s) in hostedBy: ${unknownIds.join(", ")}`,
+    };
+  }
+
+  return { hostedBy: result };
 }
 
 export interface ParseSocialLinksResult {
@@ -535,6 +697,24 @@ export const getProjects = async (
       return;
     }
 
+    const parsedHost = parseQueryParam(req.query.host, "host");
+    if (parsedHost.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedHost.error,
+      });
+      return;
+    }
+
+    const parsedForked = parseQueryParam(req.query.forked, "forked");
+    if (parsedForked.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedForked.error,
+      });
+      return;
+    }
+
     const category = parsedCategory.value;
     const featured = parsedFeatured.value;
     const tag = parsedTag.value;
@@ -555,11 +735,55 @@ export const getProjects = async (
       filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") };
     }
 
+    if (parsedHost.value !== undefined) {
+      const hostVal = parsedHost.value.trim();
+      if (hostVal !== "self" && hostVal !== "people") {
+        res.status(400).json({
+          success: false,
+          message: "Invalid host filter: must be 'self' or 'people'",
+        });
+        return;
+      }
+      if (hostVal === "self") {
+        filter.$or = [{ host: "self" }, { host: { $exists: false } }, { host: null }];
+      } else {
+        filter.host = "people";
+      }
+    }
+
+    if (parsedForked.value !== undefined) {
+      const forkedVal = parsedForked.value.trim().toLowerCase();
+      if (forkedVal !== "true" && forkedVal !== "false") {
+        res.status(400).json({
+          success: false,
+          message: "Invalid forked filter: must be 'true' or 'false'",
+        });
+        return;
+      }
+      if (forkedVal === "true") {
+        filter.forkedFrom = { $ne: null, $exists: true, $nin: ["", null] };
+      } else {
+        const forkedFalseCondition = {
+          $or: [{ forkedFrom: null }, { forkedFrom: { $exists: false } }, { forkedFrom: "" }],
+        };
+        if (filter.$or) {
+          filter.$and = filter.$and || [];
+          filter.$and.push({ $or: filter.$or });
+          delete filter.$or;
+          filter.$and.push(forkedFalseCondition);
+        } else {
+          filter.$or = forkedFalseCondition.$or;
+        }
+      }
+    }
+
     let query = Project.find(filter);
     if (typeof (query as unknown as { populate?: unknown }).populate === "function") {
       query = (query as unknown as { populate: (path: string) => typeof query })
         .populate("contributors.contributor")
-        .populate("versions.contributors.contributor");
+        .populate("versions.contributors.contributor")
+        .populate("hostedBy")
+        .populate("versions.hostedBy");
     }
     const projects = await query
       .sort({ featured: -1, startDate: -1 })
@@ -617,6 +841,24 @@ export const getAdminProjects = async (
       return;
     }
 
+    const parsedHost = parseQueryParam(req.query.host, "host");
+    if (parsedHost.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedHost.error,
+      });
+      return;
+    }
+
+    const parsedForked = parseQueryParam(req.query.forked, "forked");
+    if (parsedForked.error) {
+      res.status(400).json({
+        success: false,
+        message: parsedForked.error,
+      });
+      return;
+    }
+
     const category = parsedCategory.value;
     const featured = parsedFeatured.value;
     const tag = parsedTag.value;
@@ -640,11 +882,55 @@ export const getAdminProjects = async (
       filter.tags = { $regex: new RegExp(`^${escapeRegex(tag.trim())}$`, "i") };
     }
 
+    if (parsedHost.value !== undefined) {
+      const hostVal = parsedHost.value.trim();
+      if (hostVal !== "self" && hostVal !== "people") {
+        res.status(400).json({
+          success: false,
+          message: "Invalid host filter: must be 'self' or 'people'",
+        });
+        return;
+      }
+      if (hostVal === "self") {
+        filter.$or = [{ host: "self" }, { host: { $exists: false } }, { host: null }];
+      } else {
+        filter.host = "people";
+      }
+    }
+
+    if (parsedForked.value !== undefined) {
+      const forkedVal = parsedForked.value.trim().toLowerCase();
+      if (forkedVal !== "true" && forkedVal !== "false") {
+        res.status(400).json({
+          success: false,
+          message: "Invalid forked filter: must be 'true' or 'false'",
+        });
+        return;
+      }
+      if (forkedVal === "true") {
+        filter.forkedFrom = { $ne: null, $exists: true, $nin: ["", null] };
+      } else {
+        const forkedFalseCondition = {
+          $or: [{ forkedFrom: null }, { forkedFrom: { $exists: false } }, { forkedFrom: "" }],
+        };
+        if (filter.$or) {
+          filter.$and = filter.$and || [];
+          filter.$and.push({ $or: filter.$or });
+          delete filter.$or;
+          filter.$and.push(forkedFalseCondition);
+        } else {
+          filter.$or = forkedFalseCondition.$or;
+        }
+      }
+    }
+
     let query = Project.find(filter);
     if (typeof (query as unknown as { populate?: unknown }).populate === "function") {
       query = (query as unknown as { populate: (path: string) => typeof query })
         .populate("contributors.contributor")
-        .populate("versions.contributors.contributor");
+        .populate("versions.contributors.contributor")
+        .populate("hostedBy")
+        .populate("versions.hostedBy");
     }
     const projects = await query
       .sort({ featured: -1, startDate: -1 })
@@ -700,7 +986,9 @@ export const getProjectBySlug = async (
     if (typeof (query as unknown as { populate?: unknown }).populate === "function") {
       query = (query as unknown as { populate: (path: string) => typeof query })
         .populate("contributors.contributor")
-        .populate("versions.contributors.contributor");
+        .populate("versions.contributors.contributor")
+        .populate("hostedBy")
+        .populate("versions.hostedBy");
     }
     const project = await query.lean();
 
@@ -967,6 +1255,74 @@ export const createProject = async (
       }
     }
 
+    let forkedFrom: string | null = null;
+    if (body.forkedFrom !== undefined && body.forkedFrom !== null) {
+      const trimmed = String(body.forkedFrom).trim();
+      if (trimmed === "") {
+        forkedFrom = null;
+      } else {
+        if (trimmed.length > 2048) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: "forkedFrom cannot exceed 2048 characters",
+          });
+          return;
+        }
+        if (!isValidHttpUrl(trimmed)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: "forkedFrom must be a valid http or https URL",
+          });
+          return;
+        }
+        forkedFrom = trimmed;
+      }
+    }
+
+    const hostRaw = body.host !== undefined && body.host !== null ? String(body.host).trim() : "self";
+    if (hostRaw !== "self" && hostRaw !== "people") {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: "host must be 'self' or 'people'",
+      });
+      return;
+    }
+    const host: "self" | "people" = hostRaw;
+
+    let hostedBy: Types.ObjectId[] = [];
+    if (body.hostedBy !== undefined) {
+      const hostedByRes = await parseAndValidateHostedBy(body.hostedBy);
+      if (hostedByRes.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: hostedByRes.error });
+        return;
+      }
+      hostedBy = hostedByRes.hostedBy || [];
+    }
+
+    if (host === "people") {
+      if (hostedBy.length === 0) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "host 'people' requires at least one person in hostedBy",
+        });
+        return;
+      }
+    } else {
+      if (hostedBy.length > 0) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "hostedBy cannot be specified when host is 'self'",
+        });
+        return;
+      }
+    }
+
     const project = await Project.create({
       title,
       slug,
@@ -987,6 +1343,9 @@ export const createProject = async (
       githubLink,
       versions: [],
       gallery,
+      host,
+      hostedBy,
+      forkedFrom,
     });
 
     await populateProjectDoc(project);
@@ -1040,10 +1399,10 @@ export const updateProject = async (
         updatePayload.image = body.image.trim();
       }
     }
-    if (typeof body.videoDemo === "string") {
-      if (body.videoDemo.trim() === "") {
-        updatePayload.videoDemo = undefined;
-      } else {
+    if (body.videoDemo !== undefined) {
+      if (body.videoDemo === null || (typeof body.videoDemo === "string" && body.videoDemo.trim() === "")) {
+        updatePayload.videoDemo = null as unknown as string;
+      } else if (typeof body.videoDemo === "string") {
         if (!isValidHttpUrl(body.videoDemo)) {
           res.status(400).json({ success: false, message: "videoDemo must be a valid http or https URL" });
           return;
@@ -1051,10 +1410,10 @@ export const updateProject = async (
         updatePayload.videoDemo = body.videoDemo.trim();
       }
     }
-    if (typeof body.deployedLink === "string") {
-      if (body.deployedLink.trim() === "") {
-        updatePayload.deployedLink = undefined;
-      } else {
+    if (body.deployedLink !== undefined) {
+      if (body.deployedLink === null || (typeof body.deployedLink === "string" && body.deployedLink.trim() === "")) {
+        updatePayload.deployedLink = null as unknown as string;
+      } else if (typeof body.deployedLink === "string") {
         if (!isValidHttpUrl(body.deployedLink)) {
           res.status(400).json({ success: false, message: "deployedLink must be a valid http or https URL" });
           return;
@@ -1062,10 +1421,10 @@ export const updateProject = async (
         updatePayload.deployedLink = body.deployedLink.trim();
       }
     }
-    if (typeof body.githubLink === "string") {
-      if (body.githubLink.trim() === "") {
-        updatePayload.githubLink = undefined;
-      } else {
+    if (body.githubLink !== undefined) {
+      if (body.githubLink === null || (typeof body.githubLink === "string" && body.githubLink.trim() === "")) {
+        updatePayload.githubLink = null as unknown as string;
+      } else if (typeof body.githubLink === "string") {
         if (!isValidHttpUrl(body.githubLink)) {
           res.status(400).json({ success: false, message: "githubLink must be a valid http or https URL" });
           return;
@@ -1130,6 +1489,139 @@ export const updateProject = async (
         }
       } else if (Array.isArray(body.skills)) {
         updatePayload.skills = (body.skills as unknown[]).map((s) => new Types.ObjectId(String(s)));
+      }
+    }
+
+    if (body.forkedFrom !== undefined) {
+      if (body.forkedFrom === null || body.forkedFrom === "") {
+        updatePayload.forkedFrom = null;
+      } else {
+        const trimmed = String(body.forkedFrom).trim();
+        if (trimmed === "") {
+          updatePayload.forkedFrom = null;
+        } else {
+          if (trimmed.length > 2048) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({
+              success: false,
+              message: "forkedFrom cannot exceed 2048 characters",
+            });
+            return;
+          }
+          if (!isValidHttpUrl(trimmed)) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({
+              success: false,
+              message: "forkedFrom must be a valid http or https URL",
+            });
+            return;
+          }
+          updatePayload.forkedFrom = trimmed;
+        }
+      }
+    }
+
+    if (body.host !== undefined || body.hostedBy !== undefined) {
+      const existingProject = await Project.findById(id);
+      if (!existingProject) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(404).json({
+          success: false,
+          message: `Project not found with id: ${id}`,
+        });
+        return;
+      }
+
+      const storedHost = existingProject.host === "people" ? "people" : "self";
+
+      if (body.host !== undefined) {
+        const hostRaw = String(body.host).trim();
+        if (hostRaw !== "self" && hostRaw !== "people") {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: "host must be 'self' or 'people'",
+          });
+          return;
+        }
+
+        if (hostRaw === "self") {
+          if (body.hostedBy !== undefined) {
+            const parsed = await parseAndValidateHostedBy(body.hostedBy);
+            if (parsed.error) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: parsed.error });
+              return;
+            }
+            if (parsed.hostedBy && parsed.hostedBy.length > 0) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({
+                success: false,
+                message: "hostedBy cannot be specified when host is 'self'",
+              });
+              return;
+            }
+          }
+          updatePayload.host = "self";
+          updatePayload.hostedBy = [];
+        } else {
+          let finalHostedBy: Types.ObjectId[];
+          if (body.hostedBy !== undefined) {
+            const parsed = await parseAndValidateHostedBy(body.hostedBy);
+            if (parsed.error) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: parsed.error });
+              return;
+            }
+            finalHostedBy = parsed.hostedBy || [];
+          } else {
+            finalHostedBy = existingProject.hostedBy || [];
+          }
+
+          if (finalHostedBy.length === 0) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({
+              success: false,
+              message: "host 'people' requires at least one person in hostedBy",
+            });
+            return;
+          }
+
+          updatePayload.host = "people";
+          if (body.hostedBy !== undefined) {
+            updatePayload.hostedBy = finalHostedBy;
+          }
+        }
+      } else {
+        const parsed = await parseAndValidateHostedBy(body.hostedBy);
+        if (parsed.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: parsed.error });
+          return;
+        }
+        const newHostedBy = parsed.hostedBy || [];
+
+        if (storedHost === "self") {
+          if (newHostedBy.length > 0) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({
+              success: false,
+              message: "Cannot set hostedBy when host is self; set host to people",
+            });
+            return;
+          }
+          updatePayload.hostedBy = [];
+        } else {
+          if (newHostedBy.length === 0) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({
+              success: false,
+              message: "host 'people' requires at least one person in hostedBy",
+            });
+            return;
+          }
+          updatePayload.hostedBy = newHostedBy;
+        }
       }
     }
 
@@ -1214,8 +1706,9 @@ export const addProjectVersion = async (
       return;
     }
 
-    const body = req.body as Partial<IProjectVersion> & {
+    const body = req.body as Omit<Partial<IProjectVersion>, "isLatest"> & {
       threeDModel?: { fileUrl?: string } | string;
+      isLatest?: boolean | string;
     };
     const threeDModel = parseJsonField<{ fileUrl?: string } | undefined>(
       body.threeDModel,
@@ -1397,6 +1890,67 @@ export const addProjectVersion = async (
       socialLinks = sRes.socialLinks;
     }
 
+    let versionHost: "self" | "people" | undefined = undefined;
+    let versionHostedBy: Types.ObjectId[] | undefined = undefined;
+
+    if (body.hostedBy !== undefined && body.host === undefined) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: "Cannot set hostedBy without host on version",
+      });
+      return;
+    }
+
+    if (body.host !== undefined && body.host !== null && String(body.host).trim() !== "") {
+      const vHostRaw = String(body.host).trim();
+      if (vHostRaw !== "self" && vHostRaw !== "people") {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version host must be 'self' or 'people'",
+        });
+        return;
+      }
+      versionHost = vHostRaw;
+
+      if (versionHost === "people") {
+        const parsed = await parseAndValidateHostedBy(body.hostedBy);
+        if (parsed.error) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: parsed.error });
+          return;
+        }
+        if (!parsed.hostedBy || parsed.hostedBy.length === 0) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: "Version host 'people' requires at least one person in hostedBy",
+          });
+          return;
+        }
+        versionHostedBy = parsed.hostedBy;
+      } else {
+        if (body.hostedBy !== undefined) {
+          const parsed = await parseAndValidateHostedBy(body.hostedBy);
+          if (parsed.error) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({ success: false, message: parsed.error });
+            return;
+          }
+          if (parsed.hostedBy && parsed.hostedBy.length > 0) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({
+              success: false,
+              message: "hostedBy cannot be specified when version host is 'self'",
+            });
+            return;
+          }
+        }
+        versionHostedBy = [];
+      }
+    }
+
     const project = await Project.findOne({ slug });
     if (!project) {
       await cleanupUploadedVersionMedia(req);
@@ -1420,7 +1974,7 @@ export const addProjectVersion = async (
       return;
     }
 
-    const shouldSetLatest = Boolean(isLatest ?? false);
+    const shouldSetLatest = isLatest === true || isLatest === "true";
 
     if (shouldSetLatest) {
       project.versions.forEach((v) => {
@@ -1516,6 +2070,8 @@ export const addProjectVersion = async (
       githubLink,
       contributors,
       socialLinks,
+      host: versionHost,
+      hostedBy: versionHostedBy,
     };
 
     project.versions.push(newVersion);
@@ -1551,6 +2107,8 @@ interface UpdateProjectVersionInput {
   githubLink?: string;
   contributors?: unknown;
   socialLinks?: unknown;
+  host?: string | null;
+  hostedBy?: unknown;
 }
 
 export const updateProjectVersion = async (
@@ -1882,6 +2440,77 @@ export const updateProjectVersion = async (
         return;
       }
       version.socialLinks = sRes.socialLinks;
+    }
+
+    // 15. Update host and hostedBy
+    if (body.host !== undefined) {
+      if (body.host === "" || body.host === null) {
+        version.host = undefined;
+        version.hostedBy = undefined;
+      } else {
+        const vHostRaw = String(body.host).trim();
+        if (vHostRaw !== "self" && vHostRaw !== "people") {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: "Version host must be 'self' or 'people'",
+          });
+          return;
+        }
+
+        if (vHostRaw === "people") {
+          let finalHostedBy: Types.ObjectId[];
+          if (body.hostedBy !== undefined) {
+            const parsed = await parseAndValidateHostedBy(body.hostedBy);
+            if (parsed.error) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: parsed.error });
+              return;
+            }
+            finalHostedBy = parsed.hostedBy || [];
+          } else {
+            finalHostedBy = version.hostedBy || [];
+          }
+
+          if (finalHostedBy.length === 0) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({
+              success: false,
+              message: "Version host 'people' requires at least one person in hostedBy",
+            });
+            return;
+          }
+
+          version.host = "people";
+          version.hostedBy = finalHostedBy;
+        } else {
+          if (body.hostedBy !== undefined) {
+            const parsed = await parseAndValidateHostedBy(body.hostedBy);
+            if (parsed.error) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({ success: false, message: parsed.error });
+              return;
+            }
+            if (parsed.hostedBy && parsed.hostedBy.length > 0) {
+              await cleanupUploadedVersionMedia(req);
+              res.status(400).json({
+                success: false,
+                message: "hostedBy cannot be specified when version host is 'self'",
+              });
+              return;
+            }
+          }
+          version.host = "self";
+          version.hostedBy = [];
+        }
+      }
+    } else if (body.hostedBy !== undefined) {
+      await cleanupUploadedVersionMedia(req);
+      res.status(400).json({
+        success: false,
+        message: "Cannot set hostedBy without host on version",
+      });
+      return;
     }
 
     await project.save();

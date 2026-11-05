@@ -317,7 +317,17 @@ describe("about-core API & Middleware Integration Tests", () => {
   describe("Public Project Routes", () => {
     it("GET /api/v1/projects returns filtered non-invisible projects", async () => {
       const mockProjects = [
-        { title: "IoT Hub", slug: "iot-hub", category: "iot", status: "active" },
+        {
+          title: "IoT Hub",
+          slug: "iot-hub",
+          category: "iot",
+          status: "active",
+          contributors: [],
+          gallery: [],
+          host: "self",
+          hostedBy: [],
+          forkedFrom: null,
+        },
       ];
 
       (Project.find as jest.Mock).mockReturnValue({
@@ -438,6 +448,39 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.body.data.title).toBe("Updated Title");
     });
 
+    it("PUT /api/v1/projects/:id clears githubLink, deployedLink, and videoDemo to null when sent as empty strings", async () => {
+      (Project.findByIdAndUpdate as jest.Mock).mockImplementation((id, payload) =>
+        Promise.resolve({
+          _id: id,
+          title: "Updated",
+          ...payload,
+        })
+      );
+
+      const res = await request(app)
+        .put("/api/v1/projects/60c72b2f9b1d8b2bad000001")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          githubLink: "",
+          deployedLink: "",
+          videoDemo: "",
+        });
+
+      expect(res.status).toBe(200);
+      expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+        "60c72b2f9b1d8b2bad000001",
+        expect.objectContaining({
+          githubLink: null,
+          deployedLink: null,
+          videoDemo: null,
+        }),
+        expect.anything()
+      );
+      expect(res.body.data.githubLink).toBeNull();
+      expect(res.body.data.deployedLink).toBeNull();
+      expect(res.body.data.videoDemo).toBeNull();
+    });
+
     it("PUT /api/v1/projects/:id ignores versions field in payload", async () => {
       const updatedProject = {
         _id: "60c72b2f9b1d8b2bad000001",
@@ -513,9 +556,9 @@ describe("about-core API & Middleware Integration Tests", () => {
 
     it("GET /api/v1/admin/projects returns all projects including invisible and draft items when authenticated", async () => {
       const mockAdminProjects = [
-        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: false },
-        { title: "Planning Project", slug: "planning-proj", category: "web", status: "planning", featured: true },
-        { title: "Active Project", slug: "active-proj", category: "mobile", status: "active", featured: false },
+        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: false, contributors: [], gallery: [], host: "self", hostedBy: [], forkedFrom: null },
+        { title: "Planning Project", slug: "planning-proj", category: "web", status: "planning", featured: true, contributors: [], gallery: [], host: "self", hostedBy: [], forkedFrom: null },
+        { title: "Active Project", slug: "active-proj", category: "mobile", status: "active", featured: false, contributors: [], gallery: [], host: "self", hostedBy: [], forkedFrom: null },
       ];
 
       (Project.find as jest.Mock).mockReturnValue({
@@ -538,7 +581,7 @@ describe("about-core API & Middleware Integration Tests", () => {
 
     it("GET /api/v1/admin/projects supports query filters for status, category, featured, and tag", async () => {
       const mockFilteredProjects = [
-        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: true, tags: ["ai"] },
+        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: true, tags: ["ai"], contributors: [], gallery: [], host: "self", hostedBy: [], forkedFrom: null },
       ];
 
       (Project.find as jest.Mock).mockReturnValue({
@@ -1112,6 +1155,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(resumeUploadCall?.resource_type).toBe("auto");
       expect(resumeUploadCall?.public_id).toBe("resume_date_1");
       expect(resumeUploadCall?.access_mode).toBeUndefined();
+      expect(mockDestroy).not.toHaveBeenCalled();
     });
 
     it("POST /api/v1/config/resume rejects with 400 when no resume file is attached", async () => {
@@ -1433,6 +1477,27 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(mockProject.versions[1].versionTag).toBe("v1.1.0");
       expect(mockProject.versions[1].isLatest).toBe(true);
       expect(mockProject.save).toHaveBeenCalled();
+    });
+
+    it("POST /api/v1/projects/:slug/versions parses isLatest='false' as multipart string and sets isLatest to false without unsetting previous latest", async () => {
+      const mockProject = {
+        _id: "60c72b2f9b1d8b2bad000001",
+        versions: [{ versionTag: "v1.0.0", isLatest: true }] as Array<{ versionTag: string; isLatest: boolean }>,
+        save: jest.fn().mockResolvedValue(true),
+      };
+
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .post("/api/v1/projects/test-project/versions")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("versionTag", "lat-test")
+        .field("isLatest", "false");
+
+      expect(res.status).toBe(201);
+      expect(mockProject.versions[0].isLatest).toBe(true);
+      expect(mockProject.versions[1].versionTag).toBe("lat-test");
+      expect(mockProject.versions[1].isLatest).toBe(false);
     });
 
     it("parses multipart version fields before adding a version", async () => {
@@ -2609,6 +2674,214 @@ describe("about-core API & Middleware Integration Tests", () => {
           expect.stringContaining("portfolio/projects/my-project/v1.0.0/images/"),
           { resource_type: "image" }
         );
+      });
+
+      it("POST /api/v1/config cleans up uploaded pfp image and resume PDF if config already exists (409)", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue({ name: "Existing Config" });
+        const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+        const fakePfp = Buffer.from("fake pfp image content");
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "pfp.png",
+            contentType: "image/png",
+          })
+          .attach("resume", fakePdf, {
+            filename: "resume.pdf",
+            contentType: "application/pdf",
+          });
+
+        expect(res.status).toBe(409);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+        expect(mockDestroy).toHaveBeenCalledWith(
+          "portfolio/site_config/resume/resume_date_1"
+        );
+      });
+
+      it("POST /api/v1/config rolls back uploaded pfp when attached resume fails PDF buffer check (400)", async () => {
+        const fakePfp = Buffer.from("valid pfp content");
+        const invalidResume = Buffer.from("not a valid pdf content");
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "avatar.png",
+            contentType: "image/png",
+          })
+          .attach("resume", invalidResume, {
+            filename: "resume.pdf",
+            contentType: "application/pdf",
+          });
+
+        expect(res.status).toBe(400);
+        expect(res.body.message).toContain("Invalid file content: only PDF files are allowed for resume upload");
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+        expect(mockUploadCalls.filter((c) => c.folder === "portfolio/site_config/resume")).toHaveLength(0);
+      });
+
+      it("POST /api/v1/config cleans up uploaded pfp image if database creation throws (500)", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+        (SiteConfig.create as jest.Mock).mockRejectedValue(new Error("Database write error"));
+        const fakePfp = Buffer.from("fake pfp image data");
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "pfp.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(500);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("PUT /api/v1/config cleans up uploaded resume PDF when history mismatch occurs (400)", async () => {
+        const existingConfig = {
+          name: "Shibraj Das",
+          jobTitles: ["Dev"],
+          resumeUrl: "https://example.com/resume.pdf",
+          statusMessage: "Building...",
+          bioSummary: "Bio...",
+          pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+          pfpPublicId: "portfolio/site_config/pfp_1",
+          pfpHistory: [
+            {
+              url: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+              publicId: "portfolio/site_config/pfp_1",
+              uploadedAt: new Date(),
+            },
+          ],
+        };
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+        const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+        const res = await request(app)
+          .put("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .field("pfpPublicId", "portfolio/site_config/mismatched_pfp")
+          .field("pfpUrl", "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1")
+          .attach("resume", fakePdf, {
+            filename: "resume.pdf",
+            contentType: "application/pdf",
+          });
+
+        expect(res.status).toBe(400);
+        expect(res.body.message).toContain("Selected profile picture does not match history or is mismatched");
+        expect(mockDestroy).toHaveBeenCalledWith(
+          "portfolio/site_config/resume/resume_date_1"
+        );
+      });
+
+      it("PUT /api/v1/config cleans up uploaded pfp image if database update throws (500)", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue({
+          name: "Old Config",
+          jobTitles: ["Dev"],
+          resumeUrl: "https://example.com/resume.pdf",
+          statusMessage: "Building...",
+          bioSummary: "Bio...",
+        });
+        (SiteConfig.findOneAndUpdate as jest.Mock).mockRejectedValue(new Error("Database write error"));
+        const fakePfp = Buffer.from("fake pfp image data");
+
+        const res = await request(app)
+          .put("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "pfp.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(500);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("POST /api/v1/config creates config with uploaded pfp and resume and destroys nothing (201)", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+        (SiteConfig.create as jest.Mock).mockImplementation((data) => Promise.resolve({ _id: "new-cfg", ...data }));
+        const fakePfp = Buffer.from("valid pfp content");
+        const fakePdf = Buffer.from("%PDF-1.4 valid pdf content");
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "avatar.png",
+            contentType: "image/png",
+          })
+          .attach("resume", fakePdf, {
+            filename: "resume.pdf",
+            contentType: "application/pdf",
+          });
+
+        expect(res.status).toBe(201);
+        expect(mockDestroy).not.toHaveBeenCalled();
+      });
+
+      it("POST /api/v1/projects/:slug/versions successfully adds version with uploaded image and destroys nothing (201)", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [] as any[],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .post("/api/v1/projects/my-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v2.0.0")
+          .attach("image", Buffer.from("version image"), {
+            filename: "v2.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(201);
+        expect(mockDestroy).not.toHaveBeenCalled();
       });
     });
   });

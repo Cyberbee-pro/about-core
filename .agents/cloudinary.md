@@ -50,9 +50,10 @@ portfolio/
 │   └── <skill-name>/                           # Hyphenated, URL-safe skill name (e.g., 'typescript', 'react-native')
 │       └── <skill-name>                        # Skill brand/tech icon (resource_type: image)
 │
-├── contributors/
-│   └── <contributor-name>/                     # Derived, lowercase hyphenated name (e.g., 'ada-lovelace')
-│       └── <contributor-name>                  # Contributor profile picture (resource_type: image)
+├── people/
+│   └── <person-name>/                          # Derived, lowercase hyphenated name (e.g., 'ada-lovelace')
+│       └── <person-name>                       # Person profile picture (resource_type: image)
+│                                               # Note: Legacy assets under 'contributors/' remain intact in Cloudinary
 │
 ├── certificate/                                # Flat certificate storage (note singular directory name)
 │   └── <org>_<title>_<year>                    # Formatted ID (e.g., 'google_cloud_certified_2025') (resource_type: image)
@@ -212,7 +213,7 @@ To prevent accidental asset overwrites without generating long random UUIDs, `ab
 - **Project Slugs**: Derived from `req.body.slug` or `req.body.title`, converted to lowercase, stripped of non-alphanumeric characters, and formatted with single hyphens (`shibraj-portfolio`).
 - **Version Tags**: Trimmed, lowercased, and sanitized while **preserving dots** (`v1.0.0` &rarr; `v1.0.0`, `v2.1.0-beta.1` &rarr; `v2.1.0-beta.1`). Non-alphanumeric characters other than `.` and `_` become `-` (spaces, slashes, colons), consecutive dots are neutralized (`..` &rarr; `-`) to prevent path traversal, leading/trailing dots/hyphens are stripped, and long tags are capped at 64 characters.
 - **Skill Names**: Normalized to lowercase alphanumeric hyphens (`c++` &rarr; `c`, `node.js` &rarr; `node-js`).
-- **Certificate Public IDs**: Formatted as `${orgSlug}_${titleSlug}_${year}` where year is extracted via regex `(19\d\d|20\d\d)` from title or date, defaulting to current year.
+- **Certificate Public IDs**: Formatted as sequential `${orgSlug}_${titleSlug}_${year}_${n}` (e.g., `google_cloud_certified_2025_1`) in `portfolio/certificate/`, using `getNextPublicId` to prevent collision and overwrite of existing assets on duplicate uploads or re-uploads.
 - **Experience Organizations**: Case-insensitively matched in MongoDB; the slug is used to namespace experience icon, media, and certificate subdirectories.
 - **Profile Picture History**: Avatar uploads to `portfolio/site_config/` generate a unique `pfp_<timestamp>` public ID, returning both `pfpUrl` and `pfpPublicId`. New uploads are prepended to `pfpHistory` in MongoDB, enabling full avatar rollback and reuse.
 - **Resume Uploads**: PDF files uploaded on `resume`, `resumeFile`, `resumePdf`, or `pdf` are processed under `portfolio/site_config/resume/` using `resume_date_{num}` (or `resume_date_{timestamp}` fallback). Extensions are excluded from `public_id`, and the provider-returned `secure_url` is saved directly to `resumeUrl` on `SiteConfig`.
@@ -232,11 +233,11 @@ To prevent accidental asset overwrites without generating long random UUIDs, `ab
   - Replacing an existing item's image (`PUT .../gallery/:imageId`) updates the URL in MongoDB but retains the previous Cloudinary asset (assets are kept, consistent with project deletion).
   - Deleting a gallery item (`DELETE .../gallery/:imageId`) removes the item subdocument from MongoDB while retaining the Cloudinary asset.
 
-### 5.6 Contributor Profile Pictures
-- **Path & Public ID**: `portfolio/contributors/<derived-name>/<derived-name>` where `<derived-name>` is lowercase alphanumeric with hyphens (e.g., `ada-lovelace`).
+### 5.6 People Profile Pictures
+- **Path & Public ID**: `portfolio/people/<derived-name>/<derived-name>` where `<derived-name>` is lowercase alphanumeric with hyphens (e.g., `ada-lovelace`). (Note: Pre-existing assets in `portfolio/contributors/` stay where they are).
 - **File Validation**: Images only (JPEG, PNG, WebP, GIF, SVG), 100 MB max file size. Non-image files return 400 Bad Request.
-- **Rollback on Failure**: If the request fails before the contributor document is saved to MongoDB, newly uploaded Cloudinary assets are rolled back via `cleanupUploadedVersionMedia(req)`.
-- **Updates & Asset Retention**: Updating a contributor's picture (`PUT /api/v1/contributors/:id`) replaces the URL on the document and retains the old Cloudinary asset (consistent with project edits). Deleting a contributor retains Cloudinary assets.
+- **Rollback on Failure**: If the request fails before the person document is saved to MongoDB, newly uploaded Cloudinary assets are rolled back via `cleanupUploadedVersionMedia(req)`.
+- **Updates & Asset Retention**: Updating a person's picture (`PUT /api/v1/people/:id`) replaces the URL on the document and retains the old Cloudinary asset (consistent with project edits). Deleting a person retains Cloudinary assets.
 
 
 

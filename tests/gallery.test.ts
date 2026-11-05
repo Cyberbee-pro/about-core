@@ -573,6 +573,21 @@ describe("Tagged Image Galleries API Tests", () => {
       expect(mockUploadCalls[0].folder).toBe("portfolio/projects/cool-project/gallery");
     });
 
+    it("PUT /api/v1/projects/:slug/gallery/:imageId rolls back replacement image when caption exceeds 200 chars (400)", async () => {
+      const res = await request(app)
+        .put(`/api/v1/projects/cool-project/gallery/${validImgId1}`)
+        .set("Authorization", "Bearer test-secret-token")
+        .field("caption", "A".repeat(201))
+        .attach("galleryImage", Buffer.from("replacement-img"), "replace.png");
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain("200 characters");
+      expect(mockDestroy).toHaveBeenCalledWith(
+        expect.stringContaining("portfolio/projects/cool-project/gallery/"),
+        { resource_type: "image" }
+      );
+    });
+
     it("rejects with 400 for invalid imageId ObjectId", async () => {
       const res = await request(app)
         .put("/api/v1/projects/cool-project/gallery/not-a-valid-id")
@@ -776,6 +791,34 @@ describe("Tagged Image Galleries API Tests", () => {
       expect(res.status).toBe(404);
     });
 
+    it("POST version gallery rolls back uploaded images with resource_type image on validation failure (400)", async () => {
+      const mockProject = {
+        _id: validProjId,
+        slug: "cool-project",
+        versions: [{ _id: new Types.ObjectId(validVerId1), versionTag: "v1.0.0", gallery: [] }],
+      };
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .post(`/api/v1/projects/cool-project/versions/${validVerId1}/gallery`)
+        .set("Authorization", "Bearer test-secret-token")
+        .attach("galleryImages", Buffer.from("v-img-1"), "screen1.png")
+        .field(
+          "galleryMeta",
+          JSON.stringify([
+            { tags: ["valid-tag"] },
+            { tags: ["extra-entry"] },
+          ])
+        );
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain("galleryMeta contains more entries than uploaded files");
+      expect(mockDestroy).toHaveBeenCalledWith(
+        expect.stringContaining("portfolio/projects/cool-project/v1.0.0/gallery/"),
+        { resource_type: "image" }
+      );
+    });
+
     it("PUT version gallery image updates item in version subdocument", async () => {
       const mockProject = { _id: validProjId, slug: "cool-project" };
       (Project.findOneAndUpdate as jest.Mock).mockResolvedValue(mockProject);
@@ -800,6 +843,60 @@ describe("Tagged Image Galleries API Tests", () => {
           ],
           new: true,
         })
+      );
+    });
+
+    it("PUT version gallery image replaces file and destroys nothing on success", async () => {
+      const mockProject = {
+        _id: validProjId,
+        slug: "cool-project",
+        versions: [
+          {
+            _id: new Types.ObjectId(validVerId1),
+            versionTag: "v1.0.0",
+            gallery: [{ _id: new Types.ObjectId(validImgId1), url: "old-url", tags: [], caption: "" }],
+          },
+        ],
+      };
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+      (Project.findOneAndUpdate as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .put(`/api/v1/projects/cool-project/versions/${validVerId1}/gallery/${validImgId1}`)
+        .set("Authorization", "Bearer test-secret-token")
+        .attach("galleryImage", Buffer.from("new-v-img"), "new.png");
+
+      expect(res.status).toBe(200);
+      expect(mockDestroy).not.toHaveBeenCalled();
+      expect(mockUploadCalls).toHaveLength(1);
+      expect(mockUploadCalls[0].folder).toBe("portfolio/projects/cool-project/v1.0.0/gallery");
+    });
+
+    it("PUT version gallery image rolls back replacement file on validation error (400)", async () => {
+      const mockProject = {
+        _id: validProjId,
+        slug: "cool-project",
+        versions: [
+          {
+            _id: new Types.ObjectId(validVerId1),
+            versionTag: "v1.0.0",
+            gallery: [{ _id: new Types.ObjectId(validImgId1), url: "old-url", tags: [], caption: "" }],
+          },
+        ],
+      };
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .put(`/api/v1/projects/cool-project/versions/${validVerId1}/gallery/${validImgId1}`)
+        .set("Authorization", "Bearer test-secret-token")
+        .field("caption", "A".repeat(201))
+        .attach("galleryImage", Buffer.from("replacement-v-img"), "replace.png");
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain("200 characters");
+      expect(mockDestroy).toHaveBeenCalledWith(
+        expect.stringContaining("portfolio/projects/cool-project/v1.0.0/gallery/"),
+        { resource_type: "image" }
       );
     });
 

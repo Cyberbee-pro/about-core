@@ -6,7 +6,8 @@ import cloudinary from "../config/cloudinary";
 import { Experience } from "../models/Experience";
 import { Project } from "../models/Project";
 import { Skill } from "../models/Skill";
-import { Contributor } from "../models/Contributor";
+import { Person } from "../models/Person";
+import { Certificate } from "../models/Certificate";
 import { Types } from "mongoose";
 import {
   escapeRegex,
@@ -85,9 +86,10 @@ export const skillUploadFields = upload.fields([
   { name: "logoUrl", maxCount: 1 },
 ]);
 
-export const contributorUploadFields = upload.fields([
+export const personUploadFields = upload.fields([
   { name: "profilePicUrl", maxCount: 1 },
 ]);
+export const contributorUploadFields = personUploadFields;
 
 export const certificateUploadFields = upload.fields([
   { name: "mediaUrl", maxCount: 1 },
@@ -745,7 +747,7 @@ export const deriveSkillName = (name: unknown): string => {
   return "skill";
 };
 
-export const deriveContributorName = (name: unknown): string => {
+export const derivePersonName = (name: unknown): string => {
   if (typeof name === "string" && name.trim()) {
     return name
       .trim()
@@ -753,8 +755,9 @@ export const deriveContributorName = (name: unknown): string => {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)+/g, "");
   }
-  return "contributor";
+  return "person";
 };
+export const deriveContributorName = derivePersonName;
 
 export const deriveCertPublicId = (
   organization: unknown,
@@ -847,7 +850,7 @@ export const processSkillUploads = async (
   }
 };
 
-export const processContributorUploads = async (
+export const processPersonUploads = async (
   req: Request,
   res: Response,
   next: NextFunction
@@ -876,7 +879,7 @@ export const processContributorUploads = async (
         await cleanupUploadedVersionMedia(req);
         res.status(400).json({
           success: false,
-          message: `Unsupported file type for contributor picture: ${file.mimetype}. Allowed types: images only.`,
+          message: `Unsupported file type for person picture: ${file.mimetype}. Allowed types: images only.`,
         });
         return;
       }
@@ -889,19 +892,19 @@ export const processContributorUploads = async (
         Types.ObjectId.isValid(paramId)
       ) {
         try {
-          const storedContributor = await Contributor.findById(paramId);
-          if (storedContributor && (storedContributor as { name?: string }).name) {
-            rawName = (storedContributor as { name?: string }).name;
+          const storedPerson = await Person.findById(paramId);
+          if (storedPerson && (storedPerson as { name?: string }).name) {
+            rawName = (storedPerson as { name?: string }).name;
           }
         } catch {
           // Ignore and fall back
         }
       }
 
-      const contributorName = deriveContributorName(rawName);
-      const folder = `portfolio/contributors/${contributorName}`;
+      const personName = derivePersonName(rawName);
+      const folder = `portfolio/people/${personName}`;
       const cache: FolderCache = new Map();
-      const publicId = await getNextPublicId(cache, folder, contributorName);
+      const publicId = await getNextPublicId(cache, folder, personName);
 
       if (!req.uploadedMediaAssets) {
         req.uploadedMediaAssets = [];
@@ -927,6 +930,7 @@ export const processContributorUploads = async (
     next(error);
   }
 };
+export const processContributorUploads = processPersonUploads;
 
 export const processCertificateUploads = async (
   req: Request,
@@ -941,12 +945,35 @@ export const processCertificateUploads = async (
     const files = req.files as MulterFilesMap;
     if (files.mediaUrl && files.mediaUrl.length > 0) {
       const file = files.mediaUrl[0];
-      const publicId = deriveCertPublicId(
-        req.body.organization,
-        req.body.title,
-        req.body.date
+
+      let rawOrg = req.body.organization;
+      let rawTitle = req.body.title;
+      let rawDate = req.body.date;
+      const paramId = typeof req.params.id === "string" ? req.params.id : undefined;
+
+      if ((!rawTitle || !rawOrg) && paramId) {
+        try {
+          const storedCert = await Certificate.findById(paramId);
+          if (storedCert) {
+            const certObj = storedCert as { organization?: string; title?: string; date?: string };
+            if (!rawOrg && certObj.organization) rawOrg = certObj.organization;
+            if (!rawTitle && certObj.title) rawTitle = certObj.title;
+            if (!rawDate && certObj.date) rawDate = certObj.date;
+          }
+        } catch {
+          // Ignore and fall back
+        }
+      }
+
+      const certBase = deriveCertPublicId(
+        rawOrg,
+        rawTitle,
+        rawDate
       );
       const folder = "portfolio/certificate";
+      const cache: FolderCache = new Map();
+      const publicId = await getNextPublicId(cache, folder, certBase);
+
       const result = await uploadBufferToCloudinary(file.buffer, {
         folder,
         resource_type: "image",
@@ -1133,6 +1160,7 @@ export const processSiteConfigUploads = async (
         publicId: result.public_id,
         resourceType: "image",
       });
+      attachRollbackOnFailure(req, res);
     }
 
     // 2. Process Resume PDF upload
@@ -1144,6 +1172,7 @@ export const processSiteConfigUploads = async (
 
     if (resumeFile) {
       if (!isPdfBuffer(resumeFile.buffer)) {
+        await cleanupUploadedVersionMedia(req);
         const err = new Error(
           "Invalid file content: only PDF files are allowed for resume upload"
         ) as Error & { statusCode?: number };

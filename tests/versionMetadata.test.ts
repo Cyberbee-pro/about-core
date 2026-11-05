@@ -1,6 +1,6 @@
 import request from "supertest";
 import { Project } from "@/models/Project";
-import { Contributor } from "@/models/Contributor";
+import { Person } from "@/models/Person";
 import { Types } from "mongoose";
 
 process.env.ADMIN_SECRET = "test-secret-token";
@@ -19,15 +19,15 @@ jest.mock("@/config/cloudinary", () => {
   return { __esModule: true, default: { uploader, search }, cloudinary: { uploader, search } };
 });
 
-jest.mock("@/models/Contributor", () => {
-  const actual = jest.requireActual("@/models/Contributor");
+jest.mock("@/models/Person", () => {
+  const actual = jest.requireActual("@/models/Person");
   return {
     ...actual,
-    Contributor: {
+    Person: {
       find: jest.fn(),
       findById: jest.fn(),
       findOne: jest.fn(),
-      modelName: "Contributor",
+      modelName: "Person",
     },
   };
 });
@@ -66,7 +66,7 @@ describe("Version Metadata & Shared Contributors Integration Tests", () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    (Contributor.find as jest.Mock).mockImplementation((query?: Record<string, unknown>) => {
+    (Person.find as jest.Mock).mockImplementation((query?: Record<string, unknown>) => {
       const ids: unknown[] = (query?._id as { $in?: unknown[] })?.$in || [];
       const idStrs = ids.map(String);
       const results = [];
@@ -89,7 +89,7 @@ describe("Version Metadata & Shared Contributors Integration Tests", () => {
       return Promise.resolve(results);
     });
 
-    (Contributor.findById as jest.Mock).mockImplementation((id: string) => {
+    (Person.findById as jest.Mock).mockImplementation((id: string) => {
       if (String(id) === validContrId1) {
         return Promise.resolve({
           _id: new Types.ObjectId(validContrId1),
@@ -465,11 +465,21 @@ describe("Version Metadata & Shared Contributors Integration Tests", () => {
   });
 
   describe("Response Formatting & Flattened Shape", () => {
-    it("flattens populated contributors on project and versions, dropping dangling refs", async () => {
+    it("flattens populated contributors and hostedBy on project and versions, dropping dangling refs", async () => {
       const projectDoc = {
         _id: "proj-1",
         title: "Test",
         slug: "test-proj",
+        host: "people",
+        hostedBy: [
+          {
+            _id: new Types.ObjectId(validContrId1),
+            name: "Alice",
+            profilePicUrl: "https://example.com/alice.png",
+            profileLink: "https://alice.dev",
+          },
+          null, // Dangling reference
+        ],
         contributors: [
           {
             contributor: {
@@ -490,6 +500,15 @@ describe("Version Metadata & Shared Contributors Integration Tests", () => {
             _id: new Types.ObjectId(validVerId1),
             versionTag: "v1.0.0",
             status: "active",
+            host: "people",
+            hostedBy: [
+              {
+                _id: new Types.ObjectId(validContrId2),
+                name: "Bob",
+                profilePicUrl: "https://example.com/bob.png",
+                profileLink: "",
+              },
+            ],
             contributors: [
               {
                 contributor: {
@@ -501,6 +520,12 @@ describe("Version Metadata & Shared Contributors Integration Tests", () => {
                 role: "",
               },
             ],
+          },
+          {
+            _id: new Types.ObjectId("60c72b2f9b1d8b2bad000011"),
+            versionTag: "v2.0.0",
+            status: "planning",
+            contributors: [],
           },
         ],
       };
@@ -521,6 +546,50 @@ describe("Version Metadata & Shared Contributors Integration Tests", () => {
           profilePicUrl: "https://example.com/alice.png",
           profileLink: "https://alice.dev",
           role: "Lead Architect",
+        },
+      ]);
+
+      // Project level hostedBy flattened
+      expect(res.body.data.host).toBe("people");
+      expect(res.body.data.hostedBy).toEqual([
+        {
+          _id: validContrId1,
+          name: "Alice",
+          profilePicUrl: "https://example.com/alice.png",
+          profileLink: "https://alice.dev",
+        },
+      ]);
+
+      // Version 1 overrides host to people with hostedBy
+      expect(res.body.data.versions[0].host).toBe("people");
+      expect(res.body.data.versions[0].hostedBy).toEqual([
+        {
+          _id: validContrId2,
+          name: "Bob",
+          profilePicUrl: "https://example.com/bob.png",
+          profileLink: null,
+        },
+      ]);
+      expect(res.body.data.versions[0].effectiveHost).toBe("people");
+      expect(res.body.data.versions[0].effectiveHostedBy).toEqual([
+        {
+          _id: validContrId2,
+          name: "Bob",
+          profilePicUrl: "https://example.com/bob.png",
+          profileLink: null,
+        },
+      ]);
+
+      // Version 2 inherits host and hostedBy from project
+      expect(res.body.data.versions[1].host).toBeNull();
+      expect(res.body.data.versions[1].hostedBy).toEqual([]);
+      expect(res.body.data.versions[1].effectiveHost).toBe("people");
+      expect(res.body.data.versions[1].effectiveHostedBy).toEqual([
+        {
+          _id: validContrId1,
+          name: "Alice",
+          profilePicUrl: "https://example.com/alice.png",
+          profileLink: "https://alice.dev",
         },
       ]);
 
@@ -577,6 +646,561 @@ describe("Version Metadata & Shared Contributors Integration Tests", () => {
 
       // Project level legacy contributor also omitted from response
       expect(res.body.data.contributors).toEqual([]);
+    });
+  });
+
+  describe("Part C: Project Host and hostedBy (POST and PUT)", () => {
+    it("POST /api/v1/projects defaults host to 'self' and hostedBy to [] when omitted", async () => {
+      (Project.findOne as jest.Mock).mockResolvedValue(null);
+      (Project.create as jest.Mock).mockImplementation((data) =>
+        Promise.resolve({ _id: "60c72b2f9b1d8b2bad000099", ...data })
+      );
+
+      const res = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "Self Hosted Project",
+          category: "web",
+          description: "A description",
+          image: "https://example.com/app.png",
+        });
+
+      expect(res.status).toBe(201);
+      expect(Project.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          host: "self",
+          hostedBy: [],
+        })
+      );
+    });
+
+    it("POST /api/v1/projects accepts host: 'people' with valid hostedBy array", async () => {
+      (Project.findOne as jest.Mock).mockResolvedValue(null);
+      (Project.create as jest.Mock).mockImplementation((data) =>
+        Promise.resolve({ _id: "60c72b2f9b1d8b2bad000099", ...data })
+      );
+
+      const res = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "People Hosted Project",
+          category: "web",
+          description: "A description",
+          image: "https://example.com/app.png",
+          host: "people",
+          hostedBy: [validContrId1, validContrId2],
+        });
+
+      expect(res.status).toBe(201);
+      expect(Project.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          host: "people",
+          hostedBy: [new Types.ObjectId(validContrId1), new Types.ObjectId(validContrId2)],
+        })
+      );
+    });
+
+    it("POST /api/v1/projects rejects host: 'people' with empty or missing hostedBy with 400", async () => {
+      (Project.findOne as jest.Mock).mockResolvedValue(null);
+
+      const res1 = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "People No Host 1",
+          category: "web",
+          description: "A description",
+          image: "https://example.com/app.png",
+          host: "people",
+          hostedBy: [],
+        });
+      expect(res1.status).toBe(400);
+      expect(res1.body.message).toMatch(/hostedBy/i);
+
+      const res2 = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "People No Host 2",
+          category: "web",
+          description: "A description",
+          image: "https://example.com/app.png",
+          host: "people",
+        });
+      expect(res2.status).toBe(400);
+      expect(res2.body.message).toMatch(/hostedBy/i);
+    });
+
+    it("POST /api/v1/projects rejects host: 'self' with non-empty hostedBy with 400", async () => {
+      (Project.findOne as jest.Mock).mockResolvedValue(null);
+
+      const res = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "Self With Host",
+          category: "web",
+          description: "A description",
+          image: "https://example.com/app.png",
+          host: "self",
+          hostedBy: [validContrId1],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/hostedBy.*self/i);
+    });
+
+    it("PUT /api/v1/projects/:id switches stored 'people' to 'self' and clears hostedBy automatically", async () => {
+      (Project.findById as jest.Mock).mockResolvedValue({
+        _id: "60c72b2f9b1d8b2bad000099",
+        title: "Existing Project",
+        host: "people",
+        hostedBy: [new Types.ObjectId(validContrId1)],
+        versions: [],
+      });
+      (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+        _id: "60c72b2f9b1d8b2bad000099",
+        title: "Existing Project",
+        host: "self",
+        hostedBy: [],
+        versions: [],
+      });
+
+      const res = await request(app)
+        .put("/api/v1/projects/60c72b2f9b1d8b2bad000099")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({ host: "self" });
+
+      expect(res.status).toBe(200);
+      expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+        "60c72b2f9b1d8b2bad000099",
+        expect.objectContaining({
+          host: "self",
+          hostedBy: [],
+        }),
+        expect.anything()
+      );
+    });
+
+    it("PUT /api/v1/projects/:id rejects non-empty hostedBy when stored host is 'self' and no host sent (400)", async () => {
+      (Project.findById as jest.Mock).mockResolvedValue({
+        _id: "60c72b2f9b1d8b2bad000099",
+        title: "Existing Project",
+        host: "self",
+        hostedBy: [],
+        versions: [],
+      });
+
+      const res = await request(app)
+        .put("/api/v1/projects/60c72b2f9b1d8b2bad000099")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({ hostedBy: [validContrId1] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/set host to people/i);
+    });
+
+    it("PUT /api/v1/projects/:id rejects host: 'self' with non-empty hostedBy (400)", async () => {
+      (Project.findById as jest.Mock).mockResolvedValue({
+        _id: "60c72b2f9b1d8b2bad000099",
+        title: "Existing Project",
+        host: "people",
+        hostedBy: [new Types.ObjectId(validContrId1)],
+        versions: [],
+      });
+
+      const res = await request(app)
+        .put("/api/v1/projects/60c72b2f9b1d8b2bad000099")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({ host: "self", hostedBy: [validContrId1] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/hostedBy.*self/i);
+    });
+
+    it("rejects unknown, invalid, or duplicate Person IDs in hostedBy with 400", async () => {
+      (Project.findOne as jest.Mock).mockResolvedValue(null);
+
+      // Unknown id
+      const unknownId = "60c72b2f9b1d8b2bad000099";
+      const res1 = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "Unknown Host",
+          category: "web",
+          description: "Desc",
+          image: "https://example.com/app.png",
+          host: "people",
+          hostedBy: [unknownId],
+        });
+      expect(res1.status).toBe(400);
+      expect(res1.body.message).toContain(unknownId);
+
+      // Invalid format
+      const res2 = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "Invalid ID",
+          category: "web",
+          description: "Desc",
+          image: "https://example.com/app.png",
+          host: "people",
+          hostedBy: ["invalid-id"],
+        });
+      expect(res2.status).toBe(400);
+      expect(res2.body.message).toMatch(/invalid.*id/i);
+
+      // Duplicate ids
+      const res3 = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "Duplicate IDs",
+          category: "web",
+          description: "Desc",
+          image: "https://example.com/app.png",
+          host: "people",
+          hostedBy: [validContrId1, validContrId1],
+        });
+      expect(res3.status).toBe(400);
+      expect(res3.body.message).toMatch(/duplicate/i);
+    });
+
+    it("parses hostedBy in multipart as JSON array, repeated fields, or comma-separated string", async () => {
+      (Project.findOne as jest.Mock).mockResolvedValue(null);
+      (Project.create as jest.Mock).mockImplementation((data) =>
+        Promise.resolve({ _id: "60c72b2f9b1d8b2bad000099", ...data })
+      );
+
+      // JSON array string
+      const res1 = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("title", "Multipart JSON Array")
+        .field("category", "web")
+        .field("description", "Desc")
+        .field("image", "https://example.com/app.png")
+        .field("host", "people")
+        .field("hostedBy", JSON.stringify([validContrId1, validContrId2]));
+      expect(res1.status).toBe(201);
+
+      // Repeated field
+      const res2 = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("title", "Multipart Repeated")
+        .field("category", "web")
+        .field("description", "Desc")
+        .field("image", "https://example.com/app.png")
+        .field("host", "people")
+        .field("hostedBy", validContrId1)
+        .field("hostedBy", validContrId2);
+      expect(res2.status).toBe(201);
+
+      // Comma separated string
+      const res3 = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("title", "Multipart Comma")
+        .field("category", "web")
+        .field("description", "Desc")
+        .field("image", "https://example.com/app.png")
+        .field("host", "people")
+        .field("hostedBy", `${validContrId1},${validContrId2}`);
+      expect(res3.status).toBe(201);
+    });
+
+    it("partial PUT leaves host and hostedBy unchanged", async () => {
+      (Project.findById as jest.Mock).mockResolvedValue({
+        _id: "60c72b2f9b1d8b2bad000099",
+        title: "Old Title",
+        host: "people",
+        hostedBy: [new Types.ObjectId(validContrId1)],
+        versions: [],
+      });
+      (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+        _id: "60c72b2f9b1d8b2bad000099",
+        title: "New Title",
+        host: "people",
+        hostedBy: [new Types.ObjectId(validContrId1)],
+        versions: [],
+      });
+
+      const res = await request(app)
+        .put("/api/v1/projects/60c72b2f9b1d8b2bad000099")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({ title: "New Title" });
+
+      expect(res.status).toBe(200);
+      const updateArg = (Project.findByIdAndUpdate as jest.Mock).mock.calls[0][1];
+      expect(updateArg).not.toHaveProperty("host");
+      expect(updateArg).not.toHaveProperty("hostedBy");
+    });
+  });
+
+  describe("Part D: Version Host Override and Inheritance", () => {
+    it("version inherits host and hostedBy by default (stored host undefined, effective values match project)", async () => {
+      const mockProject = {
+        _id: "60c72b2f9b1d8b2bad000099",
+        slug: "host-project",
+        host: "people",
+        hostedBy: [
+          {
+            _id: new Types.ObjectId(validContrId1),
+            name: "Alice",
+            profilePicUrl: "https://example.com/alice.png",
+            profileLink: "https://alice.dev",
+          },
+        ],
+        versions: [] as Array<Record<string, unknown>>,
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .post("/api/v1/projects/host-project/versions")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({ versionTag: "v1.0.0" });
+
+      expect(res.status).toBe(201);
+      const vStored = mockProject.versions[0];
+      expect(vStored.host).toBeUndefined();
+      expect(vStored.hostedBy).toBeUndefined();
+
+      const vResp = res.body.data.versions[0];
+      expect(vResp.host).toBeNull();
+      expect(vResp.hostedBy).toEqual([]);
+      expect(vResp.effectiveHost).toBe("people");
+      expect(vResp.effectiveHostedBy).toHaveLength(1);
+      expect(vResp.effectiveHostedBy[0]._id).toBe(validContrId1);
+    });
+
+    it("version can override host to 'people' with hostedBy", async () => {
+      const mockProject = {
+        _id: "60c72b2f9b1d8b2bad000099",
+        slug: "host-project",
+        host: "self",
+        hostedBy: [],
+        versions: [] as Array<Record<string, unknown>>,
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .post("/api/v1/projects/host-project/versions")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          versionTag: "v1.0.0",
+          host: "people",
+          hostedBy: [validContrId2],
+        });
+
+      expect(res.status).toBe(201);
+      const vStored = mockProject.versions[0];
+      expect(vStored.host).toBe("people");
+      expect(vStored.hostedBy).toEqual([new Types.ObjectId(validContrId2)]);
+
+      const vResp = res.body.data.versions[0];
+      expect(vResp.host).toBe("people");
+      expect(vResp.effectiveHost).toBe("people");
+    });
+
+    it("version can override host to 'self' with empty hostedBy", async () => {
+      const mockProject = {
+        _id: "60c72b2f9b1d8b2bad000099",
+        slug: "host-project",
+        host: "people",
+        hostedBy: [
+          {
+            _id: new Types.ObjectId(validContrId1),
+            name: "Alice",
+            profilePicUrl: "https://example.com/alice.png",
+            profileLink: "https://alice.dev",
+          },
+        ],
+        versions: [] as Array<Record<string, unknown>>,
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .post("/api/v1/projects/host-project/versions")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          versionTag: "v1.0.0",
+          host: "self",
+        });
+
+      expect(res.status).toBe(201);
+      const vStored = mockProject.versions[0];
+      expect(vStored.host).toBe("self");
+
+      const vResp = res.body.data.versions[0];
+      expect(vResp.host).toBe("self");
+      expect(vResp.hostedBy).toEqual([]);
+      expect(vResp.effectiveHost).toBe("self");
+      expect(vResp.effectiveHostedBy).toEqual([]);
+    });
+
+    it("rejects version hostedBy without host with 400", async () => {
+      const mockProject = {
+        _id: "60c72b2f9b1d8b2bad000099",
+        slug: "host-project",
+        versions: [] as Array<Record<string, unknown>>,
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .post("/api/v1/projects/host-project/versions")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          versionTag: "v1.0.0",
+          hostedBy: [validContrId1],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/hostedBy.*without.*host/i);
+    });
+
+    it("PUT /api/v1/projects/:slug/versions/:versionId clears host override with empty string or null", async () => {
+      const existingVer = {
+        _id: new Types.ObjectId(validVerId1),
+        versionTag: "v1.0.0",
+        host: "people",
+        hostedBy: [new Types.ObjectId(validContrId1)],
+      };
+      const mockProject = {
+        _id: "60c72b2f9b1d8b2bad000099",
+        slug: "host-project",
+        host: "self",
+        hostedBy: [],
+        versions: [existingVer],
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .put(`/api/v1/projects/host-project/versions/${validVerId1}`)
+        .set("Authorization", "Bearer test-secret-token")
+        .send({ host: "" });
+
+      expect(res.status).toBe(200);
+      expect(existingVer.host).toBeUndefined();
+      expect(existingVer.hostedBy).toBeUndefined();
+      expect(res.body.data.versions[0].host).toBeNull();
+      expect(res.body.data.versions[0].effectiveHost).toBe("self");
+    });
+  });
+
+  describe("Part E: Query Filters (?host= and ?forked=)", () => {
+    it("GET /api/v1/projects?host=self includes projects matching host: self or missing host", async () => {
+      const mockFind = jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (Project.find as jest.Mock).mockImplementation(mockFind);
+
+      const res = await request(app).get("/api/v1/projects?host=self");
+      expect(res.status).toBe(200);
+      expect(mockFind).toHaveBeenCalledWith(
+        expect.objectContaining({
+          $or: [{ host: "self" }, { host: { $exists: false } }, { host: null }],
+        })
+      );
+    });
+
+    it("GET /api/v1/projects?host=people filters by host: 'people'", async () => {
+      const mockFind = jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (Project.find as jest.Mock).mockImplementation(mockFind);
+
+      const res = await request(app).get("/api/v1/projects?host=people");
+      expect(res.status).toBe(200);
+      expect(mockFind).toHaveBeenCalledWith(
+        expect.objectContaining({
+          host: "people",
+        })
+      );
+    });
+
+    it("GET /api/v1/projects?host=invalid returns 400", async () => {
+      const res = await request(app).get("/api/v1/projects?host=invalid");
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/host.*self.*people/i);
+    });
+
+    it("GET /api/v1/projects?forked=true filters by non-null forkedFrom", async () => {
+      const mockFind = jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (Project.find as jest.Mock).mockImplementation(mockFind);
+
+      const res = await request(app).get("/api/v1/projects?forked=true");
+      expect(res.status).toBe(200);
+      expect(mockFind).toHaveBeenCalledWith(
+        expect.objectContaining({
+          forkedFrom: { $ne: null, $exists: true, $nin: ["", null] },
+        })
+      );
+    });
+
+    it("GET /api/v1/projects?forked=false filters by null/missing forkedFrom", async () => {
+      const mockFind = jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (Project.find as jest.Mock).mockImplementation(mockFind);
+
+      const res = await request(app).get("/api/v1/projects?forked=false");
+      expect(res.status).toBe(200);
+      expect(mockFind).toHaveBeenCalledWith(
+        expect.objectContaining({
+          $or: [{ forkedFrom: null }, { forkedFrom: { $exists: false } }, { forkedFrom: "" }],
+        })
+      );
+    });
+
+    it("GET /api/v1/projects?forked=invalid returns 400", async () => {
+      const res = await request(app).get("/api/v1/projects?forked=invalid");
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/forked.*true.*false/i);
+    });
+
+    it("GET /api/v1/admin/projects supports ?host= and ?forked= filters", async () => {
+      const mockFind = jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (Project.find as jest.Mock).mockImplementation(mockFind);
+
+      const res1 = await request(app)
+        .get("/api/v1/admin/projects?host=people&forked=true")
+        .set("Authorization", "Bearer test-secret-token");
+      expect(res1.status).toBe(200);
+      expect(mockFind).toHaveBeenCalledWith(
+        expect.objectContaining({
+          host: "people",
+          forkedFrom: { $ne: null, $exists: true, $nin: ["", null] },
+        })
+      );
+
+      const res2 = await request(app)
+        .get("/api/v1/admin/projects?host=invalid")
+        .set("Authorization", "Bearer test-secret-token");
+      expect(res2.status).toBe(400);
     });
   });
 });

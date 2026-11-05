@@ -28,15 +28,16 @@
 │   ├── HEX_L.svg                            # Hexagonal dashboard decorative asset
 │   └── HEX_R.svg                            # Hexagonal dashboard decorative asset
 ├── scripts/                                 # Maintenance & migration scripts
-│   └── clear-legacy-contributors.ts         # Idempotent cleanup script for legacy embedded contributors
+│   ├── clear-legacy-contributors.ts         # Idempotent cleanup script for legacy embedded contributors
+│   └── rename-contributors-collection.ts   # Collection migration script (contributors -> people)
 ├── src/                                     # Application TypeScript source code
 │   ├── server.ts                            # App initialization, CORS, static mounts, routes & error handling
 │   ├── config/                              # Infrastructure connections
 │   │   ├── db.ts                            # MongoDB connection management & pooling (cached connection)
 │   │   └── cloudinary.ts                    # Cloudinary v2 SDK configuration (enforced HTTPS)
 │   ├── models/                              # Mongoose schemas & TypeScript interfaces
-│   │   ├── Project.ts                       # Core project schema (slug, tags, skills refs, 3D model, versions, gallery, contributors)
-│   │   ├── Contributor.ts                   # Shared contributors collection (name, profilePicUrl, profileLink)
+│   │   ├── Project.ts                       # Core project schema (slug, tags, skills refs, 3D model, versions, gallery, contributors, host, hostedBy, forkedFrom)
+│   │   ├── Person.ts                        # Shared people collection (name, profilePicUrl, profileLink)
 │   │   ├── SiteConfig.ts                    # Global configuration (name, pfp, pfpHistory, jobTitles, resume, bio)
 │   │   ├── Skill.ts                         # Tech stack skills (name, type, logoUrl, featured, weight)
 │   │   ├── Certificate.ts                   # Accreditations & certificates (title, organization, mediaUrl, weight)
@@ -45,8 +46,8 @@
 │   │   ├── LogEntry.ts                      # Centralized MongoDB request log telemetry
 │   │   └── index.ts                         # Barrel export for all 8 Mongoose models
 │   ├── controllers/                         # Route handler controllers (business logic & validation)
-│   │   ├── projectController.ts             # Project CRUD, filtering, version releases, gallery operations
-│   │   ├── contributorController.ts         # Contributor CRUD with unique case-insensitive name & reference tracking
+│   │   ├── projectController.ts             # Project CRUD, filtering (?host, ?forked), version releases, gallery operations
+│   │   ├── personController.ts              # Person CRUD with unique case-insensitive name & reference tracking
 │   │   ├── skillController.ts               # Skill CRUD with unique case-insensitive name validation
 │   │   ├── certificateController.ts         # Certificate CRUD with unique title validation
 │   │   ├── achievementController.ts         # Achievement CRUD with unique title validation
@@ -56,7 +57,7 @@
 │   ├── routes/                              # Express route modules
 │   │   ├── projectRoutes.ts                 # /api/v1/projects (public reads, admin mutations, versions, gallery)
 │   │   ├── adminProjectRoutes.ts            # /api/v1/admin/projects (admin protected full project listing)
-│   │   ├── contributorRoutes.ts             # /api/v1/contributors (public reads, admin mutations)
+│   │   ├── personRoutes.ts                  # /api/v1/people (public reads, admin mutations)
 │   │   ├── skillRoutes.ts                   # /api/v1/skills (public reads, admin mutations)
 │   │   ├── certificateRoutes.ts             # /api/v1/certificates (public reads, admin mutations)
 │   │   ├── achievementRoutes.ts             # /api/v1/achievements (public reads, admin mutations)
@@ -184,7 +185,7 @@
 - **Test File Map**:
   1. `tests/cors.test.ts` — Origin parsing, credentials, preflight OPTIONS, allowed/blocked behavior, wildcard handling.
   2. `tests/api.test.ts` — Health checks, MAGI static dashboard, auth middleware, public/admin projects, project versions (POST/PUT/DELETE, duplicate versionTag rejection, changelog parsing, folder sanitization, systemic rollback on failure), site config avatar and resume PDF flows, admin request logs.
-  3. `tests/models.test.ts` — Schema constraints, defaults, and validations for all 8 Mongoose models (including resumeUrl on SiteConfig, gallery subdocuments, version metadata, and Contributor model).
+  3. `tests/models.test.ts` — Schema constraints, defaults, and validations for all 8 Mongoose models (including resumeUrl on SiteConfig, gallery subdocuments, version metadata, host/hostedBy/forkedFrom, and Person model).
   4. `tests/uploadNaming.test.ts` — Cloudinary sequential ID derivation, resume PDF incremental naming, Search API queries, request-level caching, timestamp fallback, and sanitizeVersionTag folder rules.
   5. `tests/db.test.ts` — MongoDB connection pooling, cached readyState reuse, disconnection handling.
   6. `tests/stringUtils.test.ts` — Regex escaping for safe dynamic queries against ReDoS, URL validation helper.
@@ -193,10 +194,11 @@
   9. `tests/experiences-tests.test.ts` — Experience CRUD, multi-position append, active role switching, media uploads.
   10. `tests/achievements-tests.test.ts` — Achievement CRUD, weight/title sorting, duplicate title rejection.
   11. `tests/gallery.test.ts` — Comprehensive gallery tests for project and version galleries: auth enforcement, multipart aligned metadata, URL-based adds, tag normalization and length checks, caption limits, 10-file request limit, 30-item project/version caps, rollback destruction on failure, atomic updates, array reordering, deletion asset retention, PUT protection, and response guarantee helper.
-  12. `tests/contributors.test.ts` — Contributor CRUD, case-insensitive sort, Cloudinary picture streaming and rollback, sequential naming without overwrites, duplicate name checks, deletion protection when referenced by project or version.
-  13. `tests/versionMetadata.test.ts` — Project version metadata fields (status, startDate, endDate, deployedLink, githubLink, contributors, socialLinks), defaults, PUT partial updates and clears, date validation, URL validation, and join subdocument reference handling.
+  12. `tests/people.test.ts` — People CRUD, case-insensitive sort, Cloudinary picture streaming and rollback, sequential naming without overwrites, duplicate name checks, deletion protection when referenced by project or version (as contributor or host).
+  13. `tests/versionMetadata.test.ts` — Project version metadata fields (status, startDate, endDate, deployedLink, githubLink, contributors, socialLinks, host, hostedBy), defaults, PUT partial updates and clears, date validation, URL validation, and join subdocument reference handling.
   14. `tests/clearLegacyContributors.test.ts` — Verification of dry-run and apply modes for clearing legacy embedded contributors while preserving valid references.
-  15. `tests/urlValidation.test.ts` — Comprehensive URL scheme validation across all project, version, contributor, skill, certificate, experience, and config endpoints.
+  15. `tests/urlValidation.test.ts` — Comprehensive URL scheme validation across all project, version, person, skill, certificate, experience, and config endpoints.
+  16. `tests/renameContributorsCollection.test.ts` — Verification of dry-run, apply mode, and refusal to run when people collection already has documents.
 
 ---
 
@@ -207,7 +209,7 @@
 3. **`express.static(path.join(process.cwd(), "public"))`**: Serves the Evangelion MAGI system dashboard directly from disk (mirrors Vercel Edge CDN).
 4. **`dbLoggerMiddleware`**: Non-blocking response hook that intercepts `response.finish` and asynchronously creates a `LogEntry` in MongoDB with latency, IP, method, status code, and sanitized metadata.
 5. **Health Routes**: `/health` (basic JSON) and `/api/v1/health` (detailed server and DB status).
-6. **Feature Routes**: Mounted at `/api/v1/{projects, contributors, skills, certificates, achievements, experiences, config, admin/logs, admin/projects}`.
+6. **Feature Routes**: Mounted at `/api/v1/{projects, people, skills, certificates, achievements, experiences, config, admin/logs, admin/projects}`.
 7. **`notFoundMiddleware`**: Centralized 404 handler returning structured JSON.
 8. **`errorMiddleware`**: Centralized error handler converting Mongoose `CastError` (400), `ValidationError` (400), MongoDB duplicate key code `11000` (409), CORS errors (403), Multer limits/errors (400), and unhandled exceptions (500).
 

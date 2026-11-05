@@ -271,6 +271,7 @@ describe("Skills API Integration Tests", () => {
     expect(mockUploadCalls[1].folder).toBe("portfolio/skills/c");
     expect(mockUploadCalls[1].public_id).toBe("c_2");
     expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
+    expect(mockDestroy).not.toHaveBeenCalled();
   });
 
   it("POST /api/v1/skills with duplicate name returns 409", async () => {
@@ -368,6 +369,29 @@ describe("Skills API Integration Tests", () => {
 
     expect(res.status).toBe(200);
     expect(mockDestroy).not.toHaveBeenCalled();
+  });
+
+  it("PUT /api/v1/skills/:id rolls back uploaded logo when name conflicts with existing skill (409)", async () => {
+    (Skill.findById as jest.Mock).mockResolvedValue({
+      _id: "skill-1",
+      name: "React",
+    });
+    (Skill.findOne as jest.Mock).mockResolvedValue({
+      _id: "skill-2",
+      name: "Vue",
+    });
+
+    const res = await request(app)
+      .put("/api/v1/skills/skill-1")
+      .set("Authorization", "Bearer test-secret-token")
+      .field("name", "Vue")
+      .attach("logoUrl", Buffer.from("vue-logo"), "vue.png");
+
+    expect(res.status).toBe(409);
+    expect(mockDestroy).toHaveBeenCalledWith(
+      expect.stringMatching(/portfolio\/skills\/vue\//),
+      { resource_type: "image" }
+    );
   });
 
   it("PUT /api/v1/skills/:id updates a skill (admin protected)", async () => {

@@ -1,74 +1,75 @@
 import { Request, Response, NextFunction } from "express";
 import { Types } from "mongoose";
-import { Contributor } from "../models/Contributor";
+import { Person } from "../models/Person";
 import { Project } from "../models/Project";
 import { escapeRegex, extractParamString, isValidHttpUrl } from "../utils/stringUtils";
 import { cleanupUploadedVersionMedia } from "../middlewares/uploadMiddleware";
 
-export const getContributors = async (
+export const getPeople = async (
   _req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const query = Contributor.find();
+    const query = Person.find();
     if (typeof (query as unknown as { collation?: unknown }).collation === "function") {
       (query as unknown as { collation: (arg: unknown) => typeof query }).collation({
         locale: "en",
         strength: 2,
       });
     }
-    let contributors = await query.sort({ name: 1 });
-    if (Array.isArray(contributors)) {
-      contributors = [...contributors].sort((a, b) =>
+    let people = await query.sort({ name: 1 });
+    if (Array.isArray(people)) {
+      people = [...people].sort((a, b) =>
         (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
       );
     }
 
     res.status(200).json({
       success: true,
-      count: contributors.length,
-      data: contributors,
+      count: people.length,
+      data: people,
     });
   } catch (error) {
     next(error);
   }
 };
 
-export const getContributorById = async (
+export const getPersonById = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const id = extractParamString(req.params.id);
-    if (!id || !Types.ObjectId.isValid(id)) {
+    const rawId = extractParamString(req.params.id);
+    if (!rawId || !Types.ObjectId.isValid(rawId)) {
       res.status(400).json({
         success: false,
         message: "Invalid identifier format",
       });
       return;
     }
+    const id = rawId.toLowerCase();
 
-    const contributor = await Contributor.findById(id);
-    if (!contributor) {
+    const person = await Person.findById(id);
+    if (!person) {
       res.status(404).json({
         success: false,
-        message: "Contributor not found",
+        message: "Person not found",
       });
       return;
     }
 
     res.status(200).json({
       success: true,
-      data: contributor,
+      data: person,
     });
   } catch (error) {
     next(error);
   }
 };
 
-export const createContributor = async (
+export const createPerson = async (
   req: Request,
   res: Response,
   next: NextFunction
@@ -79,7 +80,7 @@ export const createContributor = async (
       await cleanupUploadedVersionMedia(req);
       res.status(400).json({
         success: false,
-        message: "Contributor name is required",
+        message: "Person name is required",
       });
       return;
     }
@@ -103,7 +104,7 @@ export const createContributor = async (
       return;
     }
 
-    let profileLink: string | undefined = undefined;
+    let profileLink: string | null = null;
     if (req.body.profileLink !== undefined && req.body.profileLink !== null) {
       const trimmedLink = String(req.body.profileLink).trim();
       if (trimmedLink) {
@@ -119,20 +120,20 @@ export const createContributor = async (
       }
     }
 
-    const existingContributor = await Contributor.findOne({
+    const existingPerson = await Person.findOne({
       name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
     });
 
-    if (existingContributor) {
+    if (existingPerson) {
       await cleanupUploadedVersionMedia(req);
       res.status(409).json({
         success: false,
-        message: "Contributor name must be unique (duplicate)",
+        message: "Person name must be unique (duplicate)",
       });
       return;
     }
 
-    const contributor = await Contributor.create({
+    const person = await Person.create({
       name: trimmedName,
       profilePicUrl,
       profileLink,
@@ -140,7 +141,7 @@ export const createContributor = async (
 
     res.status(201).json({
       success: true,
-      data: contributor,
+      data: person,
     });
   } catch (error) {
     await cleanupUploadedVersionMedia(req);
@@ -148,14 +149,14 @@ export const createContributor = async (
   }
 };
 
-export const updateContributor = async (
+export const updatePerson = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const id = extractParamString(req.params.id);
-    if (!id || !Types.ObjectId.isValid(id)) {
+    const rawId = extractParamString(req.params.id);
+    if (!rawId || !Types.ObjectId.isValid(rawId)) {
       await cleanupUploadedVersionMedia(req);
       res.status(400).json({
         success: false,
@@ -163,6 +164,7 @@ export const updateContributor = async (
       });
       return;
     }
+    const id = rawId.toLowerCase();
 
     const updateData: Record<string, unknown> = {};
 
@@ -172,21 +174,21 @@ export const updateContributor = async (
         await cleanupUploadedVersionMedia(req);
         res.status(400).json({
           success: false,
-          message: "Contributor name cannot be empty",
+          message: "Person name cannot be empty",
         });
         return;
       }
 
-      const existingContributor = await Contributor.findOne({
+      const existingPerson = await Person.findOne({
         name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
-        _id: { $ne: req.params.id },
+        _id: { $ne: id },
       });
 
-      if (existingContributor) {
+      if (existingPerson) {
         await cleanupUploadedVersionMedia(req);
         res.status(409).json({
           success: false,
-          message: "Contributor name must be unique (duplicate)",
+          message: "Person name must be unique (duplicate)",
         });
         return;
       }
@@ -216,10 +218,10 @@ export const updateContributor = async (
     }
 
     if (req.body.profileLink !== undefined) {
-      const trimmedLink = String(req.body.profileLink).trim();
-      if (trimmedLink === "") {
-        updateData.profileLink = undefined;
+      if (req.body.profileLink === null || (typeof req.body.profileLink === "string" && req.body.profileLink.trim() === "")) {
+        updateData.profileLink = null;
       } else {
+        const trimmedLink = String(req.body.profileLink).trim();
         if (!isValidHttpUrl(trimmedLink)) {
           await cleanupUploadedVersionMedia(req);
           res.status(400).json({
@@ -232,23 +234,23 @@ export const updateContributor = async (
       }
     }
 
-    const contributor = await Contributor.findByIdAndUpdate(req.params.id, updateData, {
+    const person = await Person.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
     });
 
-    if (!contributor) {
+    if (!person) {
       await cleanupUploadedVersionMedia(req);
       res.status(404).json({
         success: false,
-        message: "Contributor not found",
+        message: "Person not found",
       });
       return;
     }
 
     res.status(200).json({
       success: true,
-      data: contributor,
+      data: person,
     });
   } catch (error) {
     await cleanupUploadedVersionMedia(req);
@@ -256,71 +258,100 @@ export const updateContributor = async (
   }
 };
 
-export const deleteContributor = async (
+export const deletePerson = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const id = extractParamString(req.params.id);
-    if (!id || !Types.ObjectId.isValid(id)) {
+    const rawId = extractParamString(req.params.id);
+    if (!rawId || !Types.ObjectId.isValid(rawId)) {
       res.status(400).json({
         success: false,
         message: "Invalid identifier format",
       });
       return;
     }
+    const id = rawId.toLowerCase();
+    const targetObjectId = new Types.ObjectId(id);
 
-    // Check if referenced by any project or version
+    // Check if referenced by any project or version (as contributor or host)
     const matchingProjects = await Project.find({
       $or: [
-        { "contributors.contributor": id },
-        { "versions.contributors.contributor": id },
+        { "contributors.contributor": targetObjectId },
+        { "versions.contributors.contributor": targetObjectId },
+        { hostedBy: targetObjectId },
+        { "versions.hostedBy": targetObjectId },
       ],
     });
 
-    let projectCount = 0;
-    let versionCount = 0;
+    let contributorProjects = 0;
+    let contributorVersions = 0;
+    let hostProjects = 0;
+    let hostVersions = 0;
 
     for (const proj of matchingProjects) {
       if (
         Array.isArray(proj.contributors) &&
-        proj.contributors.some((c) => String(c.contributor) === String(id))
+        proj.contributors.some((c) => {
+          const cId = c?.contributor ? String(c.contributor).toLowerCase() : "";
+          return cId === id;
+        })
       ) {
-        projectCount++;
+        contributorProjects++;
+      }
+      if (
+        Array.isArray(proj.hostedBy) &&
+        proj.hostedBy.some((h) => String(h).toLowerCase() === id)
+      ) {
+        hostProjects++;
       }
       if (Array.isArray(proj.versions)) {
         for (const ver of proj.versions) {
           if (
             Array.isArray(ver.contributors) &&
-            ver.contributors.some((c) => String(c.contributor) === String(id))
+            ver.contributors.some((c) => {
+              const cId = c?.contributor ? String(c.contributor).toLowerCase() : "";
+              return cId === id;
+            })
           ) {
-            versionCount++;
+            contributorVersions++;
+          }
+          if (
+            Array.isArray(ver.hostedBy) &&
+            ver.hostedBy.some((h) => String(h).toLowerCase() === id)
+          ) {
+            hostVersions++;
           }
         }
       }
     }
 
-    if (projectCount > 0 || versionCount > 0) {
+    if (
+      contributorProjects > 0 ||
+      contributorVersions > 0 ||
+      hostProjects > 0 ||
+      hostVersions > 0
+    ) {
       res.status(409).json({
         success: false,
-        message: `Cannot delete contributor: referenced by ${projectCount} project(s) and ${versionCount} project version(s)`,
+        message: `Cannot delete person: referenced as contributor in ${contributorProjects} project(s) and ${contributorVersions} project version(s), and as host in ${hostProjects} project(s) and ${hostVersions} project version(s)`,
       });
       return;
     }
 
-    const contributor = await Contributor.findByIdAndDelete(id);
-    if (!contributor) {
+    const person = await Person.findByIdAndDelete(id);
+    if (!person) {
       res.status(404).json({
         success: false,
-        message: "Contributor not found",
+        message: "Person not found",
       });
       return;
     }
 
     res.status(200).json({
       success: true,
-      message: "Contributor deleted successfully",
+      message: "Person deleted successfully",
     });
   } catch (error) {
     next(error);

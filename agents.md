@@ -13,9 +13,9 @@ This repository contains the backend infrastructure. You must ground all archite
 
 ## Audit Summary
 Codebase audit completed with all test suites passing (`npm test`). Key verified areas:
-- Model schemas: Project (5-status enum, image required, versions schema with version metadata and contributors ref, social links, skills refs, tagged image galleries on project and version), Contributor (name, profilePicUrl, profileLink), SiteConfig (name, pfp, pfpHistory, jobTitles, bio, resumeUrl), Skill, Certificate, Achievement, Experience, LogEntry — all 8 collections consistent
-- Routes & controllers: Public/protected split with authMiddleware, dedicated admin project listing (`GET /api/v1/admin/projects`), per-version in-place update and delete endpoints (`PUT / DELETE /api/v1/projects/:slug/versions/:versionId`), tagged image gallery endpoints (`POST / PUT order / PUT :imageId / DELETE :imageId` on project and version), shared contributor endpoints (`GET / POST / PUT / DELETE /api/v1/contributors`), consistent error handling patterns, atomic experience position append, site config avatar rollback, and Cloudinary PDF resume uploads
-- Middleware pipeline: cors (dynamic multi-origin), auth (Bearer/x-admin-token), dbLogger (MongoDB request telemetry), error (Mongoose & Multer mapping), upload (Cloudinary streaming with PDF, contributor & gallery support, stored versionTag lookup, and failed-upload cleanup)
+- Model schemas: Project (5-status enum, image required, versions schema with version metadata and contributors ref, host, hostedBy, forkedFrom, social links, skills refs, tagged image galleries on project and version), Person (name, profilePicUrl, profileLink), SiteConfig (name, pfp, pfpHistory, jobTitles, bio, resumeUrl), Skill, Certificate, Achievement, Experience, LogEntry — all 8 collections consistent
+- Routes & controllers: Public/protected split with authMiddleware, dedicated admin project listing (`GET /api/v1/admin/projects`), per-version in-place update and delete endpoints (`PUT / DELETE /api/v1/projects/:slug/versions/:versionId`), tagged image gallery endpoints (`POST / PUT order / PUT :imageId / DELETE :imageId` on project and version), shared people endpoints (`GET / POST / PUT / DELETE /api/v1/people`), consistent error handling patterns, atomic experience position append, site config avatar rollback, and Cloudinary PDF resume uploads
+- Middleware pipeline: cors (dynamic multi-origin), auth (Bearer/x-admin-token), dbLogger (MongoDB request telemetry), error (Mongoose & Multer mapping), upload (Cloudinary streaming with PDF, people & gallery support, stored versionTag lookup, and failed-upload cleanup)
 - Media storage: Structured Cloudinary folder hierarchy documented in [`.agents/cloudinary.md`](.agents/cloudinary.md)
 - Test coverage: 100% of critical paths covered across all test suites (`npm test`)
 - TypeScript: All strict flags enabled, zero compilation errors (`npx tsc --noEmit`)
@@ -34,5 +34,5 @@ When asked to implement a feature or generate the boilerplate:
 2. Read the referenced schemas or config files.
 3. Generate the code following the Backend Patterns skill.
 4. Verify there are no Type errors or unhandled asynchronous rejections.
-5. Run `npm test` to confirm all 384 tests pass.
+5. Run `npm test` to confirm all test suites pass.
 6. Run `npx tsc --noEmit` to confirm type safety.

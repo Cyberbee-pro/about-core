@@ -9,7 +9,8 @@
     "dev": "ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/server.ts",
     "test": "jest --runInBand",
     "test:coverage": "jest --coverage",
-    "clear-legacy-contributors": "ts-node -r tsconfig-paths/register scripts/clear-legacy-contributors.ts"
+    "clear-legacy-contributors": "ts-node -r tsconfig-paths/register scripts/clear-legacy-contributors.ts",
+    "rename-contributors-collection": "ts-node -r tsconfig-paths/register scripts/rename-contributors-collection.ts"
   },
   "keywords": [
     "express",
