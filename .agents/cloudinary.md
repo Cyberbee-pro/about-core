@@ -18,13 +18,17 @@ portfolio/
 │   │   │   └── <slug>_<n>                      # Demo video recordings (resource_type: video)
 │   │   ├── models/
 │   │   │   └── <slug>_<n>                      # 3D interactive assets (.glb / .gltf) (resource_type: raw)
-│   │   └── <sanitizedVersionTag>/              # Nested release version directory (e.g., 'v1-0-0', 'v2-1-beta')
+│   │   ├── gallery/
+│   │   │   └── <slug>_<n>                      # Tagged project image gallery items (resource_type: image)
+│   │   └── <sanitizedVersionTag>/              # Nested release version directory (dots preserved, e.g., 'v1.0.0', 'v2.1.0-beta.1')
 │   │       ├── images/
 │   │       │   └── <slug>_<n>                  # Version release banner/preview (resource_type: image)
 │   │       ├── videos/
 │   │       │   └── <slug>_<n>                  # Version release video demo (resource_type: video)
-│   │       └── models/
-│   │           └── <slug>_<n>                  # Version release 3D model (resource_type: raw)
+│   │       ├── models/
+│   │       │   └── <slug>_<n>                  # Version release 3D model (resource_type: raw)
+│   │       └── gallery/
+│   │           └── <slug>_<n>                  # Tagged version release gallery items (resource_type: image)
 │   │
 │   └── misc/                                   # Fallback directory when project slug and title cannot be derived
 │       ├── images/
@@ -45,6 +49,11 @@ portfolio/
 ├── skills/
 │   └── <skill-name>/                           # Hyphenated, URL-safe skill name (e.g., 'typescript', 'react-native')
 │       └── <skill-name>                        # Skill brand/tech icon (resource_type: image)
+│
+├── people/
+│   └── <person-name>/                          # Derived, lowercase hyphenated name (e.g., 'ada-lovelace')
+│       └── <person-name>                       # Person profile picture (resource_type: image)
+│                                               # Note: Legacy assets under 'contributors/' remain intact in Cloudinary
 │
 ├── certificate/                                # Flat certificate storage (note singular directory name)
 │   └── <org>_<title>_<year>                    # Formatted ID (e.g., 'google_cloud_certified_2025') (resource_type: image)
@@ -86,10 +95,12 @@ graph TD
     ProjSlug --> PImages["images/ &rarr; &lt;slug&gt;_&lt;n&gt;"]
     ProjSlug --> PVideos["videos/ &rarr; &lt;slug&gt;_&lt;n&gt;"]
     ProjSlug --> PModels["models/ &rarr; &lt;slug&gt;_&lt;n&gt; (raw)"]
+    ProjSlug --> PGallery["gallery/ &rarr; &lt;slug&gt;_&lt;n&gt;"]
     ProjSlug --> PVersion["&lt;versionTag&gt;/"]
     PVersion --> PVImages["images/ &rarr; &lt;slug&gt;_&lt;n&gt;"]
     PVersion --> PVVideos["videos/ &rarr; &lt;slug&gt;_&lt;n&gt;"]
     PVersion --> PVModels["models/ &rarr; &lt;slug&gt;_&lt;n&gt; (raw)"]
+    PVersion --> PVGallery["gallery/ &rarr; &lt;slug&gt;_&lt;n&gt;"]
 
     %% Skills branch
     Skills --> SkillName["&lt;skill-name&gt;/ &rarr; &lt;skill-name&gt;"]
@@ -119,9 +130,11 @@ graph TD
 | **Project Banner** | `image` (max 1) | `portfolio/projects/<slug>/images` | `<slug>_<n>` | `image` | `portfolio/projects/shibraj-portfolio/images/shibraj-portfolio_1` |
 | **Project Video Demo** | `videoDemo` (max 1) | `portfolio/projects/<slug>/videos` | `<slug>_<n>` | `video` | `portfolio/projects/shibraj-portfolio/videos/shibraj-portfolio_1` |
 | **Project 3D Model** | `threeDModel` (max 1) | `portfolio/projects/<slug>/models` | `<slug>_<n>` | `raw` | `portfolio/projects/shibraj-portfolio/models/shibraj-portfolio_1` |
-| **Project Version Image** | `image` (max 1) | `portfolio/projects/<slug>/<versionTag>/images` | `<slug>_<n>` | `image` | `portfolio/projects/shibraj-portfolio/v1-0-0/images/shibraj-portfolio_1` |
-| **Project Version Video** | `videoDemo` (max 1) | `portfolio/projects/<slug>/<versionTag>/videos` | `<slug>_<n>` | `video` | `portfolio/projects/shibraj-portfolio/v1-0-0/videos/shibraj-portfolio_1` |
-| **Project Version 3D Model** | `threeDModel` (max 1) | `portfolio/projects/<slug>/<versionTag>/models` | `<slug>_<n>` | `raw` | `portfolio/projects/shibraj-portfolio/v1-0-0/models/shibraj-portfolio_1` |
+| **Project Gallery Images** | `galleryImages` (max 10) / `galleryImage` (max 1) | `portfolio/projects/<slug>/gallery` | `<slug>_<n>` | `image` | `portfolio/projects/shibraj-portfolio/gallery/shibraj-portfolio_1` |
+| **Project Version Image** | `image` (max 1) | `portfolio/projects/<slug>/<versionTag>/images` | `<slug>_<n>` | `image` | `portfolio/projects/shibraj-portfolio/v1.0.0/images/shibraj-portfolio_1` |
+| **Project Version Video** | `videoDemo` (max 1) | `portfolio/projects/<slug>/<versionTag>/videos` | `<slug>_<n>` | `video` | `portfolio/projects/shibraj-portfolio/v1.0.0/videos/shibraj-portfolio_1` |
+| **Project Version 3D Model** | `threeDModel` (max 1) | `portfolio/projects/<slug>/<versionTag>/models` | `<slug>_<n>` | `raw` | `portfolio/projects/shibraj-portfolio/v1.0.0/models/shibraj-portfolio_1` |
+| **Project Version Gallery Images** | `galleryImages` (max 10) / `galleryImage` (max 1) | `portfolio/projects/<slug>/<versionTag>/gallery` | `<slug>_<n>` | `image` | `portfolio/projects/shibraj-portfolio/v1.0.0/gallery/shibraj-portfolio_1` |
 | **Skill Icon** | `logoUrl` (max 1) | `portfolio/skills/<derived-skill-name>` | `<derived-skill-name>` | `image` | `portfolio/skills/typescript/typescript` |
 | **Certificate Media** | `mediaUrl` (max 1) | `portfolio/certificate` | `<org>_<title>_<year>` | `image` | `portfolio/certificate/google_cloud_architect_2025` |
 | **Experience Icon** | `iconUrl` (max 1) | `portfolio/experiences/<tag>/<orgSlug>/icons` | `experience_icon` | `image` | `portfolio/experiences/focus/google-dsc/icons/experience_icon` |
@@ -198,12 +211,35 @@ To prevent accidental asset overwrites without generating long random UUIDs, `ab
 
 ### 5.3 Special Sanitization Rules
 - **Project Slugs**: Derived from `req.body.slug` or `req.body.title`, converted to lowercase, stripped of non-alphanumeric characters, and formatted with single hyphens (`shibraj-portfolio`).
-- **Version Tags**: Trimmed, lowercased, and sanitized (`v1.0.0` &rarr; `v1-0-0`) to form safe folder names.
+- **Version Tags**: Trimmed, lowercased, and sanitized while **preserving dots** (`v1.0.0` &rarr; `v1.0.0`, `v2.1.0-beta.1` &rarr; `v2.1.0-beta.1`). Non-alphanumeric characters other than `.` and `_` become `-` (spaces, slashes, colons), consecutive dots are neutralized (`..` &rarr; `-`) to prevent path traversal, leading/trailing dots/hyphens are stripped, and long tags are capped at 64 characters.
 - **Skill Names**: Normalized to lowercase alphanumeric hyphens (`c++` &rarr; `c`, `node.js` &rarr; `node-js`).
-- **Certificate Public IDs**: Formatted as `${orgSlug}_${titleSlug}_${year}` where year is extracted via regex `(19\d\d|20\d\d)` from title or date, defaulting to current year.
+- **Certificate Public IDs**: Formatted as sequential `${orgSlug}_${titleSlug}_${year}_${n}` (e.g., `google_cloud_certified_2025_1`) in `portfolio/certificate/`, using `getNextPublicId` to prevent collision and overwrite of existing assets on duplicate uploads or re-uploads.
 - **Experience Organizations**: Case-insensitively matched in MongoDB; the slug is used to namespace experience icon, media, and certificate subdirectories.
 - **Profile Picture History**: Avatar uploads to `portfolio/site_config/` generate a unique `pfp_<timestamp>` public ID, returning both `pfpUrl` and `pfpPublicId`. New uploads are prepended to `pfpHistory` in MongoDB, enabling full avatar rollback and reuse.
 - **Resume Uploads**: PDF files uploaded on `resume`, `resumeFile`, `resumePdf`, or `pdf` are processed under `portfolio/site_config/resume/` using `resume_date_{num}` (or `resume_date_{timestamp}` fallback). Extensions are excluded from `public_id`, and the provider-returned `secure_url` is saved directly to `resumeUrl` on `SiteConfig`.
+
+### 5.4 Gallery Upload Pipeline & Constraints
+- **Dedicated Gallery Endpoints**:
+  - Project gallery: `portfolio/projects/<slug>/gallery/` with public ID `<slug>_<n>`.
+  - Version gallery: `portfolio/projects/<slug>/<sanitizedVersionTag>/gallery/` with public ID `<slug>_<n>`.
+- **Allowed Formats & Limits**:
+  - **MIME Types**: Images only (`image/jpeg`, `image/jpg`, `image/png`, `image/webp`, `image/gif`, `image/svg+xml`), identical to the project `image` field. Non-image files (videos, 3D models `.glb`, PDFs, etc.) are rejected with `400 Bad Request` and trigger immediate cleanup of any uploaded files.
+  - **File Size**: Maximum 100 MB per file.
+  - **Batch Limit**: At most 10 files per request via `galleryImages` (or 1 file via `galleryImage` for single-item updates). Exceeding 10 files returns `400 Bad Request`.
+  - **Collection Cap**: At most 30 gallery items per project and at most 30 gallery items per version. If adding images would exceed 30 items, the request is rejected with `400 Bad Request`, nothing is persisted to MongoDB, and any uploaded assets are rolled back.
+- **Rollback Behavior**:
+  - If a gallery upload request subsequently fails (e.g., `400 Bad Request`, `404 Not Found`, `409 Conflict`, or `500 Server Error`), all newly uploaded files in that request are destroyed via `cleanupUploadedVersionMedia(req)` using `resource_type: "image"` and their exact Cloudinary public IDs.
+  - On successful requests, nothing is destroyed.
+  - Replacing an existing item's image (`PUT .../gallery/:imageId`) updates the URL in MongoDB but retains the previous Cloudinary asset (assets are kept, consistent with project deletion).
+  - Deleting a gallery item (`DELETE .../gallery/:imageId`) removes the item subdocument from MongoDB while retaining the Cloudinary asset.
+
+### 5.6 People Profile Pictures
+- **Path & Public ID**: `portfolio/people/<derived-name>/<derived-name>` where `<derived-name>` is lowercase alphanumeric with hyphens (e.g., `ada-lovelace`). (Note: Pre-existing assets in `portfolio/contributors/` stay where they are).
+- **File Validation**: Images only (JPEG, PNG, WebP, GIF, SVG), 100 MB max file size. Non-image files return 400 Bad Request.
+- **Rollback on Failure**: If the request fails before the person document is saved to MongoDB, newly uploaded Cloudinary assets are rolled back via `cleanupUploadedVersionMedia(req)`.
+- **Updates & Asset Retention**: Updating a person's picture (`PUT /api/v1/people/:id`) replaces the URL on the document and retains the old Cloudinary asset (consistent with project edits). Deleting a person retains Cloudinary assets.
+
+
 
 ---
 

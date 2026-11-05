@@ -18,6 +18,7 @@ type CloudinaryMockCallback = (
 ) => void;
 
 const mockUploadCalls: CloudinaryMockOptions[] = [];
+const mockDestroy = jest.fn().mockResolvedValue({ result: "ok" });
 
 jest.mock("@/config/cloudinary", () => {
   const search = {
@@ -26,6 +27,7 @@ jest.mock("@/config/cloudinary", () => {
     execute: jest.fn().mockResolvedValue({ resources: [], total_count: 0 }),
   };
   const uploader = {
+    destroy: mockDestroy,
     upload_stream: (
       options: CloudinaryMockOptions,
       callback: CloudinaryMockCallback
@@ -39,7 +41,9 @@ jest.mock("@/config/cloudinary", () => {
       process.nextTick(() =>
         callback(null, {
           secure_url: `https://res.cloudinary.com/demo/${options.resource_type}/${options.folder}/${options.public_id || "file"}`,
-          public_id: options.public_id || "test_id",
+          public_id: options.folder
+            ? `${options.folder}/${options.public_id || "file"}`
+            : options.public_id || "test_id",
         })
       );
       return writable;
@@ -48,6 +52,9 @@ jest.mock("@/config/cloudinary", () => {
   const cloudinary = { uploader, search, uploadCalls: mockUploadCalls };
   return { __esModule: true, default: cloudinary, cloudinary };
 });
+
+const mockCloudinary = jest.requireMock("@/config/cloudinary");
+const mockSearch = mockCloudinary.default.search;
 
 // Mock models and DB
 jest.mock("@/models/Certificate");
@@ -65,6 +72,10 @@ describe("Certificates API Integration Tests", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUploadCalls.length = 0;
+    mockDestroy.mockClear();
+    mockSearch.expression.mockReturnValue(mockSearch);
+    mockSearch.max_results.mockReturnValue(mockSearch);
+    mockSearch.execute.mockResolvedValue({ resources: [], total_count: 0 });
     (Certificate.find as jest.Mock).mockReturnValue({
       sort: jest.fn().mockResolvedValue([
         {
@@ -140,7 +151,7 @@ describe("Certificates API Integration Tests", () => {
         title: "Test Cert",
         description: "Cert Description",
         link: "https://example.com",
-        mediaUrl: "portfolio/certificate/cert.jpg",
+        mediaUrl: "https://example.com/certificate/cert.jpg",
         organization: "Cert Org",
         weight: 0,
       });
@@ -175,8 +186,78 @@ describe("Certificates API Integration Tests", () => {
       (c) => c.folder === "portfolio/certificate"
     );
     expect(uploadCall).toBeDefined();
-    expect(uploadCall?.public_id).toBe("amazon_web_services_aws_cloud_practitioner_2024_2024");
+    expect(uploadCall?.public_id).toBe("amazon_web_services_aws_cloud_practitioner_2024_2024_1");
     expect(uploadCall?.resource_type).toBe("image");
+    expect(mockDestroy).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/v1/certificates rolls back uploaded mediaUrl when title is duplicate (409)", async () => {
+    (Certificate.findOne as jest.Mock).mockResolvedValue({ _id: "cert-1", title: "AWS Cloud Practitioner 2024" });
+
+    const fakeImageBuffer = Buffer.from("fake-cert-image-content");
+    const res = await request(app)
+      .post("/api/v1/certificates")
+      .set("Authorization", "Bearer test-secret-token")
+      .field("title", "AWS Cloud Practitioner 2024")
+      .field("organization", "Amazon Web Services")
+      .field("description", "Foundational Cloud Certification")
+      .attach("mediaUrl", fakeImageBuffer, {
+        filename: "aws-cert.png",
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(409);
+    expect(mockDestroy).toHaveBeenCalledWith(
+      expect.stringContaining("portfolio/certificate/"),
+      { resource_type: "image" }
+    );
+  });
+
+  it("a duplicate-title POST /certificates with a file returns 409, destroys only that request's new upload, and leaves existing asset untouched", async () => {
+    const existingCert = {
+      _id: "cert-aws",
+      title: "AWS Cloud Practitioner 2024",
+      organization: "Amazon Web Services",
+      mediaUrl: "https://res.cloudinary.com/demo/image/upload/portfolio/certificate/amazon_web_services_aws_cloud_practitioner_2024_2024_1.png",
+    };
+    (Certificate.findOne as jest.Mock).mockResolvedValue(existingCert);
+
+    mockSearch.execute.mockResolvedValueOnce({
+      resources: [
+        {
+          public_id: "portfolio/certificate/amazon_web_services_aws_cloud_practitioner_2024_2024_1",
+          folder: "portfolio/certificate",
+          resource_type: "image",
+        },
+      ],
+      total_count: 1,
+    });
+
+    const res = await request(app)
+      .post("/api/v1/certificates")
+      .set("Authorization", "Bearer test-secret-token")
+      .field("title", "aws cloud practitioner 2024")
+      .field("organization", "Amazon Web Services")
+      .field("description", "Duplicate upload attempt")
+      .attach("mediaUrl", Buffer.from("new-cert-file"), {
+        filename: "aws-cert.png",
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toContain("duplicate");
+
+    // The failing request uploaded _2 which must be destroyed
+    expect(mockDestroy).toHaveBeenCalledWith(
+      expect.stringMatching(/portfolio\/certificate\/amazon_web_services_aws_cloud_practitioner_2024_2024_2/),
+      { resource_type: "image" }
+    );
+    // The existing cert asset (_1) must NOT be destroyed
+    expect(mockDestroy).not.toHaveBeenCalledWith(
+      expect.stringMatching(/_1$/),
+      expect.anything()
+    );
   });
 
   it("POST /api/v1/certificates with duplicate title returns 409", async () => {
@@ -188,7 +269,7 @@ describe("Certificates API Integration Tests", () => {
         title: "Test Cert",
         description: "Cert Description",
         link: "https://example.com",
-        mediaUrl: "portfolio/certificate/cert.jpg",
+        mediaUrl: "https://example.com/certificate/cert.jpg",
         organization: "Cert Org",
         weight: 0,
       });
@@ -215,6 +296,45 @@ describe("Certificates API Integration Tests", () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.title).toBe("Updated Cert");
+  });
+
+  it("PUT /api/v1/certificates/:id handles multipart mediaUrl image upload and destroys nothing on success", async () => {
+    (Certificate.findOne as jest.Mock).mockResolvedValue(null);
+    (Certificate.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+      _id: "cert-1",
+      title: "Updated Cert",
+      mediaUrl: "portfolio/certificate/updated.png",
+    });
+
+    const fakeImageBuffer = Buffer.from("fake-cert-image-content");
+    const res = await request(app)
+      .put("/api/v1/certificates/cert-1")
+      .set("Authorization", "Bearer test-secret-token")
+      .attach("mediaUrl", fakeImageBuffer, {
+        filename: "updated.png",
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockDestroy).not.toHaveBeenCalled();
+  });
+
+  it("PUT /api/v1/certificates/:id rolls back uploaded mediaUrl when validation fails (400)", async () => {
+    const fakeImageBuffer = Buffer.from("fake-cert-image-content");
+    const res = await request(app)
+      .put("/api/v1/certificates/cert-1")
+      .set("Authorization", "Bearer test-secret-token")
+      .field("link", "javascript:alert(1)")
+      .attach("mediaUrl", fakeImageBuffer, {
+        filename: "updated.png",
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(400);
+    expect(mockDestroy).toHaveBeenCalledWith(
+      expect.stringContaining("portfolio/certificate/"),
+      { resource_type: "image" }
+    );
   });
 
   it("DELETE /api/v1/certificates/:id deletes a certificate (admin protected)", async () => {

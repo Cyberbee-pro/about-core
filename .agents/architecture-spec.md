@@ -11,8 +11,19 @@
 import { Schema, model, Document, Types } from "mongoose";
 
 export interface ISocialLink { platform: string; url: string; }
-export interface IContributor { name: string; profilePicUrl: string; profileLink?: string; }
+export interface IProjectContributor {
+  contributor?: Types.ObjectId;
+  role?: string;
+}
+export type IContributor = IProjectContributor;
+export interface IGalleryImage {
+  _id?: Types.ObjectId;
+  url: string;
+  tags: string[];
+  caption: string;
+}
 export interface IProjectVersion {
+  _id?: Types.ObjectId;
   versionTag: string;
   releaseDate: Date;
   changelog: string[];
@@ -21,6 +32,16 @@ export interface IProjectVersion {
   demoUrl?: string;
   threeDFileUrl?: string;
   isLatest: boolean;
+  gallery: IGalleryImage[];
+  status?: ProjectStatus;
+  startDate?: Date;
+  endDate?: Date;
+  deployedLink?: string;
+  githubLink?: string;
+  contributors?: IProjectContributor[];
+  socialLinks?: ISocialLink[];
+  host?: "self" | "people";
+  hostedBy?: Types.ObjectId[];
 }
 
 export type ProjectStatus = "invisible" | "planning" | "work_in_progress" | "delay_hold" | "active";
@@ -35,7 +56,7 @@ export interface IProject extends Document {
   skills: Types.ObjectId[];
   startDate: Date;
   endDate?: Date;
-  contributors: IContributor[];
+  contributors: IProjectContributor[];
   status: ProjectStatus;
   image: string;
   videoDemo?: string;
@@ -48,55 +69,99 @@ export interface IProject extends Document {
   githubLink?: string;
   socialLinks: ISocialLink[];
   versions: IProjectVersion[];
+  gallery: IGalleryImage[];
+  host: "self" | "people";
+  hostedBy: Types.ObjectId[];
+  forkedFrom: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const ContributorSchema = new Schema<IContributor>({
-  name: { type: String, required: true },
-  profilePicUrl: { type: String, required: true },
-  profileLink: { type: String },
+const ProjectContributorSchema = new Schema<IProjectContributor>(
+  {
+    contributor: { type: Schema.Types.ObjectId, ref: "Person" },
+    role: { type: String, trim: true, maxlength: 40 },
+  },
+  { _id: false, strict: false }
+);
+
+const SocialLinkSchema = new Schema<ISocialLink>(
+  {
+    platform: { type: String, required: true },
+    url: { type: String, required: true },
+  },
+  { _id: false }
+);
+
+const GalleryImageSchema = new Schema<IGalleryImage>({
+  url: { type: String, required: true },
+  tags: { type: [String], default: [] },
+  caption: { type: String, default: "" },
 });
 
-const VersionSchema = new Schema<IProjectVersion>({
-  versionTag: { type: String, required: true },
-  releaseDate: { type: Date, default: Date.now },
-  changelog: [{ type: String }],
-  image: { type: String },
-  videoDemo: { type: String },
-  demoUrl: { type: String },
-  threeDFileUrl: { type: String },
-  isLatest: { type: Boolean, default: false },
-});
+const VersionSchema = new Schema<IProjectVersion>(
+  {
+    versionTag: { type: String, required: true },
+    releaseDate: { type: Date, default: Date.now },
+    changelog: [{ type: String }],
+    image: { type: String },
+    videoDemo: { type: String },
+    demoUrl: { type: String },
+    threeDFileUrl: { type: String },
+    isLatest: { type: Boolean, default: false },
+    gallery: { type: [GalleryImageSchema], default: [] },
+    status: {
+      type: String,
+      enum: ["invisible", "planning", "work_in_progress", "delay_hold", "active"],
+      required: false,
+    },
+    startDate: { type: Date, required: false },
+    endDate: { type: Date, required: false },
+    deployedLink: { type: String, required: false },
+    githubLink: { type: String, required: false },
+    contributors: { type: [ProjectContributorSchema], default: undefined },
+    socialLinks: { type: [SocialLinkSchema], default: undefined },
+    host: { type: String, enum: ["self", "people"], default: undefined },
+    hostedBy: { type: [{ type: Schema.Types.ObjectId, ref: "Person" }], default: undefined },
+  },
+  { strict: false }
+);
 
-const ProjectSchema = new Schema<IProject>({
-  title: { type: String, required: true, trim: true },
-  slug: { type: String, required: true, unique: true, lowercase: true },
-  category: { type: String, required: true, lowercase: true, trim: true },
-  description: { type: String, required: true },
-  featured: { type: Boolean, default: false },
-  tags: [{ type: String, trim: true }],
-  skills: [{ type: Schema.Types.ObjectId, ref: "Skill" }],
-  startDate: { type: Date, required: true },
-  endDate: { type: Date },
-  contributors: [ContributorSchema],
-  status: {
-    type: String,
-    enum: ["invisible", "planning", "work_in_progress", "delay_hold", "active"],
-    default: "planning",
+const ProjectSchema = new Schema<IProject>(
+  {
+    title: { type: String, required: true, trim: true },
+    slug: { type: String, required: true, unique: true, lowercase: true },
+    category: { type: String, required: true, lowercase: true, trim: true },
+    description: { type: String, required: true },
+    featured: { type: Boolean, default: false },
+    tags: [{ type: String, trim: true }],
+    skills: [{ type: Schema.Types.ObjectId, ref: "Skill" }],
+    startDate: { type: Date, required: true },
+    endDate: { type: Date },
+    contributors: { type: [ProjectContributorSchema], default: [] },
+    status: {
+      type: String,
+      enum: ["invisible", "planning", "work_in_progress", "delay_hold", "active"],
+      default: "planning",
+    },
+    image: { type: String, required: true },
+    videoDemo: { type: String, default: null },
+    socialLinks: [{ platform: { type: String, required: true }, url: { type: String, required: true } }],
+    threeDModel: {
+      fileUrl: { type: String, default: null },
+      initialRotation: { type: [Number], default: [0, 0, 0] },
+      enableExplodedView: { type: Boolean, default: false },
+    },
+    deployedLink: { type: String, default: null },
+    githubLink: { type: String, default: null },
+    versions: [VersionSchema],
+    gallery: { type: [GalleryImageSchema], default: [] },
+    host: { type: String, enum: ["self", "people"], default: "self" },
+    hostedBy: [{ type: Schema.Types.ObjectId, ref: "Person" }],
+    forkedFrom: { type: String, default: null },
   },
-  image: { type: String, required: true },
-  videoDemo: { type: String, default: null },
-  socialLinks: [{ platform: { type: String, required: true }, url: { type: String, required: true } }],
-  threeDModel: {
-    fileUrl: { type: String, default: null },
-    initialRotation: { type: [Number], default: [0, 0, 0] },
-    enableExplodedView: { type: Boolean, default: false },
-  },
-  deployedLink: { type: String, default: null },
-  githubLink: { type: String, default: null },
-  versions: [VersionSchema],
-}, { timestamps: true });
+  { timestamps: true, strict: false }
+);
 
 export const Project = model<IProject>("Project", ProjectSchema);
 ```
@@ -358,6 +423,45 @@ const LogEntrySchema = new Schema<ILogEntry>(
 export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
 ```
 
+### 1.8 `Person.ts`
+```typescript
+import { Schema, model, Document } from "mongoose";
+import { isValidHttpUrl } from "../utils/stringUtils";
+
+export interface IPerson {
+  name: string;
+  profilePicUrl: string;
+  profileLink?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IPersonDocument extends Document {
+  name: string;
+  profilePicUrl: string;
+  profileLink?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const PersonSchema = new Schema<IPersonDocument>(
+  {
+    name: { type: String, required: true, unique: true, trim: true },
+    profilePicUrl: { type: String, required: true },
+    profileLink: {
+      type: String,
+      validate: {
+        validator: (val: string) => !val || isValidHttpUrl(val),
+        message: "profileLink must be a valid http or https URL",
+      },
+    },
+  },
+  { timestamps: true }
+);
+
+export const Person = model<IPersonDocument>("Person", PersonSchema);
+```
+
 ---
 
 ## 2. API Endpoints Specification
@@ -372,16 +476,27 @@ export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
 ### 2.2 Projects (`/api/v1/projects`)
 | Method | Route | Auth | Payload / Params | Purpose |
 | --- | --- | --- | --- | --- |
-| **GET** | `/api/v1/projects` | No | Query: `category`, `featured`, `tag` | Fetch public projects (`status !== "invisible"`). |
+| **GET** | `/api/v1/projects` | No | Query: `category`, `featured`, `tag`, `host`, `forked` | Fetch public projects (`status !== "invisible"`). |
 | **GET** | `/api/v1/projects/categories` | No | None | Fetch unique categories (`Project.distinct("category")`). |
 | **GET** | `/api/v1/projects/:slug` | Optional* | Params: `slug` | Fetch project details. Drafts visible only with `ADMIN_SECRET`. |
-| **POST** | `/api/v1/projects` | Yes | Multipart / JSON: `IProject` | Create project (Multer streams `image`, `videoDemo`, `threeDModel`). |
-| **PUT** | `/api/v1/projects/:id` | Yes | Multipart / JSON: `Partial<IProject>` | Update project metadata or media by ObjectId. |
+| **POST** | `/api/v1/projects` | Yes | Multipart / JSON: `IProject` | Create project (Multer streams `image`, `videoDemo`, `threeDModel`, `galleryImages`; supports `host`, `hostedBy`, `forkedFrom`; ignores `versions`). |
+| **PUT** | `/api/v1/projects/:id` | Yes | Multipart / JSON: `Partial<IProject>` | Update project metadata or media by ObjectId (supports `host`, `hostedBy`, `forkedFrom`; ignores `gallery` and `versions`). |
 | **DELETE** | `/api/v1/projects/:id` | Yes | Params: `id` | Delete project document (preserves Cloudinary assets). |
-| **POST** | `/api/v1/projects/:slug/versions` | Yes | Multipart / JSON: `IProjectVersion` | Push new release version to `versions` array (single-truth `isLatest`). |
-| **GET** | `/api/v1/admin/projects` | Yes | Query: `status`, `category`, `featured`, `tag` | Fetch all projects from database without status restrictions (including invisible/draft). |
+| **POST** | `/api/v1/projects/:slug/versions` | Yes | Multipart / JSON: `IProjectVersion` | Push new release version to `versions` array (single-truth `isLatest`, optional version `host`/`hostedBy`). |
+| **PUT** | `/api/v1/projects/:slug/versions/:versionId` | Yes | Multipart / JSON: `Partial<IProjectVersion>` | Update specific project version in-place (supports partial media uploads, clean rollback on error, tag collision check, single-truth `isLatest`, version `host`/`hostedBy` overrides). |
+| **DELETE** | `/api/v1/projects/:slug/versions/:versionId` | Yes | Params: `slug`, `versionId` | Delete specific version subdocument (preserves Cloudinary assets, leaves project without latest if latest deleted). |
+| **GET** | `/api/v1/admin/projects` | Yes | Query: `status`, `category`, `featured`, `tag`, `host`, `forked` | Fetch all projects from database without status restrictions (including invisible/draft). |
 
-### 2.3 Skills (`/api/v1/skills`)
+### 2.3 People (`/api/v1/people`)
+| Method | Route | Auth | Payload / Params | Purpose |
+| --- | --- | --- | --- | --- |
+| **GET** | `/api/v1/people` | No | None | Fetch all people sorted case-insensitively by `name: 1`. |
+| **GET** | `/api/v1/people/:id` | No | Params: `id` | Fetch single person by ObjectId. |
+| **POST** | `/api/v1/people` | Yes | Multipart / JSON: `name`, `profilePicUrl`, `profileLink` | Create person with unique name validation and picture upload/URL. |
+| **PUT** | `/api/v1/people/:id` | Yes | Multipart / JSON: partial fields | Update person by ObjectId with duplicate name check excluding self. |
+| **DELETE** | `/api/v1/people/:id` | Yes | Params: `id` | Delete person by ObjectId; rejects with 409 if referenced in any project/version contributors or hostedBy. |
+
+### 2.4 Skills (`/api/v1/skills`)
 | Method | Route | Auth | Payload / Params | Purpose |
 | --- | --- | --- | --- | --- |
 | **GET** | `/api/v1/skills` | No | Query: `type` (optional) | Fetch all skills sorted by `{ weight: 1, name: 1 }`, optionally filtered by type. |
@@ -418,7 +533,7 @@ export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
 | **PUT** | `/api/v1/experiences/:id` | Yes | Multipart / JSON: partial fields | Update experience by ObjectId. |
 | **DELETE** | `/api/v1/experiences/:id` | Yes | Params: `id` | Delete experience by ObjectId. |
 
-### 2.7 Site Configuration (`/api/v1/config`)
+### 2.8 Site Configuration (`/api/v1/config`)
 | Method | Route | Auth | Payload / Params | Purpose |
 | --- | --- | --- | --- | --- |
 | **GET** | `/api/v1/config` | No | None | Fetch global configuration (avatar, history, job titles, bio, resume). |
@@ -426,7 +541,7 @@ export const LogEntry = model<ILogEntry>("LogEntry", LogEntrySchema);
 | **PUT** | `/api/v1/config` | Yes | Multipart / JSON | Update or upsert site config. Handles new avatar upload, resume PDF upload (`resume_date_{num}.pdf`), or history rollback. |
 | **POST** | `/api/v1/config/resume` | Yes | Multipart: `resume` | Dedicated resume PDF upload endpoint saving `resumeUrl` directly to MongoDB. |
 
-### 2.8 Admin Logs (`/api/v1/admin/logs`)
+### 2.9 Admin Logs (`/api/v1/admin/logs`)
 | Method | Route | Auth | Payload / Params | Purpose |
 | --- | --- | --- | --- | --- |
 | **GET** | `/api/v1/admin/logs` | Yes | Query: `date`, `month`, `year`, `level`, `page`, `limit` | Query MongoDB `LogEntry` records with pagination. |
@@ -446,7 +561,7 @@ Request
   ├── 4. express.static('public') ── Edge CDN local mirror serving MAGI EVA-0 dashboard
   ├── 5. dbLoggerMiddleware       ── Intercepts res.finish and records LogEntry in MongoDB
   ├── 6. /health & /api/v1/health ── Health check routes
-  ├── 7. Feature Routes           ── /api/v1/{projects, skills, certificates, achievements, experiences, config, admin/logs, admin/projects}
+  ├── 7. Feature Routes           ── /api/v1/{projects, people, skills, certificates, achievements, experiences, config, admin/logs, admin/projects}
   │       ├── authMiddleware      ── Verifies ADMIN_SECRET (Bearer / x-admin-token)
   │       └── uploadMiddleware    ── Multer memoryStorage + Cloudinary streaming
   ├── 8. notFoundMiddleware       ── Generates 404 JSON for unmatched routes
@@ -457,12 +572,13 @@ Request
 
 ## 4. Cloudinary Media Storage Hierarchy
 
-All media assets are buffered in memory and streamed directly to Cloudinary. Complete directory layout, sequential numbering (`<base>_1`), and Search API caching rules are detailed in [`cloudinary.md`](../cloudinary.md).
+All media assets are buffered in memory and streamed directly to Cloudinary. Complete directory layout, sequential numbering (`<base>_1`), and Search API caching rules are detailed in [`cloudinary.md`](./cloudinary.md).
 
 ```
 portfolio/
 ├── projects/<slug>/{images, videos, models}/
-│   └── <versionTag>/{images, videos, models}/
+│   └── <versionTag>/{images, videos, models}/   # Version tag preserving dots (e.g. 'v1.0.0')
+├── people/<person-name>/
 ├── skills/<skill-name>/
 ├── certificate/
 ├── experiences/<tag>/<org-slug>/{icons, media, certificates}/

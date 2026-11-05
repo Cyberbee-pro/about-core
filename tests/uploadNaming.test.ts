@@ -20,6 +20,7 @@ import {
   sanitizeResumeFilename,
   sanitizeResumeUrl,
   sanitizeResumePublicId,
+  sanitizeVersionTag,
 } from "@/middlewares/uploadMiddleware";
 
 interface CloudinarySearchTestDouble {
@@ -290,6 +291,59 @@ describe("Resume filename and URL sanitization helpers", () => {
       expect(sanitizeResumePublicId("portfolio/site_config/resume/resume_date_1")).toBe(
         "portfolio/site_config/resume/resume_date_1"
       );
+    });
+  });
+
+  describe("sanitizeVersionTag", () => {
+    it("preserves dots in standard semantic version tags", () => {
+      expect(sanitizeVersionTag("v1.0.0")).toBe("v1.0.0");
+      expect(sanitizeVersionTag("1.2.3.4")).toBe("1.2.3.4");
+      expect(sanitizeVersionTag("v2.1.0-beta.1")).toBe("v2.1.0-beta.1");
+    });
+
+    it("lowercases uppercase characters and trims whitespace", () => {
+      expect(sanitizeVersionTag("  V1.0.0  ")).toBe("v1.0.0");
+      expect(sanitizeVersionTag("RELEASE-2.0")).toBe("release-2.0");
+    });
+
+    it("preserves underscores and hyphens", () => {
+      expect(sanitizeVersionTag("v1_0_0")).toBe("v1_0_0");
+      expect(sanitizeVersionTag("v1-0-0")).toBe("v1-0-0");
+    });
+
+    it("replaces spaces, slashes, and special characters with hyphens", () => {
+      expect(sanitizeVersionTag("v1/0/0")).toBe("v1-0-0");
+      expect(sanitizeVersionTag("v1\\0\\0")).toBe("v1-0-0");
+      expect(sanitizeVersionTag("v1 0 0")).toBe("v1-0-0");
+      expect(sanitizeVersionTag("v1:0:0")).toBe("v1-0-0");
+      expect(sanitizeVersionTag("v1@final#1")).toBe("v1-final-1");
+    });
+
+    it("prevents directory traversal by neutralizing consecutive dots", () => {
+      expect(sanitizeVersionTag("../../v1.0.0")).toBe("v1.0.0");
+      expect(sanitizeVersionTag("..")).toBe("");
+      expect(sanitizeVersionTag("....")).toBe("");
+      expect(sanitizeVersionTag("v1..0..0")).toBe("v1-0-0");
+    });
+
+    it("strips leading and trailing dots and hyphens", () => {
+      expect(sanitizeVersionTag("---v1.0.0...")).toBe("v1.0.0");
+      expect(sanitizeVersionTag(".v1.0.0.")).toBe("v1.0.0");
+      expect(sanitizeVersionTag("---")).toBe("");
+      expect(sanitizeVersionTag("...")).toBe("");
+    });
+
+    it("collapses multiple consecutive hyphens into a single hyphen", () => {
+      expect(sanitizeVersionTag("v1---beta---1")).toBe("v1-beta-1");
+    });
+
+    it("safely truncates excessively long tags to maximum 64 characters", () => {
+      const veryLong = "v1.0.0-" + "a".repeat(100);
+      const sanitized = sanitizeVersionTag(veryLong);
+      expect(sanitized.length).toBeLessThanOrEqual(64);
+      expect(sanitized.startsWith("v1.0.0-")).toBe(true);
+      expect(sanitized.endsWith("-")).toBe(false);
+      expect(sanitized.endsWith(".")).toBe(false);
     });
   });
 });

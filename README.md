@@ -52,5 +52,5 @@ npm run dev
 | Scope | Endpoints | Purpose |
 | --- | --- | --- |
 | **Public** | `GET /api/v1/projects` <br> `GET /api/v1/projects/:slug` <br> `GET /api/v1/projects/categories` <br> `GET /api/v1/config` | Fetch active projects, categories, and site configuration for public clients. |
-| **Protected (Admin)** | `GET /api/v1/admin/projects` <br> `POST / PUT / DELETE /api/v1/projects` <br> `POST /api/v1/projects/:slug/versions` <br> `PUT /api/v1/config` | Fetch all projects (including invisible/drafts), mutate project data, push versions, and handle multipart media uploads to Cloudinary. |
+| **Protected (Admin)** | `GET /api/v1/admin/projects` <br> `POST / PUT / DELETE /api/v1/projects` <br> `POST /api/v1/projects/:slug/versions` <br> `PUT / DELETE /api/v1/projects/:slug/versions/:versionId` <br> `PUT /api/v1/config` | Fetch all projects (including invisible/drafts), mutate project data, append/update/delete versions, and handle multipart media uploads to Cloudinary. |
 | **Logging (Admin)** | `GET /api/v1/admin/logs` | Query MongoDB system logs via `?date`, `?month`, or `?year` parameters. |

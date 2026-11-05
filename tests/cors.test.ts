@@ -5,7 +5,11 @@ describe("CORS Configuration Tests", () => {
   const originalClientOrigin = process.env.CLIENT_ORIGIN;
 
   afterEach(() => {
-    process.env.CLIENT_ORIGIN = originalClientOrigin;
+    if (originalClientOrigin === undefined) {
+      delete process.env.CLIENT_ORIGIN;
+    } else {
+      process.env.CLIENT_ORIGIN = originalClientOrigin;
+    }
   });
 
   describe("getAllowedOrigins helper", () => {
@@ -91,6 +95,38 @@ describe("CORS Configuration Tests", () => {
       expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toBe("Not allowed by CORS");
+    });
+
+    it("allows default origins when CLIENT_ORIGIN is unset in environment", async () => {
+      delete process.env.CLIENT_ORIGIN;
+      const res = await request(app)
+        .get("/health")
+        .set("Origin", "http://localhost:3000");
+
+      expect(res.status).toBe(200);
+      expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+      expect(res.headers["access-control-allow-credentials"]).toBe("true");
+    });
+
+    it("matches allowed origin even if CLIENT_ORIGIN has trailing slashes", async () => {
+      process.env.CLIENT_ORIGIN = "http://localhost:3000/, https://example.com/";
+      const res = await request(app)
+        .get("/health")
+        .set("Origin", "http://localhost:3000");
+
+      expect(res.status).toBe(200);
+      expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+    });
+
+    it("handles wildcard '*' CLIENT_ORIGIN without credentials", async () => {
+      process.env.CLIENT_ORIGIN = "*";
+      const res = await request(app)
+        .get("/health")
+        .set("Origin", "https://any-arbitrary-domain.org");
+
+      expect(res.status).toBe(200);
+      expect(res.headers["access-control-allow-origin"]).toBe("*");
+      expect(res.headers["access-control-allow-credentials"]).toBeUndefined();
     });
   });
 });

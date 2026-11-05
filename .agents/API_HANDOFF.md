@@ -48,12 +48,26 @@ HTTP Request
   - Validated via a dynamic validator function. Requests without an `Origin` header (such as curl, mobile apps, Postman, or server-to-server) are allowed.
   - Allowed origins are parsed from the `CLIENT_ORIGIN` environment variable (comma-separated, e.g., `http://localhost:3000,https://core.shibraj.dev,https://client.shibraj.dev,https://shibraj.dev`).
   - Defaults to `["https://core.shibraj.dev", "https://client.shibraj.dev", "https://shibraj.dev", "http://localhost:3000"]` if `CLIENT_ORIGIN` is not configured.
-  - Wildcard `*` in `CLIENT_ORIGIN` dynamically reflects the requesting origin with credentials enabled.
+  - When `CLIENT_ORIGIN` is set to wildcard `*`, responds with `Access-Control-Allow-Origin: *` and credentials disabled (`credentials: false`), strictly compliant with the W3C CORS specification. All API authentication relies on HTTP headers (`Authorization: Bearer <token>` or `x-admin-token`), so browser cookies/ambient credentials are not required.
   - Trailing slashes in origins are normalized automatically.
   - **Allowed Methods**: `GET`, `POST`, `PUT`, `DELETE`, `OPTIONS`.
   - **Allowed Headers**: `Content-Type`, `Authorization`, `x-admin-token`.
-  - **Credentials**: `true` (`Access-Control-Allow-Credentials: true`).
+  - **Credentials**: `true` (`Access-Control-Allow-Credentials: true`) for explicit allowed origin matches; `false` when wildcard `*` is configured.
   - **Rejected Origins**: Return HTTP `403 Forbidden` with `{ "success": false, "message": "Not allowed by CORS" }`.
+- **URL Validation Rules**:
+  - Every URL string written to the database (when provided and non-empty) is strictly validated via WHATWG `new URL` and must use an absolute `http:` or `https:` protocol.
+  - Dangerous protocols (`javascript:`, `data:`, `vbscript:`, `file:`, `ftp:`), protocol-relative URLs (`//host`), relative paths, embedded whitespace, and control characters (`\x00-\x1f`, `\x7f`) are rejected with `400 Bad Request` naming the offending field.
+  - Applies to all writable URL fields across collections:
+    - **Person**: `profilePicUrl`, `profileLink`
+    - **Project**: `image`, `videoDemo`, `deployedLink`, `githubLink`, `forkedFrom`, `threeDModel.fileUrl`, `socialLinks[].url`
+    - **Version**: `image`, `videoDemo`, `demoUrl`, `threeDFileUrl`, `deployedLink`, `githubLink`, `socialLinks[].url`
+    - **Skill**: `logoUrl`
+    - **Certificate**: `mediaUrl`, `link`
+    - **Experience**: `iconUrl`, `positions[].mediaUrls`, `positions[].certificateUrls`
+    - **SiteConfig**: `pfpUrl`, `resumeUrl`
+    - **Gallery**: `galleryImage` (PUT `/gallery/:imageId`)
+  - **Clearing Rule**: Empty strings (`""`) continue to clear optional fields without triggering URL validation.
+  - Uploaded multipart files via Cloudinary middleware are unaffected as they receive validated `https://res.cloudinary.com/...` delivery URLs.
 - **Response Format**: All responses are JSON.
   - **Success (Single Resource)**:
     ```json
@@ -97,6 +111,22 @@ HTTP Request
 | `PUT` | `/api/v1/projects/:id` | Admin | JSON / Multipart | Update project fields by MongoDB ObjectId. Accepts file uploads. |
 | `DELETE` | `/api/v1/projects/:id` | Admin | `application/json` | Delete project by MongoDB ObjectId. |
 | `POST` | `/api/v1/projects/:slug/versions` | Admin | JSON / Multipart | Append a version release to a project found by slug. Accepts file uploads. |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId` | Admin | JSON / Multipart | In-place partial update of a project version subdocument. Accepts file uploads with rollback. |
+| `DELETE` | `/api/v1/projects/:slug/versions/:versionId` | Admin | `application/json` | Delete a single project version subdocument. Cloudinary assets are retained. |
+| `POST` | `/api/v1/projects/:slug/gallery` | Admin | JSON / Multipart | Add images to project gallery (multipart files or JSON URL items). |
+| `PUT` | `/api/v1/projects/:slug/gallery/order` | Admin | `application/json` | Reorder project gallery items. Must provide all current image IDs. |
+| `PUT` | `/api/v1/projects/:slug/gallery/:imageId` | Admin | JSON / Multipart | Partial update of a project gallery image (tags, caption, optional file replacement). |
+| `DELETE` | `/api/v1/projects/:slug/gallery/:imageId` | Admin | `application/json` | Remove image from project gallery. Cloudinary assets retained. |
+| `POST` | `/api/v1/projects/:slug/versions/:versionId/gallery` | Admin | JSON / Multipart | Add images to project version gallery (multipart files or JSON URL items). |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/order` | Admin | `application/json` | Reorder project version gallery items. Must provide all current image IDs. |
+| `PUT` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | JSON / Multipart | Partial update of a version gallery image (tags, caption, optional file replacement). |
+| `DELETE` | `/api/v1/projects/:slug/versions/:versionId/gallery/:imageId` | Admin | `application/json` | Remove image from project version gallery. Cloudinary assets retained. |
+| **People** | | | | |
+| `GET` | `/api/v1/people` | Public | `application/json` | List all shared people sorted case-insensitively by name. |
+| `GET` | `/api/v1/people/:id` | Public | `application/json` | Get single person by MongoDB ObjectId. |
+| `POST` | `/api/v1/people` | Admin | JSON / Multipart | Create a person (`name`, `profilePicUrl` file/URL, `profileLink`). Unique name. |
+| `PUT` | `/api/v1/people/:id` | Admin | JSON / Multipart | Update person fields (`name`, picture file/URL, `profileLink`). |
+| `DELETE` | `/api/v1/people/:id` | Admin | `application/json` | Delete person by ObjectId. Rejects with 409 if referenced by any project or version as contributor or host. |
 | **Skills** | | | | |
 | `GET` | `/api/v1/skills` | Public | `application/json` | List all skills sorted by `{ weight: 1, name: 1 }`. |
 | `GET` | `/api/v1/skills/:id` | Public | `application/json` | Get single skill by MongoDB ObjectId. |
@@ -176,6 +206,8 @@ HTTP Request
   - `category` (optional, string): Case-insensitive exact match.
   - `featured` (optional, `"true"` | `"false"`): Strict boolean comparison (`true` matches only `"true"`).
   - `tag` (optional, string): Case-insensitive match against elements in `tags`.
+  - `host` (optional, `"self"` | `"people"`): Filter projects by host (`"self"` matches `"self"`, null, or missing; `"people"` matches `"people"`).
+  - `forked` (optional, `"true"` | `"false"`): Filter projects by whether `forkedFrom` repository URL is present (`"true"`) or null/missing/empty (`"false"`).
 - **Sorting**: Featured items first (`featured: -1`), then newest start date descending (`startDate: -1`).
 - **Behavior**: Excludes all projects where `status == "invisible"`.
 - **Response**: `200 OK`
@@ -195,13 +227,18 @@ HTTP Request
       "skills": ["670fa123456789abcdef0010"],
       "startDate": "2026-01-01T00:00:00.000Z",
       "status": "active",
+      "host": "self",
+      "hostedBy": [],
+      "forkedFrom": null,
       "image": "https://res.cloudinary.com/.../image_1.jpg",
       "videoDemo": "https://res.cloudinary.com/.../video_1.mp4",
       "contributors": [
         {
-          "name": "Cyberbee",
-          "profilePicUrl": "https://res.cloudinary.com/.../pfp.jpg",
-          "profileLink": "https://github.com/cyberbee"
+          "_id": "670fa123456789abcdef0099",
+          "name": "Alice",
+          "profilePicUrl": "https://res.cloudinary.com/.../alice.jpg",
+          "profileLink": "https://alice.dev",
+          "role": "Lead Architect"
         }
       ],
       "socialLinks": [
@@ -212,6 +249,7 @@ HTTP Request
         "initialRotation": [0, 0, 0],
         "enableExplodedView": false
       },
+      "gallery": [],
       "versions": [],
       "createdAt": "2026-01-01T00:00:00.000Z",
       "updatedAt": "2026-01-01T00:00:00.000Z"
@@ -247,6 +285,7 @@ HTTP Request
   - `image` (max 1 file, image MIME): Uploaded to `portfolio/projects/<slug>/images/<slug>_<n>`
   - `videoDemo` (max 1 file, video MIME): Uploaded to `portfolio/projects/<slug>/videos/<slug>_<n>`
   - `threeDModel` (max 1 file, `.glb`/`.gltf`/octet-stream): Uploaded to `portfolio/projects/<slug>/models/<slug>_<n>`
+  - `galleryImages` (optional, 1 to 10 files, image MIME): Uploaded to `portfolio/projects/<slug>/gallery/<slug>_<n>`
 - **Fields**:
   - `title` (required, string)
   - `category` (required, string)
@@ -255,17 +294,22 @@ HTTP Request
   - `slug` (optional string; auto-derived from `title` if omitted)
   - `featured` (optional boolean, default `false`)
   - `status` (optional enum: `"invisible"` | `"planning"` | `"work_in_progress"` | `"delay_hold"` | `"active"`, default `"planning"`)
+  - `host` (optional enum: `"self"` | `"people"`, default `"self"`). If `"people"`, requires non-empty `hostedBy`. If `"self"`, requires empty `hostedBy` (400 if provided).
+  - `hostedBy` (optional array of `Person` ObjectIds, or JSON-array string in multipart; validated against `people` collection; duplicate check; required when `host` is `"people"`, must be empty when `host` is `"self"`).
+  - `forkedFrom` (optional repository URL string, http/https only, max 2048 chars, or null; empty string or null stores `null`).
   - `startDate` (optional Date/ISO string, default `Date.now()`)
   - `endDate` (optional Date/ISO string)
   - `tags` (optional string array, JSON string array, or comma-separated string)
   - `skills` (optional array of `Skill` ObjectIds, JSON array string, or comma-separated string)
-  - `contributors` (optional array of `{ name, profilePicUrl, profileLink? }`, JSON string in multipart)
+  - `contributors` (optional array of `{ contributor: "<id>", role?: "<role>" }` or bare ID strings, JSON string in multipart; validates IDs against `people` collection)
   - `socialLinks` (optional array of `{ platform, url }`, JSON string in multipart)
   - `videoDemo` (optional string URL or file upload)
   - `deployedLink` (optional string URL)
   - `githubLink` (optional string URL)
   - `threeDModel` (optional object `{ fileUrl, initialRotation: [x,y,z], enableExplodedView }`, JSON string in multipart, or file upload)
-  - `versions` (optional array of `IProjectVersion`, JSON string in multipart)
+  - `galleryMeta` (optional JSON string array in multipart aligned with `galleryImages`, e.g. `'[{"tags":["hero"],"caption":"Main banner"}]'`)
+- **Versions Invariant**: `POST /api/v1/projects` ignores any `versions` field sent in the payload; a newly created project always starts with `versions: []`. Version releases must be added through the dedicated version endpoint (`POST /api/v1/projects/:slug/versions`).
+- **Response Guarantee**: Response `data` includes `gallery: []`, `versions: []`, `host`, `hostedBy: []`, and `forkedFrom: null` if unset.
 - **Response**: `201 Created`
 ```json
 {
@@ -280,7 +324,12 @@ HTTP Request
 - **Path Parameters**: `:id` (MongoDB ObjectId)
 - **Content-Type**: `application/json` or `multipart/form-data`
 - **Upload Fields**: `image`, `videoDemo`, `threeDModel`
-- **Behavior**: Partial update of supplied fields. Empty string for `endDate` clears the date.
+- **Behavior**: Partial update of supplied fields.
+  - `host` & `hostedBy`: Switching `host` to `"self"` automatically clears `hostedBy` to `[]`. Setting `host` to `"people"` requires non-empty `hostedBy`. Supplying `hostedBy` while stored `host` is `"self"` returns `400 Bad Request`.
+  - `forkedFrom`: Validates http/https (max 2048 chars); empty string `""` or `null` clears to `null`; omitted leaves unchanged.
+  - Empty string for `endDate` clears the date.
+- **Gallery Invariant**: `PUT /api/v1/projects/:id` must **NOT** change `gallery` (the field is ignored if sent) so a general project edit can never overwrite gallery items.
+- **Versions Invariant**: `PUT /api/v1/projects/:id` must **NOT** change `versions` (the field is ignored if sent); stored project versions remain unchanged. Version modifications must be performed through the dedicated version endpoints (`POST/PUT/DELETE /api/v1/projects/:slug/versions...`).
 - **Response**: `200 OK`
 ```json
 {
@@ -305,23 +354,263 @@ HTTP Request
 - **Access**: Admin
 - **Path Parameters**: `:slug` (string)
 - **Content-Type**: `application/json` or `multipart/form-data`
-- **Multipart Upload Fields**: `image`, `videoDemo`, `threeDModel`
-- **Folder Structure**: `portfolio/projects/<slug>/<sanitized-version-tag>/[images|videos|models]/`
+- **Multipart Upload Fields**: `image`, `videoDemo`, `threeDModel`, and optional `galleryImages` (1 to 10 files, image MIME) with `galleryMeta` (JSON string array)
+- **Folder Structure**: `portfolio/projects/<slug>/<sanitizedVersionTag>/[images|videos|models|gallery]/<slug>_<n>` (dots preserved in version tag, e.g. `v1.0.0`)
 - **Body Fields**:
   - `versionTag` (required, string, e.g. `"v1.2.0"`)
   - `releaseDate` (optional Date/ISO string, default `Date.now()`)
-  - `changelog` (optional string array, default `[]`)
+  - `changelog` (optional string array, JSON array string e.g. `'["a","b"]'`, or repeated multipart fields; trimmed and empty entries dropped; 400 for non-string entries; defaults to `[]` when omitted or empty string)
   - `image` (optional string URL or file upload)
   - `videoDemo` (optional string URL or file upload)
   - `demoUrl` (optional string URL)
   - `threeDFileUrl` (optional string URL or file upload on `threeDModel`)
   - `isLatest` (optional boolean, default `false`)
+  - `status` (optional enum: `"invisible"` | `"planning"` | `"work_in_progress"` | `"delay_hold"` | `"active"`, default `"planning"`)
+  - `startDate` (optional Date/ISO string; leaves unset if omitted, no auto-stamping today's date)
+  - `endDate` (optional Date/ISO string; must not be earlier than `startDate`)
+  - `deployedLink` (optional string, valid http/https URL)
+  - `githubLink` (optional string, valid http/https URL)
+  - `host` (optional enum: `"self"` | `"people"`): Optional override for version. If `"people"`, requires non-empty `hostedBy`. If `"self"`, requires empty `hostedBy`. If omitted, version inherits from project root.
+  - `hostedBy` (optional array of `Person` ObjectIds, or JSON-array string in multipart; validated against `people` collection; required when `host` is `"people"`, forbidden when `"self"`).
+  - `contributors` (optional array of `{ contributor: "<id>", role?: "<role>" }` or bare ID strings, JSON-array string in multipart; validates IDs against `people` collection)
+  - `socialLinks` (optional array of `{ platform, url }`, JSON-array string in multipart; url must be valid http/https)
+  - `galleryMeta` (optional JSON string array in multipart aligned with `galleryImages`, e.g. `'[{"tags":["preview"],"caption":"Initial release"}]'`)
 - **Single-Truth**: If `isLatest` is `true`, all previous versions in this project are automatically updated to `isLatest: false`.
+- **Response Format Guarantee**: Returned version documents include stored `host` and `hostedBy` (if set), plus computed `effectiveHost` and `effectiveHostedBy` (inherited from project if not set on the version).
+- **Rollback on Failure**: If media files are uploaded and request processing subsequently fails (`400`, `404`, `500`), uploaded Cloudinary assets are cleaned up via `cleanupUploadedVersionMedia(req)` using their exact `resource_type` (`image`, `video`, `raw`).
 - **Response**: `201 Created`
 ```json
 {
   "success": true,
   "message": "Version added successfully",
+  "data": { ...updatedProject }
+}
+```
+
+#### `PUT /api/v1/projects/:slug/versions/:versionId`
+- **Access**: Admin (`ADMIN_SECRET` via `Authorization: Bearer <token>` or `x-admin-token: <token>`)
+- **Path Parameters**:
+  - `:slug` (string, lowercase trimmed project slug)
+  - `:versionId` (MongoDB ObjectId string)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Fields**: `image`, `videoDemo`, `threeDModel`
+- **Folder Structure**: `portfolio/projects/<slug>/<sanitizedVersionTag>/[images|videos|models]/<slug>_<n>` (dots preserved in version tag, e.g. `v1.0.0`)
+- **Tag Resolution for Folder**: `req.body.versionTag` if present; otherwise queries stored tag from DB for `:versionId`. Rejects with `400` or `404` if neither resolves (never uploads to `misc`).
+- **Body Fields**:
+  - `versionTag` (optional string): Trimmed; non-empty if provided; returns `409 Conflict` if duplicate tag exists on the same project (JS case-insensitive comparison); renaming to own current tag (including casing adjustments) is permitted.
+  - `releaseDate` (optional Date/ISO string): Validated as a valid date; returns `400 Bad Request` if invalid.
+  - `changelog` (optional string array, JSON-array string e.g. `'["a","b"]'`, or repeated multipart fields; trimmed and empty entries dropped; 400 for non-string entries; omitted field leaves existing changelog unchanged; explicit empty string `""` or `[]` clears changelog to `[]`).
+  - `demoUrl` (optional string URL): Empty string `""` clears the field.
+  - `image` (optional string URL or file upload): Empty string `""` clears URL in document (Cloudinary asset retained).
+  - `videoDemo` (optional string URL or file upload): Empty string `""` clears URL in document (Cloudinary asset retained).
+  - `threeDFileUrl` (optional string URL or file upload on `threeDModel`): Empty string `""` clears URL in document (Cloudinary asset retained).
+  - `isLatest` (optional boolean or `"true"`/`"false"`): If `true`, resets `isLatest: false` on all other versions of the project. If `false` on current latest, allowed and leaves project without a latest version.
+  - `status` (optional enum: `"invisible"` | `"planning"` | `"work_in_progress"` | `"delay_hold"` | `"active"`): Cannot be cleared (empty string `""` is a 400).
+  - `startDate` (optional Date/ISO string): Validated date; empty string `""` clears the field.
+  - `endDate` (optional Date/ISO string): Validated date; cannot be earlier than `startDate` (checked against stored date if only one sent); empty string `""` clears the field.
+  - `deployedLink` (optional string): Valid http/https URL; empty string `""` clears the field.
+  - `githubLink` (optional string): Valid http/https URL; empty string `""` clears the field.
+  - `host` (optional enum: `"self"` | `"people"` | `""` | `null`): Empty string `""` or `null` unsets override, reverting to inherited project host. Setting `"people"` requires non-empty `hostedBy`. Setting `"self"` requires empty `hostedBy` (and clears `hostedBy`).
+  - `hostedBy` (optional array of `Person` ObjectIds, or JSON-array string in multipart): Validated against `people` collection; empty array `[]` clears version `hostedBy`.
+  - `contributors` (optional array of `{ contributor: "<id>", role?: "<role>" }` or bare ID strings): JSON-array string in multipart; validated against `people` collection; duplicate check; empty array `[]` clears contributors.
+  - `socialLinks` (optional array of `{ platform, url }`): JSON-array string in multipart; valid http/https URLs; empty array `[]` clears socialLinks.
+- **Gallery Invariant**: `PUT /api/v1/projects/:slug/versions/:versionId` must **NOT** change `gallery` (it is ignored if sent). Version gallery items are managed via dedicated version gallery endpoints.
+- **Rollback on Failure**: If media files are uploaded and request subsequent processing fails (`400`, `404`, `409`, `500`), uploaded Cloudinary assets are cleaned up via `cleanupUploadedVersionMedia(req)` using their exact `resource_type` (`image`, `video`, `raw`).
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Version updated successfully",
+  "data": { ...updatedProject }
+}
+```
+
+#### `DELETE /api/v1/projects/:slug/versions/:versionId`
+- **Access**: Admin (`ADMIN_SECRET` via `Authorization: Bearer <token>` or `x-admin-token: <token>`)
+- **Path Parameters**:
+  - `:slug` (string, lowercase trimmed project slug)
+  - `:versionId` (MongoDB ObjectId string)
+- **Behavior**: Removes target version from `project.versions`. Deleting latest version does NOT promote another version; project is left with no latest. Existing Cloudinary assets are retained (no destroy calls, consistent with project deletion).
+- **Validation**: Returns `400` for invalid `:versionId` format, `404` if project or version is not found.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Version deleted successfully",
+  "data": { ...updatedProject }
+}
+```
+
+---
+
+### 4.2.1 Tagged Image Galleries (`/gallery`)
+
+`about-core` provides first-class support for tagged image galleries directly attached to projects and to individual project release versions.
+
+#### Data Contract & Subdocument Schema (`GalleryImage`)
+- `_id`: Auto-generated MongoDB `ObjectId` string (used by clients to address, reorder, update, or delete items).
+- `url`: `string` (required, valid `http://` or `https://` URL).
+- `tags`: `string[]` (default `[]`, max 8 tags per image).
+- `caption`: `string` (default `""`, max 200 characters).
+
+#### Tag Normalization & Validation Rules
+Tags are free-form strings validated and normalized strictly in this sequential order:
+1. `trim()` leading and trailing whitespace.
+2. `toLowerCase()`.
+3. Consecutive whitespace runs are collapsed into a single hyphen (`\s+` &rarr; `-`).
+4. Duplicates within the same image are removed while preserving first occurrence.
+5. Must match the regex `^[a-z0-9][a-z0-9_+#.-]{0,23}$` (1 to 24 characters, starting with alphanumeric). Offending tags result in HTTP `400 Bad Request` naming the invalid tag. Special characters such as commas, brackets, quotes, angle brackets, or control characters are rejected.
+6. Maximum 8 tags per image; exceeding 8 tags returns `400 Bad Request`.
+- **Parsing Flexibility**: Like project `tags`, image `tags` can be supplied as a native array, JSON-array string, repeated multipart fields (`tags=foo&tags=bar`), or comma-separated strings (`"foo, bar"`). A single repeated field produces a 1-item array.
+- **No User Input in Regex**: RegEx execution never evaluates raw user input.
+
+#### Caption Constraints
+- Trimmed plain text string up to 200 characters.
+- Longer than 200 characters returns HTTP `400 Bad Request`.
+- An explicit empty string `""` clears the caption.
+
+#### Upload Limits & Storage Constraints
+- **MIME Types**: Images only (`image/jpeg`, `image/jpg`, `image/png`, `image/webp`, `image/gif`, `image/svg+xml`). Videos, 3D GLB models, or any non-image files return `400 Bad Request` with immediate rollback.
+- **File Size**: Max 100 MB per file.
+- **Batch Size**: Max 10 files per request.
+- **Item Limit**: Max 30 gallery items per project and max 30 gallery items per version. Requests that would exceed 30 items return `400 Bad Request`, reject the mutation, and roll back any uploaded Cloudinary assets.
+- **Rollback Guarantee**: In any failed request (`400`, `404`, `409`, `500`, limit exceeded), uploaded Cloudinary files are destroyed with `{ resource_type: "image" }`. On success, no assets are destroyed. Deleting or replacing gallery items retains the Cloudinary assets.
+- **Response Guarantee**: All public lists, public details, admin lists, and mutation endpoints run through a shared helper guaranteeing `gallery: []` on the project root and on each version in `project.versions` when none is stored in MongoDB (preventing `undefined` in lean queries).
+
+---
+
+#### `POST /api/v1/projects/:slug/gallery`
+- **Access**: Admin (`ADMIN_SECRET`)
+- **Path Parameters**: `:slug` (string)
+- **Content-Type**: `multipart/form-data` OR `application/json`
+- **Request Formats**:
+  - **Multipart**: File field `galleryImages` (1 to 10 files) and optional text field `galleryMeta` (JSON array of `{ tags?: string[], caption?: string }` aligned by index with files). Missing entries default to empty tags and empty caption. More meta entries than files returns `400 Bad Request`.
+  - **JSON**: Body `{ "items": [{ "url": "https://...", "tags": [...], "caption": "..." }] }` with valid http/https URLs.
+  - Supplying both files and `items` or neither returns `400 Bad Request`.
+- **Behavior**: Appends new items to the project's gallery array in order.
+- **Response**: `201 Created`
+```json
+{
+  "success": true,
+  "message": "Gallery images added successfully",
+  "data": { ...updatedProject }
+}
+```
+
+#### `PUT /api/v1/projects/:slug/gallery/order`
+- **Access**: Admin (`ADMIN_SECRET`)
+- **Route Registration**: Registered before `/:imageId` to prevent route shadowing.
+- **Content-Type**: `application/json`
+- **Body**: `{ "order": ["<imageId1>", "<imageId2>", ...] }`
+- **Validation**: Must contain every existing gallery item `_id` on the project exactly once. Duplicate, missing, or unknown IDs return `400 Bad Request`.
+- **Behavior**: Reorders the project `gallery` array to match the provided ID order.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Gallery reordered successfully",
+  "data": { ...updatedProject }
+}
+```
+
+#### `PUT /api/v1/projects/:slug/gallery/:imageId`
+- **Access**: Admin (`ADMIN_SECRET`)
+- **Path Parameters**:
+  - `:slug` (string)
+  - `:imageId` (MongoDB ObjectId)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Payload**: Partial update:
+  - `tags` (optional): Replaces existing tags; empty array or empty string clears them; omitted leaves unchanged.
+  - `caption` (optional string): Max 200 chars; empty string clears; omitted leaves unchanged.
+  - `galleryImage` (optional single file): Replaces `url` with newly uploaded asset (previous Cloudinary asset is retained).
+- **Concurrency**: Performed via atomic MongoDB `findOneAndUpdate` with positional operator `gallery._id`.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Gallery image updated successfully",
+  "data": { ...updatedProject }
+}
+```
+
+#### `DELETE /api/v1/projects/:slug/gallery/:imageId`
+- **Access**: Admin (`ADMIN_SECRET`)
+- **Path Parameters**:
+  - `:slug` (string)
+  - `:imageId` (MongoDB ObjectId)
+- **Behavior**: Removes target item from `gallery` via atomic `$pull`. Existing Cloudinary asset is retained.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Gallery image deleted successfully",
+  "data": { ...updatedProject }
+}
+```
+
+---
+
+#### `POST /api/v1/projects/:slug/versions/:versionId/gallery`
+- **Access**: Admin (`ADMIN_SECRET`)
+- **Path Parameters**:
+  - `:slug` (string)
+  - `:versionId` (MongoDB ObjectId)
+- **Folder Destination**: `portfolio/projects/<slug>/<sanitizedVersionTag>/gallery/<slug>_<n>` (derived from stored versionTag in DB).
+- **Request Formats**: Identical to project gallery (multipart `galleryImages` + `galleryMeta` or JSON `{ items: [...] }`).
+- **Response**: `201 Created`
+```json
+{
+  "success": true,
+  "message": "Gallery images added successfully",
+  "data": { ...updatedProject }
+}
+```
+
+#### `PUT /api/v1/projects/:slug/versions/:versionId/gallery/order`
+- **Access**: Admin (`ADMIN_SECRET`)
+- **Route Registration**: Registered before `/:imageId`.
+- **Content-Type**: `application/json`
+- **Body**: `{ "order": ["<imageId1>", "<imageId2>", ...] }`
+- **Validation**: Must contain every existing gallery item `_id` on that version exactly once.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Gallery reordered successfully",
+  "data": { ...updatedProject }
+}
+```
+
+#### `PUT /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`
+- **Access**: Admin (`ADMIN_SECRET`)
+- **Path Parameters**:
+  - `:slug` (string)
+  - `:versionId` (MongoDB ObjectId)
+  - `:imageId` (MongoDB ObjectId)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Payload**: Partial update of `tags`, `caption`, and optional replacement file `galleryImage`.
+- **Concurrency**: Performed via atomic MongoDB `findOneAndUpdate` with positional `arrayFilters: [{ "v._id": versionId }, { "g._id": imageId }]`.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Gallery image updated successfully",
+  "data": { ...updatedProject }
+}
+```
+
+#### `DELETE /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`
+- **Access**: Admin (`ADMIN_SECRET`)
+- **Path Parameters**:
+  - `:slug` (string)
+  - `:versionId` (MongoDB ObjectId)
+  - `:imageId` (MongoDB ObjectId)
+- **Behavior**: Removes target item from version `gallery` via atomic `$pull`. Cloudinary asset is retained.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Gallery image deleted successfully",
   "data": { ...updatedProject }
 }
 ```
@@ -333,6 +622,8 @@ HTTP Request
   - `category` (optional, string): Case-insensitive category match.
   - `featured` (optional, `"true"` | `"false"`): Strict boolean comparison.
   - `tag` (optional, string): Case-insensitive match against elements in `tags`.
+  - `host` (optional, `"self"` | `"people"`): Filter projects by host (`"self"` matches `"self"`, null, or missing; `"people"` matches `"people"`).
+  - `forked` (optional, `"true"` | `"false"`): Filter projects by whether `forkedFrom` is present (`"true"`) or null/missing/empty (`"false"`).
 - **Sorting**: Featured items first (`featured: -1`), then newest start date descending (`startDate: -1`).
 - **Behavior**: Returns all projects from the database matching query parameters without imposing the public `status != 'invisible'` exclusion, ensuring full visibility of draft and archived projects in admin dashboards.
 - **Response**: `200 OK`
@@ -740,6 +1031,111 @@ HTTP Request
 
 ---
 
+### 4.9 People (`/api/v1/people`)
+
+#### `GET /api/v1/people`
+- **Access**: Public
+- **Description**: Returns all shared people, sorted case-insensitively by `name` ascending.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "count": 2,
+  "data": [
+    {
+      "_id": "670fa123456789abcdef0099",
+      "name": "Ada Lovelace",
+      "profilePicUrl": "https://res.cloudinary.com/.../ada-lovelace.jpg",
+      "profileLink": "https://ada.dev",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+#### `GET /api/v1/people/:id`
+- **Access**: Public
+- **Path Parameters**: `:id` (MongoDB ObjectId string)
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "670fa123456789abcdef0099",
+    "name": "Ada Lovelace",
+    "profilePicUrl": "https://res.cloudinary.com/.../ada-lovelace.jpg",
+    "profileLink": "https://ada.dev"
+  }
+}
+```
+
+#### `POST /api/v1/people`
+- **Access**: Admin (Requires `ADMIN_SECRET`)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Field**: `profilePicUrl` (single file, image MIME only, 100 MB max)
+- **Folder Structure**: `portfolio/people/<derived-name>/<derived-name>`
+- **Body Fields**:
+  - `name` (required, trimmed string; case-insensitive unique across all people, returns `409 Conflict` on collision)
+  - `profilePicUrl` (required string URL or attached picture file; returns `400 Bad Request` if neither is provided)
+  - `profileLink` (optional string URL, must be valid http or https URL)
+- **Rollback on Failure**: If picture is uploaded and request fails validation or database write, uploaded Cloudinary asset is automatically destroyed via `cleanupUploadedVersionMedia(req)`.
+- **Response**: `201 Created`
+```json
+{
+  "success": true,
+  "data": { ...person }
+}
+```
+
+#### `PUT /api/v1/people/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId string)
+- **Content-Type**: `application/json` or `multipart/form-data`
+- **Multipart Upload Field**: `profilePicUrl` (optional replacement picture)
+- **Body Fields**: Partial updates:
+  - `name` (optional non-empty trimmed string; duplicate check excluding current person `_id`)
+  - `profilePicUrl` (optional string URL or attached file; replacing picture keeps previous Cloudinary asset)
+  - `profileLink` (optional string; empty string `""` clears the field)
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "data": { ...updatedPerson }
+}
+```
+
+#### `DELETE /api/v1/people/:id`
+- **Access**: Admin
+- **Path Parameters**: `:id` (MongoDB ObjectId string)
+- **Reference Integrity Enforcement**: Checks whether the person is currently referenced in `Project.contributors`, `Version.contributors`, `Project.hostedBy`, or `Version.hostedBy` across all projects.
+  - If in use, rejects deletion with `409 Conflict` reporting contributor and host reference counts:
+    `{ "success": false, "message": "Cannot delete person: referenced as contributor in X project(s) and Y project version(s), and as host in A project(s) and B project version(s)" }`
+  - If unused, deletes the person document. Cloudinary media assets are retained.
+- **Response**: `200 OK`
+```json
+{
+  "success": true,
+  "message": "Person deleted successfully"
+}
+```
+
+#### Contributors Collection Migration Script
+- **NPM Script**: `npm run rename-contributors-collection`
+- **Usage**:
+  - `npm run rename-contributors-collection` (dry run; reports counts of documents in `contributors` and `people` collections without modifying data)
+  - `npm run rename-contributors-collection -- --apply` (renames `contributors` collection to `people`; refuses to run if `people` collection already has documents)
+- **Safety**: Standalone maintenance script; never runs on server boot.
+
+#### Legacy Contributor Cleanup Script
+- **NPM Script**: `npm run clear-legacy-contributors`
+- **Usage**:
+  - `npm run clear-legacy-contributors` (dry run; reports project slugs, version tags, and legacy names without modifying data)
+  - `npm run clear-legacy-contributors -- --apply` (clears legacy contributor arrays and saves affected documents)
+- **Safety**: Standalone maintenance script; never runs on server boot.
+
+---
+
 ## 5. Authentication
 
 All admin endpoints (mutations and log queries) are protected by a shared static secret:
@@ -775,12 +1171,15 @@ All media uploads are buffered in memory (100 MB file size limit) via Multer, va
 | **Projects** | `image` | `portfolio/projects/<slug>/images` | `<slug>_<n>` (e.g., `portfolio-core_1`) |
 | | `videoDemo` | `portfolio/projects/<slug>/videos` | `<slug>_<n>` |
 | | `threeDModel` | `portfolio/projects/<slug>/models` | `<slug>_<n>` |
+| | `galleryImages` / `galleryImage` | `portfolio/projects/<slug>/gallery` | `<slug>_<n>` |
 | **Project Versions** | `image`, `videoDemo`, `threeDModel` | `portfolio/projects/<slug>/<sanitizedVersionTag>/[images\|videos\|models]` | `<slug>_<n>` |
+| | `galleryImages` / `galleryImage` | `portfolio/projects/<slug>/<sanitizedVersionTag>/gallery` | `<slug>_<n>` |
 | **Skills** | `logoUrl` | `portfolio/skills/<derivedSkillName>` | `<derivedSkillName>` |
 | **Certificates** | `mediaUrl` | `portfolio/certificate` | `<org>_<title>_<year>` |
 | **Experiences** | `iconUrl` | `portfolio/experiences/<tag>/<orgSlug>/icons` | `experience_icon` |
 | | `mediaUrls` | `portfolio/experiences/<tag>/<orgSlug>/media` | `experience_media_<n>` |
 | | `certificateUrls` | `portfolio/experiences/<tag>/<orgSlug>/certificates` | `experience_certificate_<n>` |
+| **People** | `profilePicUrl` | `portfolio/people/<derivedName>` | `<derivedName>` |
 | **Site Config** | `pfp`, `pfpUrl`, `image` | `portfolio/site_config` | `pfp_<timestamp>` |
 
 - **Sequential Naming**: Assets using `<base>_<n>` query existing files via the Cloudinary Search API and pick `<base>_<max+1>` (cached per request). If the Search API is unavailable, it falls back to timestamp-based naming (`<base>_<timestamp>`).
@@ -792,11 +1191,22 @@ All media uploads are buffered in memory (100 MB file size limit) via Multer, va
 ### 7.1 Project (`Project`)
 ```ts
 export type ProjectStatus = "invisible" | "planning" | "work_in_progress" | "delay_hold" | "active";
+export type ProjectHost = "self" | "people";
 
-export interface IContributor {
+export interface IProjectContributor {
+  contributor?: string;
+  role?: string;
+}
+
+export interface IPersonResponse {
+  _id: string;
   name: string;
   profilePicUrl: string;
-  profileLink?: string;
+  profileLink: string | null;
+}
+
+export interface IContributorResponse extends IPersonResponse {
+  role: string | null;
 }
 
 export interface ISocialLink {
@@ -804,7 +1214,15 @@ export interface ISocialLink {
   url: string;
 }
 
+export interface IGalleryImage {
+  _id?: string;
+  url: string;
+  tags: string[];
+  caption: string;
+}
+
 export interface IProjectVersion {
+  _id?: string;
   versionTag: string;
   releaseDate: Date;
   changelog: string[];
@@ -813,6 +1231,18 @@ export interface IProjectVersion {
   demoUrl?: string;
   threeDFileUrl?: string;
   isLatest: boolean;
+  gallery: IGalleryImage[];
+  status?: ProjectStatus | null;
+  startDate?: Date | null;
+  endDate?: Date | null;
+  deployedLink?: string | null;
+  githubLink?: string | null;
+  host?: ProjectHost;
+  hostedBy?: IPersonResponse[];
+  effectiveHost: ProjectHost;
+  effectiveHostedBy: IPersonResponse[];
+  contributors?: IContributorResponse[];
+  socialLinks?: ISocialLink[];
 }
 
 export interface IProject {
@@ -826,8 +1256,11 @@ export interface IProject {
   skills: string[]; // ObjectId ref to Skill
   startDate: Date;
   endDate?: Date;
-  contributors: IContributor[];
+  contributors: IContributorResponse[];
   status: ProjectStatus;
+  host: ProjectHost;
+  hostedBy: IPersonResponse[];
+  forkedFrom: string | null;
   image: string;
   videoDemo?: string;
   socialLinks: ISocialLink[];
@@ -839,10 +1272,13 @@ export interface IProject {
   deployedLink?: string;
   githubLink?: string;
   versions: IProjectVersion[];
+  gallery: IGalleryImage[];
   createdAt: Date;
   updatedAt: Date;
 }
 ```
+
+> **Response Guarantee:** In `.lean()` database queries, documents lacking gallery data automatically populate `gallery: []` on the project root and within every version entry, guaranteeing client applications never encounter `undefined`.
 
 ### 7.2 Skill (`Skill`)
 ```ts
@@ -964,6 +1400,18 @@ export interface ILogEntry {
   message: string;
   metadata?: Record<string, unknown>;
   stack?: string;
+}
+```
+
+### 7.8 Person (`Person`)
+```ts
+export interface IPerson {
+  _id: string;
+  name: string;
+  profilePicUrl: string;
+  profileLink?: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 ```
 
