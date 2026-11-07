@@ -2,7 +2,7 @@ import { Schema, model, Document, Types } from "mongoose";
 
 export interface ISocialLink { platform: string; url: string; }
 export interface IProjectContributor {
-  contributor?: Types.ObjectId;
+  contributor: Types.ObjectId;
   role?: string;
 }
 export type IContributor = IProjectContributor;

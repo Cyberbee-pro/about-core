@@ -3,18 +3,32 @@ import { Types } from "mongoose";
 import { Experience, IExperiencePosition } from "../models/Experience";
 import { escapeRegex, isValidHttpUrl } from "../utils/stringUtils";
 
-function parsePositions(val: unknown): IExperiencePosition[] {
+function parsePositions(val: unknown): { positions?: IExperiencePosition[]; error?: string } {
+  if (val === undefined) {
+    return { positions: [] };
+  }
+  let list: unknown;
   if (typeof val === "string") {
     try {
-      return JSON.parse(val) as IExperiencePosition[];
+      list = JSON.parse(val);
     } catch {
-      return [];
+      return { error: "Invalid JSON format for positions" };
+    }
+  } else {
+    list = val;
+  }
+
+  if (!Array.isArray(list)) {
+    return { error: "positions must be an array of objects" };
+  }
+
+  for (const item of list) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { error: "Each position in positions must be a non-null object" };
     }
   }
-  if (Array.isArray(val)) {
-    return val as IExperiencePosition[];
-  }
-  return [];
+
+  return { positions: list as IExperiencePosition[] };
 }
 
 function parseSkills(val: unknown): Types.ObjectId[] {
@@ -103,7 +117,12 @@ export const createExperience = async (
       return;
     }
 
-    const positions = parsePositions(req.body.positions);
+    const posResult = parsePositions(req.body.positions);
+    if (posResult.error) {
+      res.status(400).json({ success: false, message: posResult.error });
+      return;
+    }
+    const positions = posResult.positions || [];
     const uploadedMediaUrls = req.body.uploadedMediaUrls as string[] | undefined;
     const uploadedCertUrls = req.body.uploadedCertificateUrls as string[] | undefined;
 
@@ -232,7 +251,12 @@ export const updateExperience = async (
     if (req.body.weight !== undefined) updateData.weight = Number(req.body.weight) || 0;
 
     if (req.body.positions !== undefined) {
-      const positions = parsePositions(req.body.positions);
+      const posResult = parsePositions(req.body.positions);
+    if (posResult.error) {
+      res.status(400).json({ success: false, message: posResult.error });
+      return;
+    }
+    const positions = posResult.positions || [];
       const uploadedMediaUrls = req.body.uploadedMediaUrls as string[] | undefined;
       const uploadedCertUrls = req.body.uploadedCertificateUrls as string[] | undefined;
 

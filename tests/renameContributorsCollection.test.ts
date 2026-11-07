@@ -101,4 +101,33 @@ describe("renameContributorsCollection Script Tests", () => {
 
     errSpy.mockRestore();
   });
+
+  it("drops empty 'people' collection before renaming when people has 0 documents", async () => {
+    mockListCollections.mockReturnValue({
+      toArray: jest.fn().mockResolvedValue([
+        { name: "contributors" },
+        { name: "people" },
+      ]),
+    });
+    mockPeopleCollection.countDocuments.mockResolvedValue(0);
+    const mockDrop = jest.fn().mockResolvedValue(true);
+    (mockPeopleCollection as any).drop = mockDrop;
+
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    // Dry run
+    await renameContributorsCollection({ apply: false });
+    expect(mockDrop).not.toHaveBeenCalled();
+    expect(mockContributorsCollection.rename).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Target collection 'people' exists and is empty (0 documents). It will be dropped before renaming.")
+    );
+
+    // Apply
+    await renameContributorsCollection({ apply: true });
+    expect(mockDrop).toHaveBeenCalled();
+    expect(mockContributorsCollection.rename).toHaveBeenCalledWith("people");
+
+    logSpy.mockRestore();
+  });
 });

@@ -44,6 +44,11 @@ export async function renameContributorsCollection(
   }
 
   if (!isApply) {
+    if (hasPeople && peopleCount === 0) {
+      console.log(
+        "[DRY RUN] Target collection 'people' exists and is empty (0 documents). It will be dropped before renaming."
+      );
+    }
     console.log(
       `[DRY RUN] Found ${contributorsCount} document(s) in 'contributors' and ${peopleCount} document(s) in 'people'. To apply rename, run with --apply.`
     );
@@ -63,6 +68,13 @@ export async function renameContributorsCollection(
       applied: true,
       renamed: false,
     };
+  }
+
+  if (hasPeople && peopleCount === 0) {
+    console.log(
+      "[APPLIED] Target collection 'people' exists with 0 documents. Dropping empty target collection before renaming."
+    );
+    await peopleColl.drop();
   }
 
   await contributorsColl.rename("people");

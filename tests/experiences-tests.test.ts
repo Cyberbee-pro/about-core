@@ -205,13 +205,13 @@ describe("Experiences API Integration Tests", () => {
       (c) => c.folder === "portfolio/experiences/focus/tech-corp/media"
     );
     expect(mediaUpload).toBeDefined();
-    expect(mediaUpload?.public_id).toBe("experience_media_1");
+    expect(mediaUpload?.public_id).toMatch(/^experience_media_\d+_[a-z0-9]+$/);
 
     const certUpload = mockUploadCalls.find(
       (c) => c.folder === "portfolio/experiences/focus/tech-corp/certificates"
     );
     expect(certUpload).toBeDefined();
-    expect(certUpload?.public_id).toBe("experience_certificate_1");
+    expect(certUpload?.public_id).toMatch(/^experience_certificate_\d+_[a-z0-9]+$/);
     expect(mockDestroy).not.toHaveBeenCalled();
   });
 
@@ -461,13 +461,13 @@ describe("Experiences API Integration Tests", () => {
         (c) => c.folder === "portfolio/experiences/focus/tech-corp/media"
       );
       expect(mediaUpload).toBeDefined();
-      expect(mediaUpload?.public_id).toBe("experience_media_1");
+      expect(mediaUpload?.public_id).toMatch(/^experience_media_\d+_[a-z0-9]+$/);
 
       const certUpload = mockUploadCalls.find(
         (c) => c.folder === "portfolio/experiences/focus/tech-corp/certificates"
       );
       expect(certUpload).toBeDefined();
-      expect(certUpload?.public_id).toBe("experience_certificate_1");
+      expect(certUpload?.public_id).toMatch(/^experience_certificate_\d+_[a-z0-9]+$/);
       expect(mockDestroy).not.toHaveBeenCalled();
     });
 
@@ -498,8 +498,13 @@ describe("Experiences API Integration Tests", () => {
         });
 
       expect(res.status).toBe(404);
+      expect(mockDestroy).toHaveBeenCalledTimes(2);
       expect(mockDestroy).toHaveBeenCalledWith(
-        expect.stringContaining("portfolio/experiences/"),
+        expect.stringContaining("portfolio/experiences/focus/nonexistentorg/media/"),
+        { resource_type: "image" }
+      );
+      expect(mockDestroy).toHaveBeenCalledWith(
+        expect.stringContaining("portfolio/experiences/focus/nonexistentorg/certificates/"),
         { resource_type: "image" }
       );
     });

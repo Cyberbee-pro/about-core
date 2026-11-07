@@ -75,8 +75,7 @@ export const createPerson = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const trimmedName = (req.body.name || "").trim();
-    if (!trimmedName) {
+    if (typeof req.body.name !== "string" || !req.body.name.trim()) {
       await cleanupUploadedVersionMedia(req);
       res.status(400).json({
         success: false,
@@ -84,6 +83,7 @@ export const createPerson = async (
       });
       return;
     }
+    const trimmedName = req.body.name.trim();
 
     const profilePicUrl =
       typeof req.body.profilePicUrl === "string" ? req.body.profilePicUrl.trim() : "";
@@ -169,8 +169,7 @@ export const updatePerson = async (
     const updateData: Record<string, unknown> = {};
 
     if (req.body.name !== undefined) {
-      const trimmedName = String(req.body.name).trim();
-      if (!trimmedName) {
+      if (req.body.name === null || typeof req.body.name !== "string" || !req.body.name.trim()) {
         await cleanupUploadedVersionMedia(req);
         res.status(400).json({
           success: false,
@@ -178,6 +177,7 @@ export const updatePerson = async (
         });
         return;
       }
+      const trimmedName = req.body.name.trim();
 
       const existingPerson = await Person.findOne({
         name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },

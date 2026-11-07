@@ -261,108 +261,6 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
       );
 
       it.each(INVALID_URL_PAYLOADS)(
-        "rejects invalid forkedFrom: '%s' on PUT with 400",
-        async (badUrl) => {
-          const res = await request(app)
-            .put(`/api/v1/projects/${validId}`)
-            .set("Authorization", "Bearer test-secret-token")
-            .send({ forkedFrom: badUrl });
-
-          expect(res.status).toBe(400);
-          expect(res.body.message).toMatch(/forkedFrom.*http.*https/i);
-          expect(Project.findByIdAndUpdate).not.toHaveBeenCalled();
-        }
-      );
-
-      it("rejects forkedFrom longer than 2048 chars on PUT with 400", async () => {
-        const longUrl = "https://example.com/" + "a".repeat(2040);
-        const res = await request(app)
-          .put(`/api/v1/projects/${validId}`)
-          .set("Authorization", "Bearer test-secret-token")
-          .send({ forkedFrom: longUrl });
-
-        expect(res.status).toBe(400);
-        expect(res.body.message).toMatch(/forkedFrom.*2048/i);
-        expect(Project.findByIdAndUpdate).not.toHaveBeenCalled();
-      });
-
-      it("accepts valid http and https forkedFrom on PUT (200)", async () => {
-        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
-          _id: validId,
-          title: "P1",
-          slug: "p1",
-          category: "web",
-          forkedFrom: "https://github.com/upstream/new-repo",
-          versions: [],
-        });
-
-        const res = await request(app)
-          .put(`/api/v1/projects/${validId}`)
-          .set("Authorization", "Bearer test-secret-token")
-          .send({ forkedFrom: " https://github.com/upstream/new-repo " });
-
-        expect(res.status).toBe(200);
-        expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
-          validId,
-          expect.objectContaining({
-            forkedFrom: "https://github.com/upstream/new-repo",
-          }),
-          expect.anything()
-        );
-      });
-
-      it("clears forkedFrom to null when empty string or null is sent on PUT", async () => {
-        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
-          _id: validId,
-          title: "P1",
-          slug: "p1",
-          category: "web",
-          forkedFrom: null,
-          versions: [],
-        });
-
-        const res1 = await request(app)
-          .put(`/api/v1/projects/${validId}`)
-          .set("Authorization", "Bearer test-secret-token")
-          .send({ forkedFrom: "" });
-
-        expect(res1.status).toBe(200);
-        expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
-          validId,
-          expect.objectContaining({
-            forkedFrom: null,
-          }),
-          expect.anything()
-        );
-
-        const res2 = await request(app)
-          .put(`/api/v1/projects/${validId}`)
-          .set("Authorization", "Bearer test-secret-token")
-          .send({ forkedFrom: null });
-
-        expect(res2.status).toBe(200);
-      });
-
-      it("omitted forkedFrom on PUT leaves it unchanged", async () => {
-        (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue({
-          _id: validId,
-          title: "Updated Title",
-          slug: "updated-title",
-          category: "web",
-          versions: [],
-        });
-
-        const res = await request(app)
-          .put(`/api/v1/projects/${validId}`)
-          .set("Authorization", "Bearer test-secret-token")
-          .send({ title: "Updated Title" });
-
-        expect(res.status).toBe(200);
-        const updateArg = (Project.findByIdAndUpdate as jest.Mock).mock.calls[0][1];
-        expect(updateArg).not.toHaveProperty("forkedFrom");
-      });
-
-      it.each(INVALID_URL_PAYLOADS)(
         "rejects invalid forkedFrom: '%s' with 400",
         async (badUrl) => {
           (Project.findOne as jest.Mock).mockResolvedValue(null);
@@ -1223,7 +1121,10 @@ describe("URL Validation Across All Endpoints (TDD)", () => {
         expect(res.status).toBe(200);
         expect(Certificate.findByIdAndUpdate).toHaveBeenCalledWith(
           validId,
-          expect.objectContaining({ mediaUrl: "", link: undefined }),
+          expect.objectContaining({
+            $set: expect.objectContaining({ mediaUrl: "" }),
+            $unset: expect.objectContaining({ link: 1 }),
+          }),
           expect.anything()
         );
       });

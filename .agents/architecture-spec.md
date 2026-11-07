@@ -12,7 +12,7 @@ import { Schema, model, Document, Types } from "mongoose";
 
 export interface ISocialLink { platform: string; url: string; }
 export interface IProjectContributor {
-  contributor?: Types.ObjectId;
+  contributor: Types.ObjectId;
   role?: string;
 }
 export type IContributor = IProjectContributor;
@@ -431,7 +431,7 @@ import { isValidHttpUrl } from "../utils/stringUtils";
 export interface IPerson {
   name: string;
   profilePicUrl: string;
-  profileLink?: string;
+  profileLink?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -439,7 +439,7 @@ export interface IPerson {
 export interface IPersonDocument extends Document {
   name: string;
   profilePicUrl: string;
-  profileLink?: string;
+  profileLink?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -450,8 +450,9 @@ const PersonSchema = new Schema<IPersonDocument>(
     profilePicUrl: { type: String, required: true },
     profileLink: {
       type: String,
+      default: null,
       validate: {
-        validator: (val: string) => !val || isValidHttpUrl(val),
+        validator: (val: string | null | undefined) => !val || isValidHttpUrl(val),
         message: "profileLink must be a valid http or https URL",
       },
     },

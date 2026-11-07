@@ -123,6 +123,7 @@ export const updateCertificate = async (
 ): Promise<void> => {
   try {
     const updateData: Record<string, unknown> = {};
+    const unsetData: Record<string, unknown> = {};
     if (req.body.title !== undefined) {
       const trimmedTitle = req.body.title.trim();
       const existingCert = await Certificate.findOne({
@@ -145,7 +146,7 @@ export const updateCertificate = async (
     }
     if (req.body.link !== undefined) {
       if (req.body.link === null || (typeof req.body.link === "string" && req.body.link.trim() === "")) {
-        updateData.link = undefined;
+        unsetData.link = 1;
       } else {
         const link = String(req.body.link).trim();
         if (!isValidHttpUrl(link)) {
@@ -180,9 +181,17 @@ export const updateCertificate = async (
       updateData.weight = Number(req.body.weight) || 0;
     }
 
+    const updateQuery: Record<string, unknown> = {};
+    if (Object.keys(updateData).length > 0) {
+      updateQuery.$set = updateData;
+    }
+    if (Object.keys(unsetData).length > 0) {
+      updateQuery.$unset = unsetData;
+    }
+
     const certificate = await Certificate.findByIdAndUpdate(
       req.params.id,
-      updateData,
+      updateQuery,
       { new: true, runValidators: true }
     );
 

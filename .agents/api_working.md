@@ -305,13 +305,13 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
 - **Route Precedence:** Registered before `/gallery/:imageId` to prevent route shadowing.
 - **Validation:** Body must contain `{ order: string[] }` containing every existing gallery item `_id` exactly once; duplicate, extra, or missing IDs return `400 Bad Request`.
 - **Target Model:** `Project`
-- **DB Operations:** Load document, validate full ID equality, reorder in-place, and persist via `project.save()`.
+- **DB Operations:** Validates full ID equality, performs atomic conditional update checking IDs match current stored gallery via `$expr` / `$setEquals`. Returns 409 Conflict if modified concurrently between read and write.
 - **Returns:** `200 OK` with updated project data.
 
 #### `PUT /api/v1/projects/:slug/gallery/:imageId`
 - **Scope:** Protected (`authMiddleware`)
 - **Validation:** Validates `:imageId` ObjectId format (`400`), project and image existence (`404`).
-- **Payload:** JSON or multipart with optional `tags`, `caption`, and optional single file field `galleryImage`.
+- **Payload:** JSON or multipart with optional `tags`, `caption`, and optional replacement file or validated HTTP/HTTPS URL string `galleryImage`.
 - **Target Model:** `Project`
 - **DB Operations:** Atomic positional update:
   ```typescript
@@ -361,12 +361,13 @@ When uploading media files (`image`, `videoDemo`, `threeDModel`) for project ver
 - **Route Precedence:** Registered before `/gallery/:imageId`.
 - **Validation:** Body must contain `{ order: string[] }` containing every existing version gallery item `_id` exactly once (`400` otherwise).
 - **Target Model:** `Project`
-- **DB Operations:** Finds project and version, validates IDs, reorders version `gallery` array in memory, and persists via `project.save()`.
+- **DB Operations:** Validates IDs, performs atomic conditional update checking IDs match current stored gallery via `$expr` / `$setEquals`. Returns 409 Conflict if modified concurrently between read and write.
 - **Returns:** `200 OK` with updated project data.
 
 #### `PUT /api/v1/projects/:slug/versions/:versionId/gallery/:imageId`
 - **Scope:** Protected (`authMiddleware`)
 - **Validation:** Validates `:versionId` and `:imageId` ObjectId format (`400`), project, version, and image existence (`404`).
+- **Payload:** JSON or multipart with optional `tags`, `caption`, and optional replacement file or validated HTTP/HTTPS URL string `galleryImage`.
 - **Target Model:** `Project`
 - **DB Operations:** Atomic positional mutation using `arrayFilters`:
   ```typescript

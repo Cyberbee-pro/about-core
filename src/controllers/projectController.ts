@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { FilterQuery, Types } from "mongoose";
-import { escapeRegex, isValidHttpUrl, isHttpUrl, normalizeHttpUrl } from "../utils/stringUtils";
+import { escapeRegex, isValidHttpUrl, isHttpUrl, normalizeHttpUrl, parseBooleanField } from "../utils/stringUtils";
 import { cleanupUploadedVersionMedia } from "../middlewares/uploadMiddleware";
 import {
   Project,
@@ -176,15 +176,46 @@ export function formatProjectResponse<T>(project: T): T {
 
 export async function populateProjectDoc(project: unknown): Promise<void> {
   if (project && typeof (project as { populate?: unknown }).populate === "function") {
+    const doc = project as { populate: (paths: string[]) => Promise<unknown> };
+    const populatePaths = [
+      "contributors.contributor",
+      "versions.contributors.contributor",
+      "hostedBy",
+      "versions.hostedBy",
+    ];
     try {
-      await (project as { populate: (paths: string[]) => Promise<unknown> }).populate([
-        "contributors.contributor",
-        "versions.contributors.contributor",
-        "hostedBy",
-        "versions.hostedBy",
-      ]);
+      await doc.populate(populatePaths);
     } catch {
-      // In tests where populate is mocked or throws, continue gracefully
+      // Retry once with a fresh attempt
+      try {
+        await doc.populate(populatePaths);
+      } catch (retryErr) {
+        console.error("Failed to populate project document after retry:", retryErr);
+        // Fallback: keep saved project with unpopulated entries reduced to { _id }
+        const p = project as Record<string, unknown>;
+        if (Array.isArray(p.contributors)) {
+          p.contributors = p.contributors.map((c: any) => ({
+            role: c?.role,
+            contributor: c?.contributor?._id ? { _id: c.contributor._id } : c?.contributor ? { _id: c.contributor } : undefined,
+          }));
+        }
+        if (Array.isArray(p.hostedBy)) {
+          p.hostedBy = p.hostedBy.map((h: any) => (h?._id ? { _id: h._id } : { _id: h }));
+        }
+        if (Array.isArray(p.versions)) {
+          p.versions.forEach((v: any) => {
+            if (Array.isArray(v.contributors)) {
+              v.contributors = v.contributors.map((c: any) => ({
+                role: c?.role,
+                contributor: c?.contributor?._id ? { _id: c.contributor._id } : c?.contributor ? { _id: c.contributor } : undefined,
+              }));
+            }
+            if (Array.isArray(v.hostedBy)) {
+              v.hostedBy = v.hostedBy.map((h: any) => (h?._id ? { _id: h._id } : { _id: h }));
+            }
+          });
+        }
+      }
     }
   }
 }
@@ -1159,20 +1190,47 @@ export const createProject = async (
       socialLinks = socialResult.socialLinks || [];
     }
 
-    const threeDModel = parseJsonField<{
-      fileUrl: string;
-      initialRotation?: [number, number, number];
-      enableExplodedView: boolean;
-    } | undefined>(body.threeDModel, undefined);
-    if (threeDModel?.fileUrl && typeof threeDModel.fileUrl === "string" && threeDModel.fileUrl.trim() !== "") {
-      if (!isValidHttpUrl(threeDModel.fileUrl)) {
+    let threeDModel: any = undefined;
+    if (body.threeDModel !== undefined) {
+      if (body.threeDModel === null || body.threeDModel === "null") {
         await cleanupUploadedVersionMedia(req);
-        res.status(400).json({
-          success: false,
-          message: "threeDModel.fileUrl must be a valid http or https URL",
-        });
+        res.status(400).json({ success: false, message: "threeDModel cannot be null" });
         return;
       }
+      let parsed3D: any;
+      if (typeof body.threeDModel === "string") {
+        try {
+          parsed3D = JSON.parse(body.threeDModel);
+        } catch {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "Invalid JSON format for threeDModel" });
+          return;
+        }
+      } else if (typeof body.threeDModel === "object") {
+        parsed3D = body.threeDModel;
+      } else {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "threeDModel must be an object" });
+        return;
+      }
+
+      if (parsed3D === null || typeof parsed3D !== "object" || Array.isArray(parsed3D)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "threeDModel must be an object" });
+        return;
+      }
+
+      if (parsed3D.fileUrl !== undefined && parsed3D.fileUrl !== null && parsed3D.fileUrl !== "") {
+        if (typeof parsed3D.fileUrl !== "string" || !isValidHttpUrl(parsed3D.fileUrl)) {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({
+            success: false,
+            message: "threeDModel.fileUrl must be a valid http or https URL",
+          });
+          return;
+        }
+      }
+      threeDModel = parsed3D;
     }
 
     let skills: Types.ObjectId[] = [];
@@ -1466,13 +1524,32 @@ export const updateProject = async (
       updatePayload.socialLinks = sRes.socialLinks;
     }
     if (body.threeDModel !== undefined) {
-      const parsed3D = parseJsonField<{
-        fileUrl: string;
-        initialRotation?: [number, number, number];
-        enableExplodedView: boolean;
-      }>(body.threeDModel, { fileUrl: "", enableExplodedView: false });
-      if (parsed3D.fileUrl && typeof parsed3D.fileUrl === "string" && parsed3D.fileUrl.trim() !== "") {
-        if (!isValidHttpUrl(parsed3D.fileUrl)) {
+      if (body.threeDModel === null || body.threeDModel === "null") {
+        res.status(400).json({ success: false, message: "threeDModel cannot be null" });
+        return;
+      }
+      let parsed3D: any;
+      if (typeof body.threeDModel === "string") {
+        try {
+          parsed3D = JSON.parse(body.threeDModel);
+        } catch {
+          res.status(400).json({ success: false, message: "Invalid JSON format for threeDModel" });
+          return;
+        }
+      } else if (typeof body.threeDModel === "object") {
+        parsed3D = body.threeDModel;
+      } else {
+        res.status(400).json({ success: false, message: "threeDModel must be an object" });
+        return;
+      }
+
+      if (parsed3D === null || typeof parsed3D !== "object" || Array.isArray(parsed3D)) {
+        res.status(400).json({ success: false, message: "threeDModel must be an object" });
+        return;
+      }
+
+      if (parsed3D.fileUrl !== undefined && parsed3D.fileUrl !== null && parsed3D.fileUrl !== "") {
+        if (typeof parsed3D.fileUrl !== "string" || !isValidHttpUrl(parsed3D.fileUrl)) {
           res.status(400).json({ success: false, message: "threeDModel.fileUrl must be a valid http or https URL" });
           return;
         }
@@ -1724,6 +1801,17 @@ export const addProjectVersion = async (
       isLatest,
     } = body;
 
+    let isLatestBool = false;
+    if (isLatest !== undefined) {
+      const parsedLatest = parseBooleanField(isLatest, "isLatest");
+      if (parsedLatest.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: parsedLatest.error });
+        return;
+      }
+      isLatestBool = parsedLatest.value ?? false;
+    }
+
     if (!versionTag) {
       await cleanupUploadedVersionMedia(req);
       res.status(400).json({
@@ -1743,8 +1831,16 @@ export const addProjectVersion = async (
       return;
     }
 
-    if (image !== undefined && typeof image === "string" && image.trim() !== "") {
-      if (!isValidHttpUrl(image)) {
+    if (image !== undefined && image !== null) {
+      if (typeof image !== "string") {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version image must be a valid http or https URL",
+        });
+        return;
+      }
+      if (image.trim() !== "" && !isValidHttpUrl(image)) {
         await cleanupUploadedVersionMedia(req);
         res.status(400).json({
           success: false,
@@ -1754,8 +1850,16 @@ export const addProjectVersion = async (
       }
     }
 
-    if (videoDemo !== undefined && typeof videoDemo === "string" && videoDemo.trim() !== "") {
-      if (!isValidHttpUrl(videoDemo)) {
+    if (videoDemo !== undefined && videoDemo !== null) {
+      if (typeof videoDemo !== "string") {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version videoDemo must be a valid http or https URL",
+        });
+        return;
+      }
+      if (videoDemo.trim() !== "" && !isValidHttpUrl(videoDemo)) {
         await cleanupUploadedVersionMedia(req);
         res.status(400).json({
           success: false,
@@ -1765,8 +1869,16 @@ export const addProjectVersion = async (
       }
     }
 
-    if (demoUrl !== undefined && typeof demoUrl === "string" && demoUrl.trim() !== "") {
-      if (!isValidHttpUrl(demoUrl)) {
+    if (demoUrl !== undefined && demoUrl !== null) {
+      if (typeof demoUrl !== "string") {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version demoUrl must be a valid http or https URL",
+        });
+        return;
+      }
+      if (demoUrl.trim() !== "" && !isValidHttpUrl(demoUrl)) {
         await cleanupUploadedVersionMedia(req);
         res.status(400).json({
           success: false,
@@ -1776,14 +1888,40 @@ export const addProjectVersion = async (
       }
     }
 
-    const raw3DUrl = threeDFileUrl ?? threeDModel?.fileUrl;
-    if (raw3DUrl !== undefined && typeof raw3DUrl === "string" && raw3DUrl.trim() !== "") {
-      if (!isValidHttpUrl(raw3DUrl)) {
+    if (threeDFileUrl !== undefined && threeDFileUrl !== null) {
+      if (typeof threeDFileUrl !== "string") {
         await cleanupUploadedVersionMedia(req);
         res.status(400).json({
           success: false,
           message: "Version threeDFileUrl must be a valid http or https URL",
         });
+        return;
+      }
+      if (threeDFileUrl.trim() !== "" && !isValidHttpUrl(threeDFileUrl)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({
+          success: false,
+          message: "Version threeDFileUrl must be a valid http or https URL",
+        });
+        return;
+      }
+    }
+
+    if (threeDModel !== undefined && threeDModel !== null) {
+      if (typeof threeDModel === "object" && !Array.isArray(threeDModel)) {
+        if (threeDModel.fileUrl !== undefined && threeDModel.fileUrl !== null) {
+          if (typeof threeDModel.fileUrl !== "string" || (threeDModel.fileUrl.trim() !== "" && !isValidHttpUrl(threeDModel.fileUrl))) {
+            await cleanupUploadedVersionMedia(req);
+            res.status(400).json({
+              success: false,
+              message: "Version threeDFileUrl must be a valid http or https URL",
+            });
+            return;
+          }
+        }
+      } else {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "threeDModel must be an object" });
         return;
       }
     }
@@ -1974,7 +2112,7 @@ export const addProjectVersion = async (
       return;
     }
 
-    const shouldSetLatest = isLatest === true || isLatest === "true";
+    const shouldSetLatest = isLatestBool;
 
     if (shouldSetLatest) {
       project.versions.forEach((v) => {
@@ -2218,10 +2356,14 @@ export const updateProjectVersion = async (
 
     // 4. Update demoUrl
     if (body.demoUrl !== undefined) {
-      if (typeof body.demoUrl === "string" && body.demoUrl.trim() === "") {
+      if (body.demoUrl === null || (typeof body.demoUrl === "string" && body.demoUrl.trim() === "")) {
         version.demoUrl = undefined;
+      } else if (typeof body.demoUrl !== "string") {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "Version demoUrl must be a valid http or https URL" });
+        return;
       } else {
-        const link = typeof body.demoUrl === "string" ? body.demoUrl.trim() : "";
+        const link = body.demoUrl.trim();
         if (!isValidHttpUrl(link)) {
           await cleanupUploadedVersionMedia(req);
           res.status(400).json({ success: false, message: "Version demoUrl must be a valid http or https URL" });
@@ -2233,10 +2375,14 @@ export const updateProjectVersion = async (
 
     // 5. Update image
     if (body.image !== undefined) {
-      if (typeof body.image === "string" && body.image.trim() === "") {
+      if (body.image === null || (typeof body.image === "string" && body.image.trim() === "")) {
         version.image = undefined;
+      } else if (typeof body.image !== "string") {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "Version image must be a valid http or https URL" });
+        return;
       } else {
-        const link = typeof body.image === "string" ? body.image.trim() : "";
+        const link = body.image.trim();
         if (!isValidHttpUrl(link)) {
           await cleanupUploadedVersionMedia(req);
           res.status(400).json({ success: false, message: "Version image must be a valid http or https URL" });
@@ -2248,10 +2394,14 @@ export const updateProjectVersion = async (
 
     // 6. Update videoDemo
     if (body.videoDemo !== undefined) {
-      if (typeof body.videoDemo === "string" && body.videoDemo.trim() === "") {
+      if (body.videoDemo === null || (typeof body.videoDemo === "string" && body.videoDemo.trim() === "")) {
         version.videoDemo = undefined;
+      } else if (typeof body.videoDemo !== "string") {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "Version videoDemo must be a valid http or https URL" });
+        return;
       } else {
-        const link = typeof body.videoDemo === "string" ? body.videoDemo.trim() : "";
+        const link = body.videoDemo.trim();
         if (!isValidHttpUrl(link)) {
           await cleanupUploadedVersionMedia(req);
           res.status(400).json({ success: false, message: "Version videoDemo must be a valid http or https URL" });
@@ -2262,29 +2412,49 @@ export const updateProjectVersion = async (
     }
 
     // 7. Update threeDFileUrl / threeDModel
-    const threeDModel = parseJsonField<{ fileUrl?: string } | undefined>(
-      body.threeDModel,
-      undefined
-    );
-    const uploaded3DUrl = threeDModel?.fileUrl;
-
-    if (uploaded3DUrl !== undefined) {
-      if (typeof uploaded3DUrl === "string" && uploaded3DUrl.trim() === "") {
-        version.threeDFileUrl = undefined;
+    if (body.threeDModel !== undefined && body.threeDModel !== null) {
+      let parsed3D: any;
+      if (typeof body.threeDModel === "string") {
+        try {
+          parsed3D = JSON.parse(body.threeDModel);
+        } catch {
+          await cleanupUploadedVersionMedia(req);
+          res.status(400).json({ success: false, message: "Invalid JSON format for threeDModel" });
+          return;
+        }
+      } else if (typeof body.threeDModel === "object") {
+        parsed3D = body.threeDModel;
       } else {
-        const link = typeof uploaded3DUrl === "string" ? uploaded3DUrl.trim() : "";
-        if (!isValidHttpUrl(link)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "threeDModel must be an object" });
+        return;
+      }
+
+      if (parsed3D === null || typeof parsed3D !== "object" || Array.isArray(parsed3D)) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "threeDModel must be an object" });
+        return;
+      }
+
+      if (parsed3D.fileUrl !== undefined && parsed3D.fileUrl !== null && parsed3D.fileUrl !== "") {
+        if (typeof parsed3D.fileUrl !== "string" || !isValidHttpUrl(parsed3D.fileUrl)) {
           await cleanupUploadedVersionMedia(req);
           res.status(400).json({ success: false, message: "Version threeDFileUrl must be a valid http or https URL" });
           return;
         }
-        version.threeDFileUrl = link;
+        version.threeDFileUrl = parsed3D.fileUrl.trim();
+      } else if (parsed3D.fileUrl === null || parsed3D.fileUrl === "") {
+        version.threeDFileUrl = undefined;
       }
     } else if (body.threeDFileUrl !== undefined) {
-      if (typeof body.threeDFileUrl === "string" && body.threeDFileUrl.trim() === "") {
+      if (body.threeDFileUrl === null || (typeof body.threeDFileUrl === "string" && body.threeDFileUrl.trim() === "")) {
         version.threeDFileUrl = undefined;
+      } else if (typeof body.threeDFileUrl !== "string") {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: "Version threeDFileUrl must be a valid http or https URL" });
+        return;
       } else {
-        const link = typeof body.threeDFileUrl === "string" ? body.threeDFileUrl.trim() : "";
+        const link = body.threeDFileUrl.trim();
         if (!isValidHttpUrl(link)) {
           await cleanupUploadedVersionMedia(req);
           res.status(400).json({ success: false, message: "Version threeDFileUrl must be a valid http or https URL" });
@@ -2296,8 +2466,13 @@ export const updateProjectVersion = async (
 
     // 8. Update isLatest
     if (body.isLatest !== undefined) {
-      const isLatestBool = body.isLatest === true || body.isLatest === "true";
-      if (isLatestBool) {
+      const parsedLatest = parseBooleanField(body.isLatest, "isLatest");
+      if (parsedLatest.error) {
+        await cleanupUploadedVersionMedia(req);
+        res.status(400).json({ success: false, message: parsedLatest.error });
+        return;
+      }
+      if (parsedLatest.value) {
         project.versions.forEach((v) => {
           v.isLatest = false;
         });
@@ -2829,15 +3004,42 @@ export const reorderProjectGallery = async (
     }
 
     const itemMap = new Map(currentGallery.map((item) => [String(item._id), item]));
-    project.gallery = order.map((id) => itemMap.get(id)!);
-    await project.save();
+    const newGallery = order.map((id) => itemMap.get(id)!);
+    const orderObjectIds = order.map((id) => new Types.ObjectId(id));
 
-    await populateProjectDoc(project);
+    const updatedProject = await Project.findOneAndUpdate(
+      {
+        slug,
+        $expr: {
+          $and: [
+            { $setEquals: ["$gallery._id", orderObjectIds] },
+            { $eq: [{ $size: { $ifNull: ["$gallery", []] } }, order.length] },
+          ],
+        },
+      },
+      { $set: { gallery: newGallery } },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedProject) {
+      const freshProject = await Project.findOne({ slug });
+      if (!freshProject) {
+        res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+        return;
+      }
+      res.status(409).json({
+        success: false,
+        message: "Concurrent modification detected. Gallery items changed during reorder",
+      });
+      return;
+    }
+
+    await populateProjectDoc(updatedProject);
 
     res.status(200).json({
       success: true,
       message: "Gallery order updated successfully",
-      data: formatProjectResponse(project),
+      data: formatProjectResponse(updatedProject),
     });
   } catch (error) {
     next(error);
@@ -3158,14 +3360,63 @@ export const addVersionGallery = async (
     }
 
     const updatedProject = await Project.findOneAndUpdate(
-      { slug, "versions._id": new Types.ObjectId(versionId) },
+      {
+        slug,
+        "versions._id": new Types.ObjectId(versionId),
+        $expr: {
+          $lte: [
+            {
+              $add: [
+                {
+                  $size: {
+                    $ifNull: [
+                      {
+                        $let: {
+                          vars: {
+                            targetVer: {
+                              $arrayElemAt: [
+                                {
+                                  $filter: {
+                                    input: "$versions",
+                                    as: "v",
+                                    cond: { $eq: ["$$v._id", new Types.ObjectId(versionId)] },
+                                  },
+                                },
+                                0,
+                              ],
+                            },
+                          },
+                          in: "$$targetVer.gallery",
+                        },
+                      },
+                      [],
+                    ],
+                  },
+                },
+                itemsToAdd.length,
+              ],
+            },
+            30,
+          ],
+        },
+      },
       { $push: { "versions.$.gallery": { $each: itemsToAdd } } },
       { new: true, runValidators: true }
     );
 
     if (!updatedProject) {
       await cleanupUploadedVersionMedia(req);
-      res.status(404).json({ success: false, message: "Project or version not found" });
+      const project = await Project.findOne({ slug });
+      if (!project) {
+        res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+        return;
+      }
+      const version = (project.versions || []).find((v) => String(v._id) === versionId);
+      if (!version) {
+        res.status(404).json({ success: false, message: `Version not found with id: ${versionId}` });
+        return;
+      }
+      res.status(400).json({ success: false, message: "Gallery cannot exceed 30 items per version" });
       return;
     }
 
@@ -3241,15 +3492,70 @@ export const reorderVersionGallery = async (
     }
 
     const itemMap = new Map(currentGallery.map((item) => [String(item._id), item]));
-    version.gallery = order.map((id) => itemMap.get(id)!);
-    await project.save();
+    const newGallery = order.map((id) => itemMap.get(id)!);
+    const orderObjectIds = order.map((id) => new Types.ObjectId(id));
 
-    await populateProjectDoc(project);
+    const updatedProject = await Project.findOneAndUpdate(
+      {
+        slug,
+        "versions._id": new Types.ObjectId(versionId),
+        $expr: {
+          $let: {
+            vars: {
+              targetVer: {
+                $arrayElemAt: [
+                  {
+                    $filter: {
+                      input: "$versions",
+                      as: "v",
+                      cond: { $eq: ["$$v._id", new Types.ObjectId(versionId)] },
+                    },
+                  },
+                  0,
+                ],
+              },
+            },
+            in: {
+              $and: [
+                { $setEquals: ["$$targetVer.gallery._id", orderObjectIds] },
+                { $eq: [{ $size: { $ifNull: ["$$targetVer.gallery", []] } }, order.length] },
+              ],
+            },
+          },
+        },
+      },
+      { $set: { "versions.$[v].gallery": newGallery } },
+      {
+        arrayFilters: [{ "v._id": new Types.ObjectId(versionId) }],
+        new: true,
+        runValidators: true,
+      }
+    );
+
+    if (!updatedProject) {
+      const freshProject = await Project.findOne({ slug });
+      if (!freshProject) {
+        res.status(404).json({ success: false, message: `Project not found with slug: ${slug}` });
+        return;
+      }
+      const freshVer = (freshProject.versions || []).find((v) => String(v._id) === versionId);
+      if (!freshVer) {
+        res.status(404).json({ success: false, message: `Version not found with id: ${versionId}` });
+        return;
+      }
+      res.status(409).json({
+        success: false,
+        message: "Concurrent modification detected. Gallery items changed during reorder",
+      });
+      return;
+    }
+
+    await populateProjectDoc(updatedProject);
 
     res.status(200).json({
       success: true,
       message: "Gallery order updated successfully",
-      data: formatProjectResponse(project),
+      data: formatProjectResponse(updatedProject),
     });
   } catch (error) {
     next(error);
@@ -3339,8 +3645,12 @@ export const updateVersionGalleryImage = async (
     const updatedProject = await Project.findOneAndUpdate(
       {
         slug,
-        "versions._id": new Types.ObjectId(versionId),
-        "versions.gallery._id": new Types.ObjectId(imageId),
+        versions: {
+          $elemMatch: {
+            _id: new Types.ObjectId(versionId),
+            "gallery._id": new Types.ObjectId(imageId),
+          },
+        },
       },
       { $set: setFields },
       {
@@ -3400,8 +3710,12 @@ export const deleteVersionGalleryImage = async (
     const updatedProject = await Project.findOneAndUpdate(
       {
         slug,
-        "versions._id": new Types.ObjectId(versionId),
-        "versions.gallery._id": new Types.ObjectId(imageId),
+        versions: {
+          $elemMatch: {
+            _id: new Types.ObjectId(versionId),
+            "gallery._id": new Types.ObjectId(imageId),
+          },
+        },
       },
       { $pull: { "versions.$[v].gallery": { _id: new Types.ObjectId(imageId) } } },
       {

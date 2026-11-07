@@ -147,31 +147,28 @@ graph TD
 
 ---
 
-## 4. Sequential Naming & Cloudinary Search API
+## 4. Unique Suffix Naming & Cloudinary Upload Configuration
 
-To prevent accidental asset overwrites without generating long random UUIDs, `about-core` implements **sequential numeric suffix naming** (`<base>_1`, `<base>_2`, `<base>_3`, ...).
+To prevent accidental asset overwrites without eventually consistent search races, `about-core` generates unique public IDs appending a short unique suffix (`<base>_${Date.now()}_${random}`) and explicitly passes `overwrite: false` to Cloudinary.
 
-### Algorithm for General Media (`getNextPublicId`)
+### Algorithm for General Media (`getUniquePublicId`)
 
-1. **Request-Level Cache (`FolderCache`)**:
-   - Each HTTP request creates an isolated in-memory `Map<string, string[] | null>`.
-   - When a file in `folder` is processed, `cache.has(folder)` checks if existing public IDs were already retrieved during this request.
-2. **Cloudinary Search API Execution**:
-   - If not cached, the Search API executes:
+1. **Format & Entropy**:
+   - Each uploaded file is assigned a unique public ID:
      ```ts
-     cloudinary.search.expression(`folder:${folder}`).max_results(500).execute()
+     export const getUniquePublicId = (base: string): string => {
+       const timestamp = Date.now();
+       const random = Math.random().toString(36).substring(2, 8);
+       return `${base}_${timestamp}_${random}`;
+     };
      ```
-   - The public IDs returned are mapped and cached.
-3. **Suffix Extraction & Increment**:
-   - Finds existing IDs starting with `${folder}/${base}_`.
-   - Parses the numeric suffixes (e.g. `_1`, `_2`), computes `Math.max(...numbers) + 1`, and formats `${base}_${next}`.
-   - The newly generated public ID is immediately added to the in-memory cache so subsequent files within the *same* request automatically increment to `next + 1` without issuing redundant Search API calls.
-4. **Resilient Fallback**:
-   - If the Cloudinary Search API rate-limits, errors, or fails, the folder entry is marked as `null` in the cache.
-   - The function gracefully falls back to timestamp-based naming:
-     ```ts
-     return `${base}_${Date.now()}`;
-     ```
+   - Suffix combines epoch millisecond timestamp and base-36 random string.
+2. **Explicit `overwrite: false` Protection**:
+   - Every media upload specifies `overwrite: false` unless explicitly overridden. If an ID collision were ever attempted, Cloudinary rejects the overwrite rather than destroying existing media.
+3. **No Search API Eventual-Consistency Races**:
+   - Replaces the legacy Search-snapshot sequential numbering (`<base>_1`, `<base>_2`), which was vulnerable to eventual-consistency delays where back-to-back requests picked the same ID.
+4. **Isolated Request Rollbacks**:
+   - `cleanupUploadedVersionMedia(req)` tracks each request's own uploaded assets in `req.uploadedMediaAssets`. On failure, it destroys only the request's newly created assets, leaving existing database-referenced assets untouched.
 
 ### Algorithm for Resume PDF (`getNextResumePublicId`)
 

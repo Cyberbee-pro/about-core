@@ -186,7 +186,7 @@ describe("Certificates API Integration Tests", () => {
       (c) => c.folder === "portfolio/certificate"
     );
     expect(uploadCall).toBeDefined();
-    expect(uploadCall?.public_id).toBe("amazon_web_services_aws_cloud_practitioner_2024_2024_1");
+    expect(uploadCall?.public_id).toMatch(/^amazon_web_services_aws_cloud_practitioner_2024_2024_\d+_[a-z0-9]+$/);
     expect(uploadCall?.resource_type).toBe("image");
     expect(mockDestroy).not.toHaveBeenCalled();
   });
@@ -214,24 +214,14 @@ describe("Certificates API Integration Tests", () => {
   });
 
   it("a duplicate-title POST /certificates with a file returns 409, destroys only that request's new upload, and leaves existing asset untouched", async () => {
+    const existingCertAsset = "portfolio/certificate/amazon_web_services_aws_cloud_practitioner_2024_2024_existing";
     const existingCert = {
       _id: "cert-aws",
       title: "AWS Cloud Practitioner 2024",
       organization: "Amazon Web Services",
-      mediaUrl: "https://res.cloudinary.com/demo/image/upload/portfolio/certificate/amazon_web_services_aws_cloud_practitioner_2024_2024_1.png",
+      mediaUrl: `https://res.cloudinary.com/demo/image/upload/${existingCertAsset}.png`,
     };
     (Certificate.findOne as jest.Mock).mockResolvedValue(existingCert);
-
-    mockSearch.execute.mockResolvedValueOnce({
-      resources: [
-        {
-          public_id: "portfolio/certificate/amazon_web_services_aws_cloud_practitioner_2024_2024_1",
-          folder: "portfolio/certificate",
-          resource_type: "image",
-        },
-      ],
-      total_count: 1,
-    });
 
     const res = await request(app)
       .post("/api/v1/certificates")
@@ -248,14 +238,48 @@ describe("Certificates API Integration Tests", () => {
     expect(res.body.success).toBe(false);
     expect(res.body.message).toContain("duplicate");
 
-    // The failing request uploaded _2 which must be destroyed
+    // The failing request uploaded a new asset with unique suffix which must be destroyed
     expect(mockDestroy).toHaveBeenCalledWith(
-      expect.stringMatching(/portfolio\/certificate\/amazon_web_services_aws_cloud_practitioner_2024_2024_2/),
+      expect.stringMatching(/portfolio\/certificate\/amazon_web_services_aws_cloud_practitioner_2024_2024_\d+_[a-z0-9]+/),
       { resource_type: "image" }
     );
-    // The existing cert asset (_1) must NOT be destroyed
+    // The existing cert asset must NOT be destroyed
     expect(mockDestroy).not.toHaveBeenCalledWith(
-      expect.stringMatching(/_1$/),
+      existingCertAsset,
+      expect.anything()
+    );
+  });
+
+  it("three duplicate certificate POSTs sent back-to-back leave the existing asset untouched", async () => {
+    const existingCertAsset = "portfolio/certificate/amazon_web_services_aws_cloud_practitioner_2024_2024_original";
+    const existingCert = {
+      _id: "cert-aws",
+      title: "AWS Cloud Practitioner 2024",
+      organization: "Amazon Web Services",
+      mediaUrl: `https://res.cloudinary.com/demo/image/upload/${existingCertAsset}.png`,
+    };
+    (Certificate.findOne as jest.Mock).mockResolvedValue(existingCert);
+
+    for (let i = 0; i < 3; i++) {
+      const res = await request(app)
+        .post("/api/v1/certificates")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("title", "AWS Cloud Practitioner 2024")
+        .field("organization", "Amazon Web Services")
+        .field("description", `Duplicate attempt ${i}`)
+        .attach("mediaUrl", Buffer.from(`cert-file-${i}`), {
+          filename: `aws-cert-${i}.png`,
+          contentType: "image/png",
+        });
+
+      expect(res.status).toBe(409);
+    }
+
+    // Three new assets were destroyed (one for each failed request)
+    expect(mockDestroy).toHaveBeenCalledTimes(3);
+    // The existing cert asset was NEVER destroyed
+    expect(mockDestroy).not.toHaveBeenCalledWith(
+      existingCertAsset,
       expect.anything()
     );
   });

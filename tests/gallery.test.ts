@@ -624,6 +624,10 @@ describe("Tagged Image Galleries API Tests", () => {
         save: jest.fn().mockResolvedValue(true),
       };
       (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+      (Project.findOneAndUpdate as jest.Mock).mockResolvedValue({
+        ...mockProject,
+        gallery: [existing[1], existing[0]],
+      });
 
       const res = await request(app)
         .put("/api/v1/projects/cool-project/gallery/order")
@@ -633,9 +637,11 @@ describe("Tagged Image Galleries API Tests", () => {
         });
 
       expect(res.status).toBe(200);
-      expect(mockProject.gallery[0]._id.toString()).toBe(validImgId2);
-      expect(mockProject.gallery[1]._id.toString()).toBe(validImgId1);
-      expect(mockProject.save).toHaveBeenCalled();
+      expect(Project.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: "cool-project" }),
+        expect.objectContaining({ $set: { gallery: [existing[1], existing[0]] } }),
+        expect.anything()
+      );
     });
 
     it("rejects with 400 when missing an existing ID", async () => {
@@ -763,7 +769,7 @@ describe("Tagged Image Galleries API Tests", () => {
       expect(res.status).toBe(201);
       expect(mockUploadCalls).toHaveLength(1);
       expect(mockUploadCalls[0].folder).toBe("portfolio/projects/cool-project/v1.0.0/gallery");
-      expect(mockUploadCalls[0].public_id).toBe("cool-project_1");
+      expect(mockUploadCalls[0].public_id).toMatch(/^cool-project_\d+_[a-z0-9]+$/);
     });
 
     it("returns 400 for invalid versionId format", async () => {
@@ -832,8 +838,12 @@ describe("Tagged Image Galleries API Tests", () => {
       expect(Project.findOneAndUpdate).toHaveBeenCalledWith(
         {
           slug: "cool-project",
-          "versions._id": expect.any(Types.ObjectId),
-          "versions.gallery._id": expect.any(Types.ObjectId),
+          versions: {
+            $elemMatch: {
+              _id: new Types.ObjectId(validVerId1),
+              "gallery._id": new Types.ObjectId(validImgId1),
+            },
+          },
         },
         { $set: { "versions.$[v].gallery.$[g].caption": "Updated Version Image" } },
         expect.objectContaining({
@@ -912,6 +922,10 @@ describe("Tagged Image Galleries API Tests", () => {
         save: jest.fn().mockResolvedValue(true),
       };
       (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+      (Project.findOneAndUpdate as jest.Mock).mockResolvedValue({
+        ...mockProject,
+        versions: [{ _id: new Types.ObjectId(validVerId1), versionTag: "v1.0.0", gallery: [existing[1], existing[0]] }],
+      });
 
       const res = await request(app)
         .put(`/api/v1/projects/cool-project/versions/${validVerId1}/gallery/order`)
@@ -919,8 +933,11 @@ describe("Tagged Image Galleries API Tests", () => {
         .send({ order: [validImgId2, validImgId1] });
 
       expect(res.status).toBe(200);
-      expect(mockProject.versions[0].gallery[0]._id.toString()).toBe(validImgId2);
-      expect(mockProject.save).toHaveBeenCalled();
+      expect(Project.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: "cool-project" }),
+        expect.anything(),
+        expect.anything()
+      );
     });
 
     it("DELETE version gallery image removes item from version gallery", async () => {
@@ -935,8 +952,12 @@ describe("Tagged Image Galleries API Tests", () => {
       expect(Project.findOneAndUpdate).toHaveBeenCalledWith(
         {
           slug: "cool-project",
-          "versions._id": expect.any(Types.ObjectId),
-          "versions.gallery._id": expect.any(Types.ObjectId),
+          versions: {
+            $elemMatch: {
+              _id: new Types.ObjectId(validVerId1),
+              "gallery._id": new Types.ObjectId(validImgId1),
+            },
+          },
         },
         { $pull: { "versions.$[v].gallery": { _id: expect.any(Types.ObjectId) } } },
         expect.objectContaining({

@@ -522,7 +522,7 @@ Tags are free-form strings validated and normalized strictly in this sequential 
 - **Payload**: Partial update:
   - `tags` (optional): Replaces existing tags; empty array or empty string clears them; omitted leaves unchanged.
   - `caption` (optional string): Max 200 chars; empty string clears; omitted leaves unchanged.
-  - `galleryImage` (optional single file): Replaces `url` with newly uploaded asset (previous Cloudinary asset is retained).
+  - `galleryImage` (optional file or string URL): Replaces `url` with newly uploaded asset or validated HTTP/HTTPS URL string (previous Cloudinary asset is retained).
 - **Concurrency**: Performed via atomic MongoDB `findOneAndUpdate` with positional operator `gallery._id`.
 - **Response**: `200 OK`
 ```json
@@ -588,7 +588,7 @@ Tags are free-form strings validated and normalized strictly in this sequential 
   - `:versionId` (MongoDB ObjectId)
   - `:imageId` (MongoDB ObjectId)
 - **Content-Type**: `application/json` or `multipart/form-data`
-- **Payload**: Partial update of `tags`, `caption`, and optional replacement file `galleryImage`.
+- **Payload**: Partial update of `tags`, `caption`, and optional replacement file or validated HTTP/HTTPS URL string `galleryImage`.
 - **Concurrency**: Performed via atomic MongoDB `findOneAndUpdate` with positional `arrayFilters: [{ "v._id": versionId }, { "g._id": imageId }]`.
 - **Response**: `200 OK`
 ```json
@@ -1194,7 +1194,7 @@ export type ProjectStatus = "invisible" | "planning" | "work_in_progress" | "del
 export type ProjectHost = "self" | "people";
 
 export interface IProjectContributor {
-  contributor?: string;
+  contributor: string;
   role?: string;
 }
 

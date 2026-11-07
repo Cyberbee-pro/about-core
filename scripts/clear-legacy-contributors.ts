@@ -76,9 +76,9 @@ export async function clearLegacyContributors(options: { apply?: boolean } = {})
 
     if (legacyProjectContributors.length > 0) {
       if (isApply) {
-        project.contributors = (project.contributors as Array<Record<string, unknown>>).filter(
-          (c) => Boolean(c && c.contributor)
-        );
+        project.contributors = (
+          project.contributors as unknown as Array<Record<string, unknown>>
+        ).filter((c) => Boolean(c && c.contributor)) as any;
         projectModified = true;
       }
     }

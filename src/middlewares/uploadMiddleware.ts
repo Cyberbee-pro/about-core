@@ -74,13 +74,28 @@ export const upload = multer({
   },
 });
 
-export const projectUploadFields = upload.fields([
+export const projectCreateUploadFields = upload.fields([
   { name: "image", maxCount: 1 },
   { name: "videoDemo", maxCount: 1 },
   { name: "threeDModel", maxCount: 1 },
   { name: "galleryImages", maxCount: 10 },
+]);
+
+export const projectUpdateUploadFields = upload.fields([
+  { name: "image", maxCount: 1 },
+  { name: "videoDemo", maxCount: 1 },
+  { name: "threeDModel", maxCount: 1 },
+]);
+
+export const galleryAddUploadFields = upload.fields([
+  { name: "galleryImages", maxCount: 10 },
+]);
+
+export const galleryItemUpdateUploadFields = upload.fields([
   { name: "galleryImage", maxCount: 1 },
 ]);
+
+export const projectUploadFields = projectCreateUploadFields;
 
 export const skillUploadFields = upload.fields([
   { name: "logoUrl", maxCount: 1 },
@@ -121,6 +136,7 @@ export interface CloudinaryUploadOptions {
   resource_type: "image" | "video" | "raw" | "auto";
   public_id?: string;
   access_mode?: "public" | "authenticated";
+  overwrite?: boolean;
 }
 
 /** Minimal shape of a resource returned by cloudinary.search.execute() */
@@ -149,6 +165,7 @@ export const uploadBufferToCloudinary = (
       {
         folder: options.folder,
         resource_type: options.resource_type,
+        overwrite: options.overwrite !== undefined ? options.overwrite : false,
         ...(sanitizedPublicId ? { public_id: sanitizedPublicId } : {}),
         ...(options.access_mode ? { access_mode: options.access_mode } : {}),
       },
@@ -191,70 +208,32 @@ const deriveSlug = (body: Record<string, unknown>): string | null => {
 };
 
 // ---------------------------------------------------------------------------
-// Sequential naming with request‑level caching
+// Unique naming
 // ---------------------------------------------------------------------------
+
+/**
+ * Generate a unique public_id by appending a short unique suffix (timestamp + random) to the base.
+ * Format: {base}_{timestamp}_{random}
+ * Avoids eventual consistency races in Cloudinary Search API and prevents ID collisions.
+ */
+export const getUniquePublicId = (base: string): string => {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 8);
+  return `${base}_${timestamp}_${random}`;
+};
 
 /** Per‑request cache: folder → array of existing public_id strings (or null on error). */
 type FolderCache = Map<string, string[] | null>;
 
 /**
- * Determine the next sequential public_id for a file in the given folder.
- *
- * Algorithm:
- *  1. Check the request‑level cache for existing public_ids in `folder`.
- *  2. If not cached, query Cloudinary Search API once and cache the result.
- *  3. Extract numeric suffixes matching `{base}_{n}`, find max, return `{base}_{max+1}`.
- *  4. On search error → cache null → fall back to `{base}_{timestamp}`.
- *
- * After computing a public_id, it is immediately pushed into the cache so that
- * subsequent files in the SAME request get a unique number without re‑querying.
+ * Retained for backward compatibility. Uses unique suffix naming.
  */
 export const getNextPublicId = async (
-  cache: FolderCache,
-  folder: string,
-  base: string
+  _cache?: unknown,
+  _folder?: string,
+  base: string = "asset"
 ): Promise<string> => {
-  if (!cache.has(folder)) {
-    try {
-      const result: CloudinarySearchResult = (await cloudinary.search
-        .expression(`folder:${folder}`)
-        .max_results(500)
-        .execute()) as CloudinarySearchResult;
-
-      cache.set(
-        folder,
-        result.resources.map((r) => r.public_id)
-      );
-    } catch {
-      // Search unavailable — mark folder as errored
-      cache.set(folder, null);
-    }
-  }
-
-  const existing = cache.get(folder);
-
-  if (Array.isArray(existing)) {
-    // Extract numeric suffixes: `{folder}/{base}_{n}`
-    const prefix = `${folder}/${base}_`;
-    const numbers = existing
-      .filter((id) => id.startsWith(prefix))
-      .map((id) => {
-        const suffix = id.slice(prefix.length);
-        const num = parseInt(suffix, 10);
-        return Number.isNaN(num) ? 0 : num;
-      });
-
-    const next = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
-    const publicId = `${base}_${next}`;
-
-    // Push into cache so next file in same request gets n+1
-    existing.push(`${folder}/${publicId}`);
-
-    return publicId;
-  }
-
-  // Fallback: timestamp‑based name (search errored)
-  return `${base}_${Date.now()}`;
+  return getUniquePublicId(base);
 };
 
 /**
@@ -441,17 +420,19 @@ export const cleanupUploadedResume = async (req: Request): Promise<void> => {
 
 export const cleanupUploadedVersionMedia = async (req: Request): Promise<void> => {
   if (req.uploadedMediaAssets && req.uploadedMediaAssets.length > 0) {
+    const remainingAssets: Array<{ publicId: string; resourceType: "image" | "video" | "raw" | "auto" }> = [];
     const assets = [...req.uploadedMediaAssets];
-    req.uploadedMediaAssets = [];
     for (const asset of assets) {
       try {
         await cloudinary.uploader.destroy(asset.publicId, {
           resource_type: asset.resourceType,
         });
-      } catch {
-        // Safe swallow: preserve original API error response
+      } catch (err) {
+        remainingAssets.push(asset);
+        console.error(`Failed to destroy Cloudinary asset '${asset.publicId}':`, err);
       }
     }
+    req.uploadedMediaAssets = remainingAssets;
   }
 };
 
@@ -502,10 +483,11 @@ export const processMediaUploads = async (
         return;
       }
 
+      const isGalleryUpload = req.path.includes("/gallery");
       const rawVersionId =
         typeof req.params.versionId === "string" ? req.params.versionId.trim() : undefined;
 
-      if (!versionTag && rawVersionId) {
+      if (rawVersionId) {
         if (!Types.ObjectId.isValid(rawVersionId)) {
           res.status(400).json({
             success: false,
@@ -534,7 +516,9 @@ export const processMediaUploads = async (
           return;
         }
 
-        versionTag = storedVersion.versionTag;
+        if (isGalleryUpload || !versionTag) {
+          versionTag = storedVersion.versionTag;
+        }
       }
 
       if (!versionTag) {
@@ -584,8 +568,6 @@ export const processMediaUploads = async (
     const resolveFolder = (mediaType: "images" | "videos" | "models" | "gallery") =>
       getFolderInfo(req.path, slug, mediaType, isVersionUpload ? versionTag : undefined);
 
-    // Request‑level cache — one Map per request, shared across all uploads
-    const cache: FolderCache = new Map();
     if (!req.uploadedMediaAssets) {
       req.uploadedMediaAssets = [];
     }
@@ -594,7 +576,7 @@ export const processMediaUploads = async (
     if (files.image && files.image.length > 0) {
       const imageFile = files.image[0];
       const { folder, base } = resolveFolder("images");
-      const publicId = await getNextPublicId(cache, folder, base);
+      const publicId = getUniquePublicId(base);
 
       const result = await uploadBufferToCloudinary(imageFile.buffer, {
         folder,
@@ -612,7 +594,7 @@ export const processMediaUploads = async (
     if (files.videoDemo && files.videoDemo.length > 0) {
       const videoFile = files.videoDemo[0];
       const { folder, base } = resolveFolder("videos");
-      const publicId = await getNextPublicId(cache, folder, base);
+      const publicId = getUniquePublicId(base);
 
       const result = await uploadBufferToCloudinary(videoFile.buffer, {
         folder,
@@ -630,7 +612,7 @@ export const processMediaUploads = async (
     if (files.threeDModel && files.threeDModel.length > 0) {
       const modelFile = files.threeDModel[0];
       const { folder, base } = resolveFolder("models");
-      const publicId = await getNextPublicId(cache, folder, base);
+      const publicId = getUniquePublicId(base);
 
       const result = await uploadBufferToCloudinary(modelFile.buffer, {
         folder,
@@ -680,7 +662,7 @@ export const processMediaUploads = async (
           return;
         }
 
-        const publicId = await getNextPublicId(cache, folder, base);
+        const publicId = getUniquePublicId(base);
         const result = await uploadBufferToCloudinary(galleryFile.buffer, {
           folder,
           resource_type: "image",
@@ -708,7 +690,7 @@ export const processMediaUploads = async (
       }
 
       const { folder, base } = resolveFolder("gallery");
-      const publicId = await getNextPublicId(cache, folder, base);
+      const publicId = getUniquePublicId(base);
       const result = await uploadBufferToCloudinary(galleryFile.buffer, {
         folder,
         resource_type: "image",
@@ -822,8 +804,7 @@ export const processSkillUploads = async (
 
       const skillName = deriveSkillName(rawName);
       const folder = `portfolio/skills/${skillName}`;
-      const cache: FolderCache = new Map();
-      const publicId = await getNextPublicId(cache, folder, skillName);
+      const publicId = getUniquePublicId(skillName);
 
       if (!req.uploadedMediaAssets) {
         req.uploadedMediaAssets = [];
@@ -903,8 +884,7 @@ export const processPersonUploads = async (
 
       const personName = derivePersonName(rawName);
       const folder = `portfolio/people/${personName}`;
-      const cache: FolderCache = new Map();
-      const publicId = await getNextPublicId(cache, folder, personName);
+      const publicId = getUniquePublicId(personName);
 
       if (!req.uploadedMediaAssets) {
         req.uploadedMediaAssets = [];
@@ -971,8 +951,7 @@ export const processCertificateUploads = async (
         rawDate
       );
       const folder = "portfolio/certificate";
-      const cache: FolderCache = new Map();
-      const publicId = await getNextPublicId(cache, folder, certBase);
+      const publicId = getUniquePublicId(certBase);
 
       const result = await uploadBufferToCloudinary(file.buffer, {
         folder,
@@ -1034,8 +1013,6 @@ export const processExperienceUploads = async (
     const tag = rawTag === "extracurricular" ? "extracurricular" : "focus";
     const orgSlug = deriveExperienceOrg(rawOrg);
 
-    const cache: FolderCache = new Map();
-
     // 1. Process Icon upload
     if (files.iconUrl && files.iconUrl.length > 0) {
       const iconFile = files.iconUrl[0];
@@ -1060,7 +1037,7 @@ export const processExperienceUploads = async (
       const folder = `portfolio/experiences/${tag}/${orgSlug}/media`;
       const uploadedMediaUrls: string[] = [];
       for (const mediaFile of files.mediaUrls) {
-        const publicId = await getNextPublicId(cache, folder, "experience_media");
+        const publicId = getUniquePublicId("experience_media");
         const result = await uploadBufferToCloudinary(mediaFile.buffer, {
           folder,
           resource_type: "image",
@@ -1083,7 +1060,7 @@ export const processExperienceUploads = async (
       const folder = `portfolio/experiences/${tag}/${orgSlug}/certificates`;
       const uploadedCertificateUrls: string[] = [];
       for (const certFile of files.certificateUrls) {
-        const publicId = await getNextPublicId(cache, folder, "experience_certificate");
+        const publicId = getUniquePublicId("experience_certificate");
         const result = await uploadBufferToCloudinary(certFile.buffer, {
           folder,
           resource_type: "image",

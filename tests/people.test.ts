@@ -1,4 +1,5 @@
 import request from "supertest";
+import { Types } from "mongoose";
 import { Person } from "@/models/Person";
 import { Project } from "@/models/Project";
 import { Writable } from "stream";
@@ -443,12 +444,12 @@ describe("People API Integration Tests", () => {
       expect(res.status).toBe(200);
       expect(mockUploadCalls.length).toBe(1);
       expect(mockUploadCalls[0].folder).toBe("portfolio/people/alice");
-      expect(mockUploadCalls[0].public_id).toBe("alice_1");
+      expect(mockUploadCalls[0].public_id).toMatch(/^alice_\d+_[a-z0-9]+$/);
       expect(mockDestroy).not.toHaveBeenCalled();
       expect(Person.findByIdAndUpdate).toHaveBeenCalledWith(
         validId,
         expect.objectContaining({
-          profilePicUrl: expect.stringContaining("portfolio/people/alice/alice_1"),
+          profilePicUrl: expect.stringMatching(/portfolio\/people\/alice\/alice_\d+_[a-z0-9]+/),
         }),
         expect.anything()
       );
@@ -479,9 +480,9 @@ describe("People API Integration Tests", () => {
 
       expect(mockUploadCalls.length).toBe(2);
       expect(mockUploadCalls[0].folder).toBe("portfolio/people/alice");
-      expect(mockUploadCalls[0].public_id).toBe("alice_1");
+      expect(mockUploadCalls[0].public_id).toMatch(/^alice_\d+_[a-z0-9]+$/);
       expect(mockUploadCalls[1].folder).toBe("portfolio/people/bob");
-      expect(mockUploadCalls[1].public_id).toBe("bob_1");
+      expect(mockUploadCalls[1].public_id).toMatch(/^bob_\d+_[a-z0-9]+$/);
       expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
     });
 
@@ -496,18 +497,7 @@ describe("People API Integration Tests", () => {
 
       expect(res1.status).toBe(201);
       expect(mockUploadCalls[0].folder).toBe("portfolio/people/ada-lovelace");
-      expect(mockUploadCalls[0].public_id).toBe("ada-lovelace_1");
-
-      mockCloudinary.default.search.execute.mockResolvedValueOnce({
-        resources: [
-          {
-            public_id: "portfolio/people/ada-lovelace/ada-lovelace_1",
-            folder: "portfolio/people/ada-lovelace",
-            resource_type: "image",
-          },
-        ],
-        total_count: 1,
-      });
+      expect(mockUploadCalls[0].public_id).toMatch(/^ada-lovelace_\d+_[a-z0-9]+$/);
 
       const res2 = await request(app)
         .post("/api/v1/people")
@@ -517,7 +507,7 @@ describe("People API Integration Tests", () => {
 
       expect(res2.status).toBe(201);
       expect(mockUploadCalls[1].folder).toBe("portfolio/people/ada-lovelace");
-      expect(mockUploadCalls[1].public_id).toBe("ada-lovelace_2");
+      expect(mockUploadCalls[1].public_id).toMatch(/^ada-lovelace_\d+_[a-z0-9]+$/);
       expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
     });
 
@@ -561,6 +551,14 @@ describe("People API Integration Tests", () => {
 
       expect(res.status).toBe(409);
       expect(res.body.success).toBe(false);
+      expect(Project.find).toHaveBeenCalledWith({
+        $or: [
+          { "contributors.contributor": new Types.ObjectId(validId) },
+          { "versions.contributors.contributor": new Types.ObjectId(validId) },
+          { hostedBy: new Types.ObjectId(validId) },
+          { "versions.hostedBy": new Types.ObjectId(validId) },
+        ],
+      });
       expect(res.body.message).toMatch(/contributor.*1 project\(s\).*0 (project )?version\(s\)/i);
       expect(res.body.message).toMatch(/host.*0 project\(s\).*0 (project )?version\(s\)/i);
       expect(Person.findByIdAndDelete).not.toHaveBeenCalled();

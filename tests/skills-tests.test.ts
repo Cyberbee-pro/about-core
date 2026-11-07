@@ -219,19 +219,11 @@ describe("Skills API Integration Tests", () => {
       (c) => c.folder === "portfolio/skills/react-native"
     );
     expect(uploadCall).toBeDefined();
-    expect(uploadCall?.public_id).toBe("react-native_1");
+    expect(uploadCall?.public_id).toMatch(/^react-native_\d+_[a-z0-9]+$/);
     expect(uploadCall?.resource_type).toBe("image");
   });
 
   it("POST /api/v1/skills with colliding slugs ('C' and 'C++') gives distinct ids", async () => {
-    const mockCloudinary = jest.requireMock("@/config/cloudinary") as {
-      default: { search: { execute: jest.Mock } };
-    };
-    mockCloudinary.default.search.execute.mockResolvedValueOnce({
-      resources: [],
-      total_count: 0,
-    });
-
     const res1 = await request(app)
       .post("/api/v1/skills")
       .set("Authorization", "Bearer test-secret-token")
@@ -244,18 +236,7 @@ describe("Skills API Integration Tests", () => {
 
     expect(res1.status).toBe(201);
     expect(mockUploadCalls[0].folder).toBe("portfolio/skills/c");
-    expect(mockUploadCalls[0].public_id).toBe("c_1");
-
-    mockCloudinary.default.search.execute.mockResolvedValueOnce({
-      resources: [
-        {
-          public_id: "portfolio/skills/c/c_1",
-          folder: "portfolio/skills/c",
-          resource_type: "image",
-        },
-      ],
-      total_count: 1,
-    });
+    expect(mockUploadCalls[0].public_id).toMatch(/^c_\d+_[a-z0-9]+$/);
 
     const res2 = await request(app)
       .post("/api/v1/skills")
@@ -269,7 +250,7 @@ describe("Skills API Integration Tests", () => {
 
     expect(res2.status).toBe(201);
     expect(mockUploadCalls[1].folder).toBe("portfolio/skills/c");
-    expect(mockUploadCalls[1].public_id).toBe("c_2");
+    expect(mockUploadCalls[1].public_id).toMatch(/^c_\d+_[a-z0-9]+$/);
     expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
     expect(mockDestroy).not.toHaveBeenCalled();
   });
@@ -343,9 +324,9 @@ describe("Skills API Integration Tests", () => {
 
     expect(mockUploadCalls.length).toBe(2);
     expect(mockUploadCalls[0].folder).toBe("portfolio/skills/react");
-    expect(mockUploadCalls[0].public_id).toBe("react_1");
+    expect(mockUploadCalls[0].public_id).toMatch(/^react_\d+_[a-z0-9]+$/);
     expect(mockUploadCalls[1].folder).toBe("portfolio/skills/vue");
-    expect(mockUploadCalls[1].public_id).toBe("vue_1");
+    expect(mockUploadCalls[1].public_id).toMatch(/^vue_\d+_[a-z0-9]+$/);
     expect(mockUploadCalls[0].public_id).not.toBe(mockUploadCalls[1].public_id);
   });
 

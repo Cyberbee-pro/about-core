@@ -290,17 +290,17 @@ describe("about-core API & Middleware Integration Tests", () => {
       const imageUpload = mockUploadCalls.find((c) => c.folder === "portfolio/projects/spatial-canvas/images");
       expect(imageUpload).toBeDefined();
       expect(imageUpload?.resource_type).toBe("image");
-      expect(imageUpload?.public_id).toBe("spatial-canvas_1");
+      expect(imageUpload?.public_id).toMatch(/^spatial-canvas_\d+_[a-z0-9]+$/);
 
       const videoUpload = mockUploadCalls.find((c) => c.folder === "portfolio/projects/spatial-canvas/videos");
       expect(videoUpload).toBeDefined();
       expect(videoUpload?.resource_type).toBe("video");
-      expect(videoUpload?.public_id).toBe("spatial-canvas_1");
+      expect(videoUpload?.public_id).toMatch(/^spatial-canvas_\d+_[a-z0-9]+$/);
 
       const modelUpload = mockUploadCalls.find((c) => c.folder === "portfolio/projects/spatial-canvas/models");
       expect(modelUpload).toBeDefined();
       expect(modelUpload?.resource_type).toBe("raw");
-      expect(modelUpload?.public_id).toBe("spatial-canvas_1");
+      expect(modelUpload?.public_id).toMatch(/^spatial-canvas_\d+_[a-z0-9]+$/);
 
       expect(Project.create).toHaveBeenCalledWith(
         expect.objectContaining({

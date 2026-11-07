@@ -19,7 +19,13 @@ import {
   deleteVersionGalleryImage,
 } from "../controllers/projectController";
 import { authMiddleware } from "../middlewares/authMiddleware";
-import { projectUploadFields, processMediaUploads } from "../middlewares/uploadMiddleware";
+import {
+  projectCreateUploadFields,
+  projectUpdateUploadFields,
+  galleryAddUploadFields,
+  galleryItemUpdateUploadFields,
+  processMediaUploads,
+} from "../middlewares/uploadMiddleware";
 
 const router = Router();
 
@@ -32,7 +38,7 @@ router.get("/:slug", getProjectBySlug);
 router.post(
   "/",
   authMiddleware,
-  projectUploadFields,
+  projectCreateUploadFields,
   processMediaUploads,
   createProject
 );
@@ -42,7 +48,7 @@ router.post(
 router.post(
   "/:slug/versions/:versionId/gallery",
   authMiddleware,
-  projectUploadFields,
+  galleryAddUploadFields,
   processMediaUploads,
   addVersionGallery
 );
@@ -56,7 +62,7 @@ router.put(
 router.put(
   "/:slug/versions/:versionId/gallery/:imageId",
   authMiddleware,
-  projectUploadFields,
+  galleryItemUpdateUploadFields,
   processMediaUploads,
   updateVersionGalleryImage
 );
@@ -71,7 +77,7 @@ router.delete(
 router.post(
   "/:slug/versions",
   authMiddleware,
-  projectUploadFields,
+  projectCreateUploadFields,
   processMediaUploads,
   addProjectVersion
 );
@@ -79,7 +85,7 @@ router.post(
 router.put(
   "/:slug/versions/:versionId",
   authMiddleware,
-  projectUploadFields,
+  projectUpdateUploadFields,
   processMediaUploads,
   updateProjectVersion
 );
@@ -94,7 +100,7 @@ router.delete(
 router.post(
   "/:slug/gallery",
   authMiddleware,
-  projectUploadFields,
+  galleryAddUploadFields,
   processMediaUploads,
   addProjectGallery
 );
@@ -108,7 +114,7 @@ router.put(
 router.put(
   "/:slug/gallery/:imageId",
   authMiddleware,
-  projectUploadFields,
+  galleryItemUpdateUploadFields,
   processMediaUploads,
   updateProjectGalleryImage
 );
@@ -123,7 +129,7 @@ router.delete(
 router.put(
   "/:id",
   authMiddleware,
-  projectUploadFields,
+  projectUpdateUploadFields,
   processMediaUploads,
   updateProject
 );

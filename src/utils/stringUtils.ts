@@ -65,6 +65,9 @@ export const isValidHttpUrl = (urlString: unknown): boolean => {
   if (typeof urlString !== "string") return false;
   const trimmed = urlString.trim();
   if (!trimmed) return false;
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return false;
+  }
   if (/[\s\x00-\x1f\x7f]/.test(trimmed)) {
     return false;
   }
@@ -81,6 +84,8 @@ export const isHttpUrl = isValidHttpUrl;
 export const normalizeHttpUrl = (urlString: unknown): string | null => {
   return isValidHttpUrl(urlString) ? (urlString as string).trim() : null;
 };
+
+export { parseBooleanField } from "./booleanUtils";
 
 
 
