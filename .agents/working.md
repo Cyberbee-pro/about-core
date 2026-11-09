@@ -169,7 +169,7 @@
 | `PORT` | No | `5000` |
 | `NODE_ENV` | No | `development` / `production` / `test` |
 | `MONGO_URI` | Yes | MongoDB Atlas connection string (database: `about_core`) |
-| `CLIENT_ORIGIN` | No | Comma-separated CORS origins (defaults to `https://core.shibraj.dev`, `https://client.shibraj.dev`, `https://shibraj.dev`, `http://localhost:3000`) |
+| `CLIENT_ORIGIN` | No | Comma-separated CORS origins (e.g. `https://app.example.com`). In production, unset fails closed (403); in dev/test, unset allows localhost, 127.0.0.1, [::1]. |
 | `ADMIN_SECRET` | Yes | Shared secret for all administrative mutations and log queries |
 | `CLOUDINARY_CLOUD_NAME` | Yes | Cloudinary account cloud name |
 | `CLOUDINARY_API_KEY` | Yes | Cloudinary API key |

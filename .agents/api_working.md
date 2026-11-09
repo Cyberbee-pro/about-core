@@ -39,6 +39,12 @@ This document provides a comprehensive technical reference for how every API end
   - `E11000` (Duplicate Key) $\rightarrow$ `409 Conflict`
   - `ValidationError` $\rightarrow$ `400 Bad Request` with structured error field map
   - `CastError` (Malformed `ObjectId`) $\rightarrow$ `400 Bad Request` (`"Invalid identifier format"`)
+- **CORS Configuration & Origin Validation (`src/server.ts`):**
+  - Allowed origins are dynamically parsed from `CLIENT_ORIGIN` (comma-separated, trailing slashes stripped, invalid entries ignored with a startup warning).
+  - Explicit wildcard `*` enables `Access-Control-Allow-Origin: *` with credentials disabled (`credentials: false`).
+  - No hardcoded defaults exist. If `CLIENT_ORIGIN` is unset:
+    - In `NODE_ENV=production`: fails closed. Requests with an `Origin` header receive `403 Forbidden` (`"Not allowed by CORS"`), and a single startup warning is logged. Requests without an `Origin` header are unaffected.
+    - In `development`/`test`: origins whose parsed hostname is `localhost`, `127.0.0.1`, or `[::1]` on any port are permitted with credentials. External origins receive `403 Forbidden`.
 
 ---
 

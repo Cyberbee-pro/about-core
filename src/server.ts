@@ -21,25 +21,65 @@ import adminProjectRoutes from "./routes/adminProjectRoutes";
 
 const app: Application = express();
 
-const defaultAllowedOrigins = [
-  "https://core.shibraj.dev",
-  "https://client.shibraj.dev",
-  "https://shibraj.dev",
-  "http://localhost:3000",
-];
+const warnedInvalidOrigins = new Set<string>();
+let warnedEmptyClientOriginProd = false;
 
 export const getAllowedOrigins = (): string[] => {
   const envOrigins = process.env.CLIENT_ORIGIN;
   if (!envOrigins) {
-    return defaultAllowedOrigins;
+    return [];
   }
-  const parsed = envOrigins
+  const entries = envOrigins
     .split(",")
-    .map((origin) => origin.trim())
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
     .filter(Boolean);
 
-  return parsed.length > 0 ? parsed : defaultAllowedOrigins;
+  const validOrigins: string[] = [];
+  for (const entry of entries) {
+    if (entry === "*") {
+      validOrigins.push("*");
+      continue;
+    }
+    try {
+      const u = new URL(entry);
+      if (
+        (u.protocol === "http:" || u.protocol === "https:") &&
+        (u.pathname === "/" || u.pathname === "") &&
+        !u.search &&
+        !u.hash &&
+        !u.username &&
+        !u.password
+      ) {
+        validOrigins.push(entry);
+      } else {
+        if (!warnedInvalidOrigins.has(entry)) {
+          warnedInvalidOrigins.add(entry);
+          console.warn(
+            `[CORS Warning] Ignoring invalid CLIENT_ORIGIN entry: "${entry}" (must parse as an http or https origin).`
+          );
+        }
+      }
+    } catch {
+      if (!warnedInvalidOrigins.has(entry)) {
+        warnedInvalidOrigins.add(entry);
+        console.warn(
+          `[CORS Warning] Ignoring invalid CLIENT_ORIGIN entry: "${entry}" (must parse as an http or https origin).`
+        );
+      }
+    }
+  }
+
+  return validOrigins;
 };
+
+// Check allowed origins at startup to emit any startup warnings
+getAllowedOrigins();
+if (process.env.NODE_ENV === "production" && getAllowedOrigins().length === 0) {
+  warnedEmptyClientOriginProd = true;
+  console.warn(
+    "[CORS Warning] CLIENT_ORIGIN is not set in production. All cross-origin requests will be rejected."
+  );
+}
 
 // Global Middlewares
 app.use(
@@ -50,8 +90,47 @@ app.use(
       return callback(null, { origin: true });
     }
 
-    const allowedOrigins = getAllowedOrigins().map((o) => o.trim().replace(/\/+$/, ""));
     const cleanOrigin = origin.trim().replace(/\/+$/, "");
+    const allowedOrigins = getAllowedOrigins();
+
+    if (allowedOrigins.length === 0) {
+      if (process.env.NODE_ENV === "production") {
+        if (!warnedEmptyClientOriginProd) {
+          warnedEmptyClientOriginProd = true;
+          console.warn(
+            "[CORS Warning] CLIENT_ORIGIN is not set in production. All cross-origin requests will be rejected."
+          );
+        }
+        console.warn(`[CORS Blocked] Origin "${origin}" rejected (CLIENT_ORIGIN is not set in production).`);
+        return callback(new Error("Not allowed by CORS"));
+      }
+
+      // Development / Test mode: allow localhost, 127.0.0.1, [::1] on any port
+      let isLocal = false;
+      try {
+        const parsedUrl = new URL(origin);
+        if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+          const h = parsedUrl.hostname;
+          if (h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1") {
+            isLocal = true;
+          }
+        }
+      } catch {
+        isLocal = false;
+      }
+
+      if (isLocal) {
+        return callback(null, {
+          origin: cleanOrigin,
+          credentials: true,
+          methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+          allowedHeaders: ["Content-Type", "Authorization", "x-admin-token"],
+        });
+      }
+
+      console.warn(`[CORS Blocked] Origin "${origin}" not allowed in development.`);
+      return callback(new Error("Not allowed by CORS"));
+    }
 
     if (allowedOrigins.includes("*")) {
       return callback(null, {

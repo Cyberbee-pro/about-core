@@ -46,10 +46,11 @@ HTTP Request
 - **Base URL**: Deploy domain origin followed by `/api/v1` (e.g., `https://api.yourdomain.com/api/v1` or `http://localhost:5000/api/v1`).
 - **CORS & Allowed Origins**:
   - Validated via a dynamic validator function. Requests without an `Origin` header (such as curl, mobile apps, Postman, or server-to-server) are allowed.
-  - Allowed origins are parsed from the `CLIENT_ORIGIN` environment variable (comma-separated, e.g., `http://localhost:3000,https://core.shibraj.dev,https://client.shibraj.dev,https://shibraj.dev`).
-  - Defaults to `["https://core.shibraj.dev", "https://client.shibraj.dev", "https://shibraj.dev", "http://localhost:3000"]` if `CLIENT_ORIGIN` is not configured.
-  - When `CLIENT_ORIGIN` is set to wildcard `*`, responds with `Access-Control-Allow-Origin: *` and credentials disabled (`credentials: false`), strictly compliant with the W3C CORS specification. All API authentication relies on HTTP headers (`Authorization: Bearer <token>` or `x-admin-token`), so browser cookies/ambient credentials are not required.
-  - Trailing slashes in origins are normalized automatically.
+  - Allowed origins are strictly derived from the `CLIENT_ORIGIN` environment variable (comma-separated, e.g., `https://app.example.com,https://admin.example.com`). Trailing slashes are stripped and empty entries are dropped. Invalid entries (which fail to parse as http/https origins) are ignored with a startup warning logged once.
+  - **No Hardcoded Defaults**: There is no built-in fallback origin list.
+    - **Production (`NODE_ENV=production`)**: If `CLIENT_ORIGIN` is unset or empty, the API fails closed. Any request with an `Origin` header receives `403 Forbidden`, and a single startup warning is logged.
+    - **Development / Test (`NODE_ENV !== "production"`)**: If `CLIENT_ORIGIN` is unset or empty, requests from `localhost`, `127.0.0.1`, or `[::1]` on any port are permitted (with credentials). External origins are rejected with `403 Forbidden`.
+  - **Wildcard `*`**: When `CLIENT_ORIGIN` explicitly includes `*`, responses return `Access-Control-Allow-Origin: *` with credentials disabled (`credentials: false`), strictly compliant with the W3C CORS specification.
   - **Allowed Methods**: `GET`, `POST`, `PUT`, `DELETE`, `OPTIONS`.
   - **Allowed Headers**: `Content-Type`, `Authorization`, `x-admin-token`.
   - **Credentials**: `true` (`Access-Control-Allow-Credentials: true`) for explicit allowed origin matches; `false` when wildcard `*` is configured.

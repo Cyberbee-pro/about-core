@@ -240,10 +240,26 @@ for round in 1 2 3; do
   check "reorder racing 5 adds lost nothing (round $round)" "$((before+okadds))" "$after"
 done
 
-c=$(gcount); n=$((30-c))
-if [ "$n" -gt 0 ]; then
-  check "fill project gallery to the 30-item cap" "201" "$(pcode POST projects/$SLUG/gallery "$(jq -nc --argjson n "$n" '{items:[range(0;$n)|{url:"https://example.com/fill\(.).png"}]}')")"
-fi
+# info only: is there a per-request limit on URL items? (the earlier big single request got a 400)
+resp=$(curl -s -w '\n%{http_code}' -X POST "$API/projects/$SLUG/gallery" "${AUTH[@]}" "${JSON[@]}" -d "$(jq -nc '{items:[range(0;11)|{url:"https://example.com/probe\(.).png"}]}')")
+echo "  info: server said: $(printf '%s' "$resp" | head -n -1 | jq -r '.message // empty' 2>/dev/null)"
+check "11 URL items in ONE request rejected (limit is 10 per request)" "400" "$(printf '%s' "$resp" | tail -n1)"
+fill_cap() { # post-path count-function  (adds URL items in batches of at most 10 until the gallery holds 30)
+  local path="$1" cnt="$2" c n codes=""
+  c=$($cnt)
+  for _ in 1 2 3 4; do
+    [ "${c:-0}" -ge 30 ] && break
+    n=$((30-c)); [ "$n" -gt 10 ] && n=10
+    codes="$codes $(pcode POST "$path" "$(jq -nc --argjson n "$n" --arg p "$RANDOM$RANDOM" '{items:[range(0;$n)|{url:"https://example.com/fill\($p)-\(.).png"}]}')")"
+    c=$($cnt)
+  done
+  FILL_CODES="$codes"
+  echo "  info: fill batches ->$codes (count now $c)"
+}
+fill_ok() { local nb=0 x; for x in $FILL_CODES; do [ "$x" = 201 ] || nb=$((nb+1)); done; echo "$nb"; }
+fill_cap "projects/$SLUG/gallery" gcount
+check "every fill batch (up to 10 items) accepted" "0" "$(fill_ok)"
+check "project gallery reached the 30-item cap" "30" "$(gcount)"
 check "31st item rejected" "400" "$(pcode POST projects/$SLUG/gallery '{"items":[{"url":"https://example.com/one-more.png"}]}')"
 check "project gallery stays at 30" "30" "$(gcount)"
 GD=$(get projects/$SLUG | j '.data.gallery[-1]._id')
@@ -267,9 +283,12 @@ URLS=$(get projects/$SLUG | jq -r '.data.versions[]|select(._id=="'$V3'")|.galle
 check "5 parallel uploads all stored" "5" "$(printf '%s\n' "$URLS" | grep -c . || true)"
 check "5 distinct Cloudinary files" "5" "$(printf '%s\n' "$URLS" | sort -u | grep -c . || true)"
 check "folder uses the STORED tag (par), not the body's" "5 0" "$(printf '%s %s' "$(printf '%s\n' "$URLS" | grep -c '/par/gallery/' || true)" "$(printf '%s\n' "$URLS" | grep -c '/evil/' || true)")"
-n=$((30-5))
-check "fill version gallery to the cap" "201" "$(pcode POST projects/$SLUG/versions/$V3/gallery "$(jq -nc --argjson n "$n" '{items:[range(0;$n)|{url:"https://example.com/v\(.).png"}]}')")"
+vcount() { get projects/$SLUG | j '.data.versions[]|select(._id=="'$V3'")|.gallery|length'; }
+fill_cap "projects/$SLUG/versions/$V3/gallery" vcount
+check "every version fill batch (up to 10 items) accepted" "0" "$(fill_ok)"
+check "version gallery reached the 30-item cap" "30" "$(vcount)"
 check "31st version item rejected" "400" "$(pcode POST projects/$SLUG/versions/$V3/gallery '{"items":[{"url":"https://example.com/more.png"}]}')"
+check "version gallery stays at 30" "30" "$(vcount)"
 
 # ---------- creation-time gallery + legacy ----------
 section "creation-time gallery"
