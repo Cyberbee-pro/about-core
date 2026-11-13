@@ -322,6 +322,22 @@ if [ "$CLD" = 1 ]; then
   sleep 2; check "existing logo untouched in Cloudinary" "$vb" "$(cld_version "$p")"
 else skip "Cloudinary version check for skills"; fi
 
+# ---------- people pictures (uploads) ----------
+section "people pictures (uploads, public ids)"
+mkpu() { curl -s -X POST "$API/people" "${AUTH[@]}" -F "name=$1" -F "profilePicUrl=@$IMG;type=image/jpeg" | j '.data._id'; }
+PU1=$(mkpu "Zz Pic1 $T"); PU2=$(mkpu "Zz Pic2 $T"); PEOPLE+=("$PU1" "$PU2")
+check "people with uploaded pictures created" "24 24" "${#PU1} ${#PU2}"
+pu1=$(curl -s -X PUT "$API/people/$PU1" "${AUTH[@]}" -F "profilePicUrl=@$IMG;type=image/jpeg" | j '.data.profilePicUrl')
+pu2=$(curl -s -X PUT "$API/people/$PU2" "${AUTH[@]}" -F "profilePicUrl=@$IMG;type=image/jpeg" | j '.data.profilePicUrl')
+check "pictures differ when the name is omitted on update" "differ" "$(differ "$pu1" "$pu2")"
+check "not a shared fallback file" "0" "$(printf '%s\n%s\n' "$pu1" "$pu2" | grep -cE '/(contributors/contributor|people/person)/' || true)"
+check "pictures are under portfolio/people/" "2" "$(printf '%s\n%s\n' "$pu1" "$pu2" | grep -c '/portfolio/people/' || true)"
+if [ "$CLD" = 1 ]; then
+  p=$(pid_of "$pu1"); vb=$(cld_version "$p"); sleep 1
+  check "duplicate-name person POST with a file" "409" "$(hc -X POST "$API/people" "${AUTH[@]}" -F "name=zz pic1 $T" -F "profilePicUrl=@$IMG;type=image/jpeg")"
+  sleep 2; check "existing person picture untouched in Cloudinary" "$vb" "$(cld_version "$p")"
+else skip "Cloudinary version check for people pictures"; fi
+
 # ---------- certificates ----------
 section "certificates"
 C1=$(curl -s -X POST "$API/certificates" "${AUTH[@]}" -F "title=Zz Cert $T" -F "organization=Zz Org" -F "description=t" -F "link=https://example.com/c" -F "mediaUrl=@$IMG;type=image/jpeg" | j '.data._id')
@@ -336,6 +352,21 @@ if [ "$CLD" = 1 ]; then
   check "3 back-to-back duplicate-title uploads" "409 409 409" "$(echo $codes)"
   sleep 3; check "existing certificate image untouched in Cloudinary" "$vb" "$(cld_version "$p")"
 else skip "Cloudinary version check for certificates"; fi
+
+# ---------- rollback of rejected uploads ----------
+section "rollback of rejected multipart requests (Cloudinary)"
+if [ "$CLD" = 1 ]; then
+  cldlist() { curl -s -u "$CLOUDINARY_API_KEY:$CLOUDINARY_API_SECRET" "https://api.cloudinary.com/v1_1/$CLOUDINARY_CLOUD_NAME/resources/image?type=upload&prefix=$1&max_results=500" | jq -r '.resources[]?.public_id' | sort; }
+  pre="portfolio/projects/$SLUG"
+  b=$(cldlist "$pre" | grep -c . || true)
+  check "PUT /projects/:id with a bad link + image file" "400" "$(hc -X PUT "$API/projects/$PID" "${AUTH[@]}" -F "githubLink=javascript:alert(1)" -F "image=@$IMG;type=image/jpeg")"
+  check "gallery add with a bad tag + image file" "400" "$(hc -X POST "$API/projects/$SLUG/gallery" "${AUTH[@]}" -F "galleryImages=@$IMG;type=image/jpeg" --form-string 'galleryMeta=[{"tags":["bad<tag>"]}]')"
+  check "duplicate version tag + image file" "409" "$(hc -X POST "$API/projects/$SLUG/versions" "${AUTH[@]}" -F "versionTag=V1.0.0" -F "image=@$IMG;type=image/jpeg")"
+  check "version update with a bad link + image file" "400" "$(hc -X PUT "$API/projects/$SLUG/versions/$V1" "${AUTH[@]}" -F "deployedLink=javascript:alert(1)" -F "image=@$IMG;type=image/jpeg")"
+  sleep 5
+  a=$(cldlist "$pre" | grep -c . || true)
+  check "rejected requests left no files in Cloudinary" "$b" "$a"
+else skip "Cloudinary rollback check (needs CLOUDINARY_* in .env)"; fi
 
 # ---------- experiences ----------
 section "experiences"
