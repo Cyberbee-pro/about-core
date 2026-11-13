@@ -1,20 +1,34 @@
 import { Request, Response, NextFunction } from "express";
 import { Types } from "mongoose";
 import { Experience, IExperiencePosition } from "../models/Experience";
-import { escapeRegex } from "../utils/stringUtils";
+import { escapeRegex, isValidHttpUrl } from "../utils/stringUtils";
 
-function parsePositions(val: unknown): IExperiencePosition[] {
+function parsePositions(val: unknown): { positions?: IExperiencePosition[]; error?: string } {
+  if (val === undefined) {
+    return { positions: [] };
+  }
+  let list: unknown;
   if (typeof val === "string") {
     try {
-      return JSON.parse(val) as IExperiencePosition[];
+      list = JSON.parse(val);
     } catch {
-      return [];
+      return { error: "Invalid JSON format for positions" };
+    }
+  } else {
+    list = val;
+  }
+
+  if (!Array.isArray(list)) {
+    return { error: "positions must be an array of objects" };
+  }
+
+  for (const item of list) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { error: "Each position in positions must be a non-null object" };
     }
   }
-  if (Array.isArray(val)) {
-    return val as IExperiencePosition[];
-  }
-  return [];
+
+  return { positions: list as IExperiencePosition[] };
 }
 
 function parseSkills(val: unknown): Types.ObjectId[] {
@@ -103,7 +117,12 @@ export const createExperience = async (
       return;
     }
 
-    const positions = parsePositions(req.body.positions);
+    const posResult = parsePositions(req.body.positions);
+    if (posResult.error) {
+      res.status(400).json({ success: false, message: posResult.error });
+      return;
+    }
+    const positions = posResult.positions || [];
     const uploadedMediaUrls = req.body.uploadedMediaUrls as string[] | undefined;
     const uploadedCertUrls = req.body.uploadedCertificateUrls as string[] | undefined;
 
@@ -144,6 +163,29 @@ export const createExperience = async (
 
     }
 
+    const iconUrl = typeof req.body.iconUrl === "string" ? req.body.iconUrl.trim() : "";
+    if (iconUrl !== "") {
+      if (!isValidHttpUrl(iconUrl)) {
+        res.status(400).json({ success: false, message: "iconUrl must be a valid http or https URL" });
+        return;
+      }
+    }
+
+    for (const pos of positions) {
+      for (const url of pos.mediaUrls || []) {
+        if (!isValidHttpUrl(url)) {
+          res.status(400).json({ success: false, message: "mediaUrls must contain valid http or https URLs" });
+          return;
+        }
+      }
+      for (const url of pos.certificateUrls || []) {
+        if (!isValidHttpUrl(url)) {
+          res.status(400).json({ success: false, message: "certificateUrls must contain valid http or https URLs" });
+          return;
+        }
+      }
+    }
+
     const skills = parseSkills(req.body.skills);
     const weight =
       req.body.weight !== undefined ? Number(req.body.weight) || 0 : 0;
@@ -152,7 +194,7 @@ export const createExperience = async (
       organization: trimmedOrg,
       tag: req.body.tag || "focus",
       type: req.body.type || "full_time",
-      iconUrl: req.body.iconUrl || "",
+      iconUrl,
       skills,
       weight,
       positions,
@@ -193,12 +235,28 @@ export const updateExperience = async (
 
     if (req.body.tag !== undefined) updateData.tag = req.body.tag;
     if (req.body.type !== undefined) updateData.type = req.body.type;
-    if (req.body.iconUrl !== undefined) updateData.iconUrl = req.body.iconUrl;
+    if (req.body.iconUrl !== undefined) {
+      const iconUrl = typeof req.body.iconUrl === "string" ? req.body.iconUrl.trim() : "";
+      if (iconUrl !== "") {
+        if (!isValidHttpUrl(iconUrl)) {
+          res.status(400).json({ success: false, message: "iconUrl must be a valid http or https URL" });
+          return;
+        }
+        updateData.iconUrl = iconUrl;
+      } else {
+        updateData.iconUrl = "";
+      }
+    }
     if (req.body.skills !== undefined) updateData.skills = parseSkills(req.body.skills);
     if (req.body.weight !== undefined) updateData.weight = Number(req.body.weight) || 0;
 
     if (req.body.positions !== undefined) {
-      const positions = parsePositions(req.body.positions);
+      const posResult = parsePositions(req.body.positions);
+    if (posResult.error) {
+      res.status(400).json({ success: false, message: posResult.error });
+      return;
+    }
+    const positions = posResult.positions || [];
       const uploadedMediaUrls = req.body.uploadedMediaUrls as string[] | undefined;
       const uploadedCertUrls = req.body.uploadedCertificateUrls as string[] | undefined;
 
@@ -217,6 +275,21 @@ export const updateExperience = async (
             ...(positions[0].certificateUrls || []),
             ...uploadedCertUrls,
           ];
+        }
+      }
+
+      for (const pos of positions) {
+        for (const url of pos.mediaUrls || []) {
+          if (!isValidHttpUrl(url)) {
+            res.status(400).json({ success: false, message: "mediaUrls must contain valid http or https URLs" });
+            return;
+          }
+        }
+        for (const url of pos.certificateUrls || []) {
+          if (!isValidHttpUrl(url)) {
+            res.status(400).json({ success: false, message: "certificateUrls must contain valid http or https URLs" });
+            return;
+          }
         }
       }
       updateData.positions = positions;
@@ -300,7 +373,7 @@ export const addExperiencePosition = async (
       try {
         positionRaw = JSON.parse(positionRaw);
       } catch {
-        positionRaw = {};
+        positionRaw = req.body;
       }
     } else if (!positionRaw || typeof positionRaw !== "object") {
       positionRaw = req.body;
@@ -339,6 +412,19 @@ export const addExperiencePosition = async (
     }
     if (uploadedCertUrls && uploadedCertUrls.length > 0) {
       certificateUrls.push(...uploadedCertUrls);
+    }
+
+    for (const url of mediaUrls) {
+      if (!isValidHttpUrl(url)) {
+        res.status(400).json({ success: false, message: "mediaUrls must contain valid http or https URLs" });
+        return;
+      }
+    }
+    for (const url of certificateUrls) {
+      if (!isValidHttpUrl(url)) {
+        res.status(400).json({ success: false, message: "certificateUrls must contain valid http or https URLs" });
+        return;
+      }
     }
 
     const isCurrent =

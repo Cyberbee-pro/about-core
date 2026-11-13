@@ -1,4 +1,9 @@
-import { escapeRegex } from "@/utils/stringUtils";
+import {
+  escapeRegex,
+  isValidHttpUrl,
+  isHttpUrl,
+  normalizeHttpUrl,
+} from "@/utils/stringUtils";
 
 describe("stringUtils - escapeRegex", () => {
   it("escapes special regex characters correctly", () => {
@@ -43,5 +48,60 @@ describe("stringUtils - escapeRegex", () => {
     expect(cppRegex.test("c++")).toBe(true);
     // Crucial: Raw "C++" has quantifier "+", matching "C", "CC", "CCC", but escaped must only match "c++"
     expect(cppRegex.test("C")).toBe(false);
+  });
+});
+
+describe("stringUtils - isValidHttpUrl & normalizeHttpUrl", () => {
+  it("accepts valid https and http URLs", () => {
+    expect(isValidHttpUrl("https://example.com")).toBe(true);
+    expect(isValidHttpUrl("http://example.com")).toBe(true);
+    expect(isValidHttpUrl("https://example.com/path/to/resource.png?v=1&q=test#hash")).toBe(true);
+    expect(isValidHttpUrl("http://localhost:3000/api")).toBe(true);
+    expect(isHttpUrl("https://example.com")).toBe(true);
+  });
+
+  it("accepts valid URLs with surrounding whitespace after trimming", () => {
+    expect(isValidHttpUrl("   https://example.com/pic.png   ")).toBe(true);
+    expect(normalizeHttpUrl("   https://example.com/pic.png   ")).toBe("https://example.com/pic.png");
+  });
+
+  it("rejects javascript:, data:, vbscript:, file:, ftp: URLs", () => {
+    expect(isValidHttpUrl("javascript:alert(1)")).toBe(false);
+    expect(isValidHttpUrl("data:text/html,x")).toBe(false);
+    expect(isValidHttpUrl("vbscript:msgbox(1)")).toBe(false);
+    expect(isValidHttpUrl("file:///etc/passwd")).toBe(false);
+    expect(isValidHttpUrl("ftp://example.com")).toBe(false);
+  });
+
+  it("rejects protocol-relative, relative, and non-URL strings", () => {
+    expect(isValidHttpUrl("//example.com/x.png")).toBe(false);
+    expect(isValidHttpUrl("/relative/path")).toBe(false);
+    expect(isValidHttpUrl("not a url")).toBe(false);
+    expect(isValidHttpUrl("")).toBe(false);
+    expect(isValidHttpUrl("   ")).toBe(false);
+  });
+
+  it("rejects URLs with embedded whitespace or control characters", () => {
+    expect(isValidHttpUrl("https://example. com")).toBe(false);
+    expect(isValidHttpUrl("https://example.com/foo bar.jpg")).toBe(false);
+    expect(isValidHttpUrl("https://example.com\x00/test")).toBe(false);
+    expect(isValidHttpUrl("https://example.com\x1f/test")).toBe(false);
+    expect(isValidHttpUrl("https://example.com\x7f/test")).toBe(false);
+  });
+
+  it("rejects non-string inputs safely", () => {
+    expect(isValidHttpUrl(null)).toBe(false);
+    expect(isValidHttpUrl(undefined)).toBe(false);
+    expect(isValidHttpUrl(12345)).toBe(false);
+    expect(isValidHttpUrl({})).toBe(false);
+    expect(isValidHttpUrl([])).toBe(false);
+  });
+
+  it("normalizeHttpUrl returns trimmed string on valid URL and null on invalid", () => {
+    expect(normalizeHttpUrl("https://example.com")).toBe("https://example.com");
+    expect(normalizeHttpUrl("  https://example.com  ")).toBe("https://example.com");
+    expect(normalizeHttpUrl("javascript:alert(1)")).toBeNull();
+    expect(normalizeHttpUrl("not a url")).toBeNull();
+    expect(normalizeHttpUrl(null)).toBeNull();
   });
 });

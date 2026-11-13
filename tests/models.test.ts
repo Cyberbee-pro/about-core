@@ -5,6 +5,7 @@ import { Experience } from "@/models/Experience";
 import { Certificate } from "@/models/Certificate";
 import { Project } from "@/models/Project";
 import { SiteConfig, migrateSiteConfigResumeUrl } from "@/models/SiteConfig";
+import { Person } from "@/models/Person";
 
 /**
  * These tests validate Mongoose schema definitions using `document.validate()`
@@ -392,6 +393,72 @@ describe("Certificate Model", () => {
   });
 });
 
+// ─── Person Model ─────────────────────────────────────────────────────────────
+
+describe("Person Model", () => {
+  const validPersonData = {
+    name: "Ada Lovelace",
+    profilePicUrl: "https://cdn.example.com/people/ada.png",
+    profileLink: "https://ada.dev",
+  };
+
+  it("validates a well-formed person document", () => {
+    const doc = new Person(validPersonData);
+    const error = doc.validateSync();
+    expect(error).toBeUndefined();
+  });
+
+  it("trims the name field", () => {
+    const doc = new Person({
+      ...validPersonData,
+      name: "   Ada Lovelace   ",
+    });
+    expect(doc.name).toBe("Ada Lovelace");
+  });
+
+  it("fails validation when name is missing", () => {
+    const { name: _n, ...noName } = validPersonData;
+    const doc = new Person(noName);
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.name).toBeDefined();
+  });
+
+  it("fails validation when profilePicUrl is missing", () => {
+    const { profilePicUrl: _p, ...noPic } = validPersonData;
+    const doc = new Person(noPic);
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.profilePicUrl).toBeDefined();
+  });
+
+  it("accepts valid optional profileLink", () => {
+    const doc = new Person({
+      name: "Ada Lovelace",
+      profilePicUrl: "https://cdn.example.com/ada.png",
+      profileLink: "https://ada.dev",
+    });
+    const error = doc.validateSync();
+    expect(error).toBeUndefined();
+    expect(doc.profileLink).toBe("https://ada.dev");
+  });
+
+  it("fails validation when profileLink is not a valid http/https URL", () => {
+    const doc = new Person({
+      ...validPersonData,
+      profileLink: "ftp://invalid-url.com",
+    });
+    const error = doc.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.profileLink).toBeDefined();
+  });
+
+  it("sets the correct model name and collection name", () => {
+    expect(Person.modelName).toBe("Person");
+    expect(Person.collection.collectionName).toBe("people");
+  });
+});
+
 // ─── Project Model (skills addition) ────────────────────────────────────────
 
 describe("Project Model - Skills Reference", () => {
@@ -436,6 +503,281 @@ describe("Project Model - Skills Reference", () => {
     const schemaType = (skillsPath as mongoose.Schema.Types.Array).caster;
     expect(schemaType).toBeDefined();
     expect((schemaType as unknown as { options: { ref: string } }).options.ref).toBe("Skill");
+  });
+});
+
+// ─── Project Model - Gallery ─────────────────────────────────────────────────
+
+describe("Project Model - Gallery", () => {
+  it("defaults project gallery to an empty array", () => {
+    const project = new Project({
+      title: "Gallery Project",
+      slug: "gallery-project",
+      category: "web",
+      description: "A project with gallery.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+    });
+    expect(project.gallery).toBeDefined();
+    expect(project.gallery).toHaveLength(0);
+    expect(project.validateSync()).toBeUndefined();
+  });
+
+  it("defaults version gallery to an empty array", () => {
+    const project = new Project({
+      title: "Gallery Project",
+      slug: "gallery-project",
+      category: "web",
+      description: "A project with gallery.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [{ versionTag: "v1.0.0" }],
+    });
+    expect(project.versions[0].gallery).toBeDefined();
+    expect(project.versions[0].gallery).toHaveLength(0);
+    expect(project.validateSync()).toBeUndefined();
+  });
+
+  it("accepts valid gallery image items with default tags and caption and auto-generated _id", () => {
+    const project = new Project({
+      title: "Gallery Project",
+      slug: "gallery-project",
+      category: "web",
+      description: "A project with gallery.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      gallery: [{ url: "https://cdn.example.com/img1.png" }],
+      versions: [
+        {
+          versionTag: "v1.0.0",
+          gallery: [{ url: "https://cdn.example.com/v1-img1.png" }],
+        },
+      ],
+    });
+    expect(project.validateSync()).toBeUndefined();
+    expect(project.gallery[0]._id).toBeDefined();
+    expect(project.gallery[0].url).toBe("https://cdn.example.com/img1.png");
+    expect(project.gallery[0].tags).toEqual([]);
+    expect(project.gallery[0].caption).toBe("");
+
+    expect(project.versions[0].gallery[0]._id).toBeDefined();
+    expect(project.versions[0].gallery[0].url).toBe("https://cdn.example.com/v1-img1.png");
+    expect(project.versions[0].gallery[0].tags).toEqual([]);
+    expect(project.versions[0].gallery[0].caption).toBe("");
+  });
+
+  it("fails validation when a gallery image url is missing", () => {
+    const project = new Project({
+      title: "Gallery Project",
+      slug: "gallery-project",
+      category: "web",
+      description: "A project with gallery.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      gallery: [{ caption: "Missing url" } as unknown as { url: string }],
+    });
+    const err = project.validateSync();
+    expect(err).toBeDefined();
+    expect(err!.errors["gallery.0.url"]).toBeDefined();
+  });
+});
+
+// ─── Project Model - Version Metadata & Contributors Join ───────────────────
+
+describe("Project Model - Version Metadata & Contributors Join", () => {
+  it("accepts all 7 new metadata fields on version subdocuments", () => {
+    const contrId = new mongoose.Types.ObjectId();
+    const project = new Project({
+      title: "Metadata Project",
+      slug: "metadata-project",
+      category: "web",
+      description: "A project with metadata.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [
+        {
+          versionTag: "v1.0.0",
+          status: "work_in_progress",
+          startDate: new Date("2024-01-01"),
+          endDate: new Date("2024-06-01"),
+          deployedLink: "https://app.dev",
+          githubLink: "https://github.com/app",
+          contributors: [{ contributor: contrId, role: "Architect" }],
+          socialLinks: [{ platform: "GitHub", url: "https://github.com/app" }],
+        },
+      ],
+    });
+
+    const error = project.validateSync();
+    expect(error).toBeUndefined();
+    const v = project.versions[0];
+    expect(v.status).toBe("work_in_progress");
+    expect(v.deployedLink).toBe("https://app.dev");
+    expect(v.githubLink).toBe("https://github.com/app");
+    expect(v.contributors?.[0].contributor?.toString()).toBe(contrId.toString());
+    expect(v.contributors?.[0].role).toBe("Architect");
+  });
+
+  it("does not inject schema defaults for version status or startDate", () => {
+    const project = new Project({
+      title: "No Default Project",
+      slug: "no-default-project",
+      category: "web",
+      description: "A project without version defaults.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [{ versionTag: "v0.9.0" }],
+    });
+
+    const v = project.versions[0];
+    expect(v.status).toBeUndefined();
+    expect(v.startDate).toBeUndefined();
+    expect(v.endDate).toBeUndefined();
+    expect(v.deployedLink).toBeUndefined();
+    expect(v.githubLink).toBeUndefined();
+  });
+
+  it("disables _id on contributor join subdocuments", () => {
+    const contrId = new mongoose.Types.ObjectId();
+    const project = new Project({
+      title: "Join Project",
+      slug: "join-project",
+      category: "web",
+      description: "A project testing join schema.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      contributors: [{ contributor: contrId, role: "Tester" }],
+    });
+
+    const raw = project.toObject() as unknown as { contributors: Array<Record<string, unknown>> };
+    expect(raw.contributors[0]._id).toBeUndefined();
+    expect(raw.contributors[0].role).toBe("Tester");
+  });
+
+  it("references Person model in contributor join subdocuments", () => {
+    const projContrRef = (Project.schema.path("contributors") as unknown as { schema: { path: (p: string) => { options: { ref: string } } } })
+      .schema.path("contributor").options.ref;
+    expect(projContrRef).toBe("Person");
+
+    const verSchema = (Project.schema.path("versions") as unknown as { schema: mongoose.Schema }).schema;
+    const verContrRef = (verSchema.path("contributors") as unknown as { schema: { path: (p: string) => { options: { ref: string } } } })
+      .schema.path("contributor").options.ref;
+    expect(verContrRef).toBe("Person");
+  });
+
+  it("has correct defaults and types for host, hostedBy, and forkedFrom on Project", () => {
+    const project = new Project({
+      title: "Host Defaults Project",
+      slug: "host-defaults-project",
+      category: "web",
+      description: "Testing host defaults.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+    });
+
+    expect(project.host).toBe("self");
+    expect(project.hostedBy).toEqual([]);
+    expect(project.forkedFrom).toBeNull();
+    expect(project.validateSync()).toBeUndefined();
+  });
+
+  it("accepts valid host 'people' and hostedBy references on Project", () => {
+    const hostPersonId = new mongoose.Types.ObjectId();
+    const project = new Project({
+      title: "People Hosted Project",
+      slug: "people-hosted-project",
+      category: "web",
+      description: "Testing people hosted project.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      host: "people",
+      hostedBy: [hostPersonId],
+      forkedFrom: "https://github.com/upstream/repo",
+    });
+
+    expect(project.validateSync()).toBeUndefined();
+    expect(project.host).toBe("people");
+    expect(project.hostedBy).toHaveLength(1);
+    expect(project.hostedBy[0].toString()).toBe(hostPersonId.toString());
+    expect(project.forkedFrom).toBe("https://github.com/upstream/repo");
+  });
+
+  it("rejects invalid host enum on Project", () => {
+    const project = new Project({
+      title: "Bad Host Project",
+      slug: "bad-host-project",
+      category: "web",
+      description: "Testing invalid host enum.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      host: "other",
+    });
+
+    const error = project.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors.host).toBeDefined();
+  });
+
+  it("does not inject schema defaults for version host or hostedBy", () => {
+    const project = new Project({
+      title: "Version Host Defaults Project",
+      slug: "version-host-defaults-project",
+      category: "web",
+      description: "Testing version host defaults.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [{ versionTag: "v1.0.0" }],
+    });
+
+    const v = project.versions[0];
+    expect(v.host).toBeUndefined();
+    expect(v.hostedBy).toBeUndefined();
+  });
+
+  it("accepts version host override and hostedBy on version subdocument", () => {
+    const hostPersonId = new mongoose.Types.ObjectId();
+    const project = new Project({
+      title: "Version Override Project",
+      slug: "version-override-project",
+      category: "web",
+      description: "Testing version host override.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [
+        {
+          versionTag: "v1.0.0",
+          host: "people",
+          hostedBy: [hostPersonId],
+        },
+      ],
+    });
+
+    expect(project.validateSync()).toBeUndefined();
+    const v = project.versions[0];
+    expect(v.host).toBe("people");
+    expect(v.hostedBy).toHaveLength(1);
+    expect(v.hostedBy![0].toString()).toBe(hostPersonId.toString());
+  });
+
+  it("rejects invalid version host enum value", () => {
+    const project = new Project({
+      title: "Bad Version Host Project",
+      slug: "bad-version-host-project",
+      category: "web",
+      description: "Testing invalid version host enum.",
+      image: "https://cdn.example.com/app.png",
+      startDate: new Date("2024-06-01"),
+      versions: [
+        {
+          versionTag: "v1.0.0",
+          host: "invalid_host",
+        },
+      ],
+    });
+
+    const error = project.validateSync();
+    expect(error).toBeDefined();
+    expect(error!.errors["versions.0.host"]).toBeDefined();
   });
 });
 
@@ -687,5 +1029,11 @@ describe("Models barrel export (src/models/index.ts)", () => {
   it("exports LogEntry model", () => {
     expect(barrel.LogEntry).toBeDefined();
     expect(barrel.LogEntry.modelName).toBe("LogEntry");
+  });
+
+  it("exports Person model and does not export Contributor", () => {
+    expect(barrel.Person).toBeDefined();
+    expect(barrel.Person.modelName).toBe("Person");
+    expect(barrel.Contributor).toBeUndefined();
   });
 });

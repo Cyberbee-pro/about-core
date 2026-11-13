@@ -14,12 +14,14 @@ jest.mock("@/config/cloudinary", () => {
 });
 
 import {
+  getUniquePublicId,
   getNextPublicId,
   getNextResumePublicId,
   stripExtension,
   sanitizeResumeFilename,
   sanitizeResumeUrl,
   sanitizeResumePublicId,
+  sanitizeVersionTag,
 } from "@/middlewares/uploadMiddleware";
 
 interface CloudinarySearchTestDouble {
@@ -36,82 +38,32 @@ const mockCloudinary = jest.requireMock("@/config/cloudinary") as {
 const mockSearch = mockCloudinary.default.search;
 const mockExecute = mockSearch.execute;
 
-describe("getNextPublicId", () => {
+describe("getUniquePublicId", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    // Re-setup chaining after clearAllMocks
-    mockSearch.expression.mockReturnValue(mockSearch);
-    mockSearch.max_results.mockReturnValue(mockSearch);
   });
 
-  it("returns slug_1 when folder is empty", async () => {
-    mockExecute.mockResolvedValue({ resources: [], total_count: 0 });
-    const cache: Map<string, string[] | null> = new Map();
-
-    const id = await getNextPublicId(cache, "portfolio/projects/my-app/images", "my-app");
-    expect(id).toBe("my-app_1");
+  it("appends timestamp and random string to base", () => {
+    const id = getUniquePublicId("my-app");
+    expect(id).toMatch(/^my-app_\d+_[a-z0-9]+$/);
   });
 
-  it("returns slug_3 when slug_1 and slug_2 already exist", async () => {
-    mockExecute.mockResolvedValue({
-      resources: [
-        { public_id: "portfolio/projects/my-app/images/my-app_1", folder: "portfolio/projects/my-app/images", resource_type: "image" },
-        { public_id: "portfolio/projects/my-app/images/my-app_2", folder: "portfolio/projects/my-app/images", resource_type: "image" },
-      ],
-      total_count: 2,
-    });
-    const cache: Map<string, string[] | null> = new Map();
-
-    const id = await getNextPublicId(cache, "portfolio/projects/my-app/images", "my-app");
-    expect(id).toBe("my-app_3");
+  it("produces distinct IDs for successive calls with the same base", () => {
+    const id1 = getUniquePublicId("my-app");
+    const id2 = getUniquePublicId("my-app");
+    expect(id1).not.toBe(id2);
   });
 
-  it("returns profile_1 for profile assets with empty folder", async () => {
-    mockExecute.mockResolvedValue({ resources: [], total_count: 0 });
-    const cache: Map<string, string[] | null> = new Map();
-
-    const id = await getNextPublicId(cache, "portfolio/profile/images", "profile");
-    expect(id).toBe("profile_1");
+  it("does not call Cloudinary Search API", () => {
+    getUniquePublicId("test");
+    expect(mockExecute).not.toHaveBeenCalled();
   });
+});
 
-  it("uses cached results — does NOT call search API twice for the same folder", async () => {
-    mockExecute.mockResolvedValue({ resources: [], total_count: 0 });
-    const cache: Map<string, string[] | null> = new Map();
-
-    await getNextPublicId(cache, "portfolio/projects/demo/images", "demo");
-    await getNextPublicId(cache, "portfolio/projects/demo/images", "demo");
-
-    // Search API called only once for this folder
-    expect(mockExecute).toHaveBeenCalledTimes(1);
-  });
-
-  it("increments within the same cache when called for the same folder", async () => {
-    mockExecute.mockResolvedValue({ resources: [], total_count: 0 });
-    const cache: Map<string, string[] | null> = new Map();
-
-    const id1 = await getNextPublicId(cache, "portfolio/projects/x/images", "x");
-    const id2 = await getNextPublicId(cache, "portfolio/projects/x/images", "x");
-
-    expect(id1).toBe("x_1");
-    expect(id2).toBe("x_2");
-  });
-
-  it("falls back to timestamp name when search API throws", async () => {
-    mockExecute.mockRejectedValue(new Error("Cloudinary unavailable"));
-    const cache: Map<string, string[] | null> = new Map();
-
-    const id = await getNextPublicId(cache, "portfolio/projects/fail/images", "fail");
-    expect(id).toMatch(/^fail_\d{13,}$/); // timestamp pattern
-  });
-
-  it("caches the error — does not re‑call search on subsequent attempts", async () => {
-    mockExecute.mockRejectedValue(new Error("Cloudinary unavailable"));
-    const cache: Map<string, string[] | null> = new Map();
-
-    await getNextPublicId(cache, "portfolio/projects/fail/images", "fail");
-    await getNextPublicId(cache, "portfolio/projects/fail/images", "fail");
-
-    expect(mockExecute).toHaveBeenCalledTimes(1);
+describe("getNextPublicId (compatibility wrapper)", () => {
+  it("returns unique suffixed public ID using getUniquePublicId", async () => {
+    const id = await getNextPublicId(new Map(), "folder", "my-app");
+    expect(id).toMatch(/^my-app_\d+_[a-z0-9]+$/);
   });
 });
 
@@ -290,6 +242,59 @@ describe("Resume filename and URL sanitization helpers", () => {
       expect(sanitizeResumePublicId("portfolio/site_config/resume/resume_date_1")).toBe(
         "portfolio/site_config/resume/resume_date_1"
       );
+    });
+  });
+
+  describe("sanitizeVersionTag", () => {
+    it("preserves dots in standard semantic version tags", () => {
+      expect(sanitizeVersionTag("v1.0.0")).toBe("v1.0.0");
+      expect(sanitizeVersionTag("1.2.3.4")).toBe("1.2.3.4");
+      expect(sanitizeVersionTag("v2.1.0-beta.1")).toBe("v2.1.0-beta.1");
+    });
+
+    it("lowercases uppercase characters and trims whitespace", () => {
+      expect(sanitizeVersionTag("  V1.0.0  ")).toBe("v1.0.0");
+      expect(sanitizeVersionTag("RELEASE-2.0")).toBe("release-2.0");
+    });
+
+    it("preserves underscores and hyphens", () => {
+      expect(sanitizeVersionTag("v1_0_0")).toBe("v1_0_0");
+      expect(sanitizeVersionTag("v1-0-0")).toBe("v1-0-0");
+    });
+
+    it("replaces spaces, slashes, and special characters with hyphens", () => {
+      expect(sanitizeVersionTag("v1/0/0")).toBe("v1-0-0");
+      expect(sanitizeVersionTag("v1\\0\\0")).toBe("v1-0-0");
+      expect(sanitizeVersionTag("v1 0 0")).toBe("v1-0-0");
+      expect(sanitizeVersionTag("v1:0:0")).toBe("v1-0-0");
+      expect(sanitizeVersionTag("v1@final#1")).toBe("v1-final-1");
+    });
+
+    it("prevents directory traversal by neutralizing consecutive dots", () => {
+      expect(sanitizeVersionTag("../../v1.0.0")).toBe("v1.0.0");
+      expect(sanitizeVersionTag("..")).toBe("");
+      expect(sanitizeVersionTag("....")).toBe("");
+      expect(sanitizeVersionTag("v1..0..0")).toBe("v1-0-0");
+    });
+
+    it("strips leading and trailing dots and hyphens", () => {
+      expect(sanitizeVersionTag("---v1.0.0...")).toBe("v1.0.0");
+      expect(sanitizeVersionTag(".v1.0.0.")).toBe("v1.0.0");
+      expect(sanitizeVersionTag("---")).toBe("");
+      expect(sanitizeVersionTag("...")).toBe("");
+    });
+
+    it("collapses multiple consecutive hyphens into a single hyphen", () => {
+      expect(sanitizeVersionTag("v1---beta---1")).toBe("v1-beta-1");
+    });
+
+    it("safely truncates excessively long tags to maximum 64 characters", () => {
+      const veryLong = "v1.0.0-" + "a".repeat(100);
+      const sanitized = sanitizeVersionTag(veryLong);
+      expect(sanitized.length).toBeLessThanOrEqual(64);
+      expect(sanitized.startsWith("v1.0.0-")).toBe(true);
+      expect(sanitized.endsWith("-")).toBe(false);
+      expect(sanitized.endsWith(".")).toBe(false);
     });
   });
 });

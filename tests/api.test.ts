@@ -223,6 +223,36 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
     });
+
+    it("POST /api/v1/projects ignores versions field and always starts with versions: []", async () => {
+      (Project.create as jest.Mock).mockImplementation((data) =>
+        Promise.resolve({ _id: "60c72b2f9b1d8b2bad000001", ...data })
+      );
+
+      const res = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "Project Zero",
+          category: "web",
+          description: "Testing versions ignore",
+          image: "https://example.com/test.png",
+          versions: [
+            {
+              versionTag: "x",
+              gallery: [{ url: "javascript:alert(1)" }],
+            },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(Project.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          versions: [],
+        })
+      );
+    });
   });
 
   describe("Multer & Cloudinary Media Upload Routing", () => {
@@ -260,17 +290,17 @@ describe("about-core API & Middleware Integration Tests", () => {
       const imageUpload = mockUploadCalls.find((c) => c.folder === "portfolio/projects/spatial-canvas/images");
       expect(imageUpload).toBeDefined();
       expect(imageUpload?.resource_type).toBe("image");
-      expect(imageUpload?.public_id).toBe("spatial-canvas_1");
+      expect(imageUpload?.public_id).toMatch(/^spatial-canvas_\d+_[a-z0-9]+$/);
 
       const videoUpload = mockUploadCalls.find((c) => c.folder === "portfolio/projects/spatial-canvas/videos");
       expect(videoUpload).toBeDefined();
       expect(videoUpload?.resource_type).toBe("video");
-      expect(videoUpload?.public_id).toBe("spatial-canvas_1");
+      expect(videoUpload?.public_id).toMatch(/^spatial-canvas_\d+_[a-z0-9]+$/);
 
       const modelUpload = mockUploadCalls.find((c) => c.folder === "portfolio/projects/spatial-canvas/models");
       expect(modelUpload).toBeDefined();
       expect(modelUpload?.resource_type).toBe("raw");
-      expect(modelUpload?.public_id).toBe("spatial-canvas_1");
+      expect(modelUpload?.public_id).toMatch(/^spatial-canvas_\d+_[a-z0-9]+$/);
 
       expect(Project.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -287,7 +317,17 @@ describe("about-core API & Middleware Integration Tests", () => {
   describe("Public Project Routes", () => {
     it("GET /api/v1/projects returns filtered non-invisible projects", async () => {
       const mockProjects = [
-        { title: "IoT Hub", slug: "iot-hub", category: "iot", status: "active" },
+        {
+          title: "IoT Hub",
+          slug: "iot-hub",
+          category: "iot",
+          status: "active",
+          contributors: [],
+          gallery: [],
+          host: "self",
+          hostedBy: [],
+          forkedFrom: null,
+        },
       ];
 
       (Project.find as jest.Mock).mockReturnValue({
@@ -408,6 +448,70 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(res.body.data.title).toBe("Updated Title");
     });
 
+    it("PUT /api/v1/projects/:id clears githubLink, deployedLink, and videoDemo to null when sent as empty strings", async () => {
+      (Project.findByIdAndUpdate as jest.Mock).mockImplementation((id, payload) =>
+        Promise.resolve({
+          _id: id,
+          title: "Updated",
+          ...payload,
+        })
+      );
+
+      const res = await request(app)
+        .put("/api/v1/projects/60c72b2f9b1d8b2bad000001")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          githubLink: "",
+          deployedLink: "",
+          videoDemo: "",
+        });
+
+      expect(res.status).toBe(200);
+      expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+        "60c72b2f9b1d8b2bad000001",
+        expect.objectContaining({
+          githubLink: null,
+          deployedLink: null,
+          videoDemo: null,
+        }),
+        expect.anything()
+      );
+      expect(res.body.data.githubLink).toBeNull();
+      expect(res.body.data.deployedLink).toBeNull();
+      expect(res.body.data.videoDemo).toBeNull();
+    });
+
+    it("PUT /api/v1/projects/:id ignores versions field in payload", async () => {
+      const updatedProject = {
+        _id: "60c72b2f9b1d8b2bad000001",
+        title: "Updated Title",
+        versions: [{ versionTag: "v1.0.0" }],
+      };
+
+      (Project.findByIdAndUpdate as jest.Mock).mockResolvedValue(updatedProject);
+
+      const res = await request(app)
+        .put("/api/v1/projects/60c72b2f9b1d8b2bad000001")
+        .set("Authorization", "Bearer test-secret-token")
+        .send({
+          title: "Updated Title",
+          versions: [
+            {
+              versionTag: "malicious",
+              gallery: [{ url: "javascript:alert(1)" }],
+            },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(Project.findByIdAndUpdate).toHaveBeenCalledWith(
+        "60c72b2f9b1d8b2bad000001",
+        expect.not.objectContaining({ versions: expect.anything() }),
+        expect.any(Object)
+      );
+    });
+
     it("DELETE /api/v1/projects/:id deletes project", async () => {
       (Project.findByIdAndDelete as jest.Mock).mockResolvedValue({
         _id: "60c72b2f9b1d8b2bad000001",
@@ -452,9 +556,9 @@ describe("about-core API & Middleware Integration Tests", () => {
 
     it("GET /api/v1/admin/projects returns all projects including invisible and draft items when authenticated", async () => {
       const mockAdminProjects = [
-        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: false },
-        { title: "Planning Project", slug: "planning-proj", category: "web", status: "planning", featured: true },
-        { title: "Active Project", slug: "active-proj", category: "mobile", status: "active", featured: false },
+        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: false, contributors: [], gallery: [], host: "self", hostedBy: [], forkedFrom: null },
+        { title: "Planning Project", slug: "planning-proj", category: "web", status: "planning", featured: true, contributors: [], gallery: [], host: "self", hostedBy: [], forkedFrom: null },
+        { title: "Active Project", slug: "active-proj", category: "mobile", status: "active", featured: false, contributors: [], gallery: [], host: "self", hostedBy: [], forkedFrom: null },
       ];
 
       (Project.find as jest.Mock).mockReturnValue({
@@ -477,7 +581,7 @@ describe("about-core API & Middleware Integration Tests", () => {
 
     it("GET /api/v1/admin/projects supports query filters for status, category, featured, and tag", async () => {
       const mockFilteredProjects = [
-        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: true, tags: ["ai"] },
+        { title: "Secret Project", slug: "secret-project", category: "rnd", status: "invisible", featured: true, tags: ["ai"], contributors: [], gallery: [], host: "self", hostedBy: [], forkedFrom: null },
       ];
 
       (Project.find as jest.Mock).mockReturnValue({
@@ -1051,6 +1155,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(resumeUploadCall?.resource_type).toBe("auto");
       expect(resumeUploadCall?.public_id).toBe("resume_date_1");
       expect(resumeUploadCall?.access_mode).toBeUndefined();
+      expect(mockDestroy).not.toHaveBeenCalled();
     });
 
     it("POST /api/v1/config/resume rejects with 400 when no resume file is attached", async () => {
@@ -1374,10 +1479,31 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(mockProject.save).toHaveBeenCalled();
     });
 
+    it("POST /api/v1/projects/:slug/versions parses isLatest='false' as multipart string and sets isLatest to false without unsetting previous latest", async () => {
+      const mockProject = {
+        _id: "60c72b2f9b1d8b2bad000001",
+        versions: [{ versionTag: "v1.0.0", isLatest: true }] as Array<{ versionTag: string; isLatest: boolean }>,
+        save: jest.fn().mockResolvedValue(true),
+      };
+
+      (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+      const res = await request(app)
+        .post("/api/v1/projects/test-project/versions")
+        .set("Authorization", "Bearer test-secret-token")
+        .field("versionTag", "lat-test")
+        .field("isLatest", "false");
+
+      expect(res.status).toBe(201);
+      expect(mockProject.versions[0].isLatest).toBe(true);
+      expect(mockProject.versions[1].versionTag).toBe("lat-test");
+      expect(mockProject.versions[1].isLatest).toBe(false);
+    });
+
     it("parses multipart version fields before adding a version", async () => {
       const mockProject = {
         _id: "60c72b2f9b1d8b2bad000001",
-        versions: [] as { versionTag: string }[],
+        versions: [] as Array<{ versionTag: string; changelog?: string[] }>,
         save: jest.fn().mockResolvedValue(true),
       };
 
@@ -1391,6 +1517,198 @@ describe("about-core API & Middleware Integration Tests", () => {
 
       expect(res.status).toBe(201);
       expect(mockProject.versions[0].versionTag).toBe("v1.2.0");
+      expect(mockProject.versions[0].changelog).toEqual(["Added multipart support"]);
+    });
+
+    describe("POST changelog parsing formats", () => {
+      it("parses real array in JSON body (trims entries, drops empty ones)", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          versions: [] as Array<{ versionTag: string; changelog?: string[] }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({
+            versionTag: "v1.3.0",
+            changelog: [" feature A ", "", "  ", "feature B "],
+          });
+
+        expect(res.status).toBe(201);
+        expect(mockProject.versions[0].changelog).toEqual(["feature A", "feature B"]);
+      });
+
+      it("parses repeated multipart fields (changelog=one & changelog=two)", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          versions: [] as Array<{ versionTag: string; changelog?: string[] }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v1.3.1")
+          .field("changelog", "one")
+          .field("changelog", "two");
+
+        expect(res.status).toBe(201);
+        expect(mockProject.versions[0].changelog).toEqual(["one", "two"]);
+      });
+
+      it("parses multipart JSON-array string without a file", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          versions: [] as Array<{ versionTag: string; changelog?: string[] }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v1.3.2")
+          .field("changelog", '["alpha", "beta"]');
+
+        expect(res.status).toBe(201);
+        expect(mockProject.versions[0].changelog).toEqual(["alpha", "beta"]);
+      });
+
+      it("parses multipart JSON-array string with an attached file", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          versions: [] as Array<{ versionTag: string; changelog?: string[]; image?: string }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v1.3.3")
+          .field("changelog", '["file change 1", "file change 2"]')
+          .attach("image", Buffer.from("version img"), {
+            filename: "v.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(201);
+        expect(mockProject.versions[0].changelog).toEqual(["file change 1", "file change 2"]);
+      });
+
+      it("parses single repeated multipart field as a one-item array", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          versions: [] as Array<{ versionTag: string; changelog?: string[] }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v1.3.4")
+          .field("changelog", "only-one");
+
+        expect(res.status).toBe(201);
+        expect(mockProject.versions[0].changelog).toEqual(["only-one"]);
+      });
+
+      it("defaults changelog to empty array when omitted, empty string, or empty array", async () => {
+        const mockProject1 = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          versions: [] as Array<{ versionTag: string; changelog?: string[] }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject1);
+
+        const res1 = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ versionTag: "v1.3.5" });
+
+        expect(res1.status).toBe(201);
+        expect(mockProject1.versions[0].changelog).toEqual([]);
+
+        const mockProject2 = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          versions: [] as Array<{ versionTag: string; changelog?: string[] }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject2);
+
+        const res2 = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v1.3.6")
+          .field("changelog", "");
+
+        expect(res2.status).toBe(201);
+        expect(mockProject2.versions[0].changelog).toEqual([]);
+
+        const mockProject3 = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          versions: [] as Array<{ versionTag: string; changelog?: string[] }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject3);
+
+        const res3 = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v1.3.7")
+          .field("changelog", "[]");
+
+        expect(res3.status).toBe(201);
+        expect(mockProject3.versions[0].changelog).toEqual([]);
+      });
+
+      it("returns 400 for non-string entries in JSON body", async () => {
+        const res = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({
+            versionTag: "v1.3.8",
+            changelog: [123],
+          });
+
+        expect(res.status).toBe(400);
+        expect(res.body.success).toBe(false);
+      });
+
+      it("returns 400 for non-string entries in multipart JSON string", async () => {
+        const res = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v1.3.9")
+          .field("changelog", '["valid", 123]');
+
+        expect(res.status).toBe(400);
+        expect(res.body.success).toBe(false);
+      });
+
+      it("returns 400 and cleans up uploaded file when changelog has non-string entries", async () => {
+        const res = await request(app)
+          .post("/api/v1/projects/test-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v1.3.10")
+          .field("changelog", '["valid", false]')
+          .attach("image", Buffer.from("fail img"), {
+            filename: "fail.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(400);
+        expect(res.body.success).toBe(false);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/projects/test-project/v1.3.10/images/"),
+          expect.objectContaining({ resource_type: "image" })
+        );
+      });
     });
 
     it("stores uploaded media URLs on the new version", async () => {
@@ -1435,6 +1753,1136 @@ describe("about-core API & Middleware Integration Tests", () => {
       expect(mockProject.image).toBe("https://example.com/project-image.png");
       expect(mockProject.videoDemo).toBe("https://example.com/project-video.mp4");
       expect(mockProject.threeDModel.fileUrl).toBe("https://example.com/project-model.glb");
+    });
+
+    describe("PUT /api/v1/projects/:slug/versions/:versionId", () => {
+      it("rejects unauthorized request without token", async () => {
+        const res = await request(app).put("/api/v1/projects/my-slug/versions/60c72b2f9b1d8b2bad000010");
+        expect(res.status).toBe(401);
+        expect(res.body.success).toBe(false);
+      });
+
+      it("rejects unauthorized request with invalid token", async () => {
+        const res = await request(app)
+          .put("/api/v1/projects/my-slug/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer invalid-token");
+        expect(res.status).toBe(401);
+        expect(res.body.success).toBe(false);
+      });
+
+      it("returns 400 for invalid versionId format", async () => {
+        const res = await request(app)
+          .put("/api/v1/projects/my-slug/versions/invalid-id")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ versionTag: "v1.2.0" });
+        expect(res.status).toBe(400);
+        expect(res.body.message).toContain("Invalid identifier format");
+      });
+
+      it("returns 404 if project is not found by slug", async () => {
+        (Project.findOne as jest.Mock).mockResolvedValue(null);
+
+        const res = await request(app)
+          .put("/api/v1/projects/unknown-slug/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ versionTag: "v1.2.0" });
+        expect(res.status).toBe(404);
+        expect(res.body.message).toContain("Project not found with slug: unknown-slug");
+      });
+
+      it("returns 404 if version is not found in project", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000020", versionTag: "v1.0.0" },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ versionTag: "v1.2.0" });
+        expect(res.status).toBe(404);
+        expect(res.body.message).toContain("Version not found with id: 60c72b2f9b1d8b2bad000010");
+      });
+
+      it("returns 400 if versionTag is empty or whitespace", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0" },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ versionTag: "   " });
+        expect(res.status).toBe(400);
+        expect(res.body.message).toContain("Version tag");
+      });
+
+      it("returns 400 for invalid releaseDate format", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0" },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ releaseDate: "not-a-valid-date" });
+        expect(res.status).toBe(400);
+        expect(res.body.message).toContain("Invalid release date format");
+      });
+
+      it("returns 409 if versionTag duplicates another version (case-insensitive)", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0" },
+            { _id: "60c72b2f9b1d8b2bad000020", versionTag: "v2.0.0" },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ versionTag: "V2.0.0" });
+        expect(res.status).toBe(409);
+        expect(res.body.message).toContain("already exists");
+      });
+
+      it("allows renaming to its own tag with different casing", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0", isLatest: true },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ versionTag: "V1.0.0" });
+        expect(res.status).toBe(200);
+        expect(mockProject.versions[0].versionTag).toBe("V1.0.0");
+      });
+
+      it("updates text fields partially and preserves untouched fields", async () => {
+        const originalDate = new Date("2026-01-01T00:00:00.000Z");
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          title: "Untouched Project Title",
+          slug: "my-project",
+          versions: [
+            {
+              _id: "60c72b2f9b1d8b2bad000010",
+              versionTag: "v1.0.0",
+              releaseDate: originalDate,
+              changelog: ["Initial feature"],
+              demoUrl: "https://demo.old.com",
+              image: "https://example.com/img.png",
+              videoDemo: "https://example.com/vid.mp4",
+              threeDFileUrl: "https://example.com/model.glb",
+              isLatest: true,
+            },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ demoUrl: "https://demo.new.com" });
+
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect(mockProject.versions[0].demoUrl).toBe("https://demo.new.com");
+        expect(mockProject.versions[0].versionTag).toBe("v1.0.0");
+        expect(mockProject.versions[0].releaseDate).toEqual(originalDate);
+        expect(mockProject.versions[0].changelog).toEqual(["Initial feature"]);
+        expect(mockProject.versions[0].image).toBe("https://example.com/img.png");
+        expect(mockProject.title).toBe("Untouched Project Title");
+      });
+
+      it("clears demoUrl and media URLs when passed empty string", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            {
+              _id: "60c72b2f9b1d8b2bad000010",
+              versionTag: "v1.0.0",
+              demoUrl: "https://demo.com",
+              image: "https://example.com/img.png",
+              videoDemo: "https://example.com/vid.mp4",
+              threeDFileUrl: "https://example.com/model.glb",
+              isLatest: true,
+            },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({
+            demoUrl: "",
+            image: "",
+            videoDemo: "",
+            threeDFileUrl: "",
+          });
+
+        expect(res.status).toBe(200);
+        expect(mockProject.versions[0].demoUrl).toBeUndefined();
+        expect(mockProject.versions[0].image).toBeUndefined();
+        expect(mockProject.versions[0].videoDemo).toBeUndefined();
+        expect(mockProject.versions[0].threeDFileUrl).toBeUndefined();
+      });
+
+      it("manages isLatest: true by clearing other versions", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0", isLatest: true },
+            { _id: "60c72b2f9b1d8b2bad000020", versionTag: "v1.1.0", isLatest: false },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000020")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ isLatest: true });
+
+        expect(res.status).toBe(200);
+        expect(mockProject.versions[0].isLatest).toBe(false);
+        expect(mockProject.versions[1].isLatest).toBe(true);
+      });
+
+      it("manages isLatest: false on latest version leaving no latest", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0", isLatest: true },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .send({ isLatest: false });
+
+        expect(res.status).toBe(200);
+        expect(mockProject.versions[0].isLatest).toBe(false);
+      });
+
+      it("handles multipart file uploads using newly provided versionTag", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            {
+              _id: "60c72b2f9b1d8b2bad000010",
+              versionTag: "v1.0.0",
+              isLatest: true,
+            },
+          ] as Array<{
+            _id: string;
+            versionTag: string;
+            isLatest: boolean;
+            image?: string;
+            videoDemo?: string;
+            threeDFileUrl?: string;
+          }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v1.0.1")
+          .attach("image", Buffer.from("updated image"), {
+            filename: "v101.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(200);
+        const imageUploadCall = mockUploadCalls.find((c) =>
+          c.folder.includes("portfolio/projects/my-project/v1.0.1/images")
+        );
+        expect(imageUploadCall).toBeDefined();
+        expect(mockProject.versions[0].image).toContain("/v1.0.1/images/");
+      });
+
+      it("handles multipart file uploads using stored versionTag when versionTag is omitted", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            {
+              _id: "60c72b2f9b1d8b2bad000010",
+              versionTag: "v1.0.0",
+              isLatest: true,
+            },
+          ] as Array<{
+            _id: string;
+            versionTag: string;
+            isLatest: boolean;
+            image?: string;
+            videoDemo?: string;
+            threeDFileUrl?: string;
+          }>,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .attach("videoDemo", Buffer.from("updated video"), {
+            filename: "v100.mp4",
+            contentType: "video/mp4",
+          });
+
+        expect(res.status).toBe(200);
+        const videoUploadCall = mockUploadCalls.find((c) =>
+          c.folder.includes("portfolio/projects/my-project/v1.0.0/videos")
+        );
+        expect(videoUploadCall).toBeDefined();
+        expect(mockProject.versions[0].videoDemo).toContain("/v1.0.0/videos/");
+      });
+
+      it("cleans up just-uploaded files when validation fails (409 duplicate tag)", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0" },
+            { _id: "60c72b2f9b1d8b2bad000020", versionTag: "v2.0.0" },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v2.0.0")
+          .attach("image", Buffer.from("temp image"), {
+            filename: "temp.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(409);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/projects/my-project/v2.0.0/images/"),
+          expect.objectContaining({ resource_type: "image" })
+        );
+      });
+
+      describe("PUT changelog parsing formats", () => {
+        it("parses real array in JSON body (trims entries, drops empty ones)", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                changelog: ["Initial"],
+              },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .send({
+              changelog: [" updated A ", "  ", "updated B "],
+            });
+
+          expect(res.status).toBe(200);
+          expect(mockProject.versions[0].changelog).toEqual(["updated A", "updated B"]);
+        });
+
+        it("parses repeated multipart fields (changelog=item1 & changelog=item2)", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                changelog: ["Initial"],
+              },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("changelog", "item1")
+            .field("changelog", "item2");
+
+          expect(res.status).toBe(200);
+          expect(mockProject.versions[0].changelog).toEqual(["item1", "item2"]);
+        });
+
+        it("parses multipart JSON-array string without a file", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                changelog: ["Initial"],
+              },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("changelog", '["alpha", "beta"]');
+
+          expect(res.status).toBe(200);
+          expect(mockProject.versions[0].changelog).toEqual(["alpha", "beta"]);
+        });
+
+        it("parses multipart JSON-array string with an attached file", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                changelog: ["Initial"],
+              },
+            ] as Array<{ _id: string; versionTag: string; changelog?: string[]; image?: string }>,
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("changelog", '["new items 1", "new items 2"]')
+            .attach("image", Buffer.from("updated img"), {
+              filename: "updated.png",
+              contentType: "image/png",
+            });
+
+          expect(res.status).toBe(200);
+          expect(mockProject.versions[0].changelog).toEqual(["new items 1", "new items 2"]);
+        });
+
+        it("parses single repeated multipart field as a one-item array", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                changelog: ["Initial"],
+              },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("changelog", "single-item");
+
+          expect(res.status).toBe(200);
+          expect(mockProject.versions[0].changelog).toEqual(["single-item"]);
+        });
+
+        it("leaves changelog unchanged when omitted in update payload", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                changelog: ["Unchanged entry"],
+              },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .send({ demoUrl: "https://demo.shibraj.dev" });
+
+          expect(res.status).toBe(200);
+          expect(mockProject.versions[0].changelog).toEqual(["Unchanged entry"]);
+        });
+
+        it("clears changelog to empty array when passed explicit empty string", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                changelog: ["To be cleared"],
+              },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("changelog", "");
+
+          expect(res.status).toBe(200);
+          expect(mockProject.versions[0].changelog).toEqual([]);
+        });
+
+        it("clears changelog to empty array when passed explicit empty array", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                changelog: ["To be cleared"],
+              },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("changelog", "[]");
+
+          expect(res.status).toBe(200);
+          expect(mockProject.versions[0].changelog).toEqual([]);
+        });
+
+        it("returns 400 for non-string entries in JSON body", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0" },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .send({
+              changelog: [true],
+            });
+
+          expect(res.status).toBe(400);
+          expect(res.body.success).toBe(false);
+        });
+
+        it("returns 400 for non-string entries in multipart JSON string", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0" },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("changelog", '["valid", 999]');
+
+          expect(res.status).toBe(400);
+          expect(res.body.success).toBe(false);
+        });
+
+        it("returns 400 and cleans up uploaded file when changelog has non-string entries", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0" },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("changelog", '["valid", null]')
+            .attach("image", Buffer.from("fail img"), {
+              filename: "fail.png",
+              contentType: "image/png",
+            });
+
+          expect(res.status).toBe(400);
+          expect(res.body.success).toBe(false);
+          expect(mockDestroy).toHaveBeenCalledWith(
+            expect.stringContaining("portfolio/projects/my-project/v1.0.0/images/"),
+            expect.objectContaining({ resource_type: "image" })
+          );
+        });
+      });
+
+      describe("Cloudinary failed-upload rollback resource types", () => {
+        it("destroys image, video, and raw 3D model with correct resource_types on failure", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0" },
+              { _id: "60c72b2f9b1d8b2bad000020", versionTag: "v2.0.0" },
+            ],
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("versionTag", "v2.0.0") // causes 409 conflict
+            .attach("image", Buffer.from("image buffer"), {
+              filename: "asset.png",
+              contentType: "image/png",
+            })
+            .attach("videoDemo", Buffer.from("video buffer"), {
+              filename: "asset.mp4",
+              contentType: "video/mp4",
+            })
+            .attach("threeDModel", Buffer.from("model buffer"), {
+              filename: "asset.glb",
+              contentType: "model/gltf-binary",
+            });
+
+          expect(res.status).toBe(409);
+          // Assert each resource type is correctly passed to destroy
+          expect(mockDestroy).toHaveBeenCalledWith(
+            expect.stringContaining("portfolio/projects/my-project/v2.0.0/images/"),
+            { resource_type: "image" }
+          );
+          expect(mockDestroy).toHaveBeenCalledWith(
+            expect.stringContaining("portfolio/projects/my-project/v2.0.0/videos/"),
+            { resource_type: "video" }
+          );
+          expect(mockDestroy).toHaveBeenCalledWith(
+            expect.stringContaining("portfolio/projects/my-project/v2.0.0/models/"),
+            { resource_type: "raw" }
+          );
+        });
+
+        it("does NOT destroy any assets on successful version update", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                isLatest: true,
+              },
+            ] as Array<{
+              _id: string;
+              versionTag: string;
+              isLatest: boolean;
+              image?: string;
+              videoDemo?: string;
+              threeDFileUrl?: string;
+            }>,
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .attach("image", Buffer.from("valid img"), {
+              filename: "valid.png",
+              contentType: "image/png",
+            });
+
+          expect(res.status).toBe(200);
+          expect(mockDestroy).not.toHaveBeenCalled();
+        });
+      });
+
+      describe("Cloudinary version folder sanitization & security", () => {
+        it("rejects unsafe version tag '..' with 400 and does not upload to misc", async () => {
+          const res = await request(app)
+            .post("/api/v1/projects/my-project/versions")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("versionTag", "..")
+            .attach("image", Buffer.from("image"), {
+              filename: "img.png",
+              contentType: "image/png",
+            });
+
+          expect(res.status).toBe(400);
+          expect(res.body.success).toBe(false);
+          // Ensure misc folder was never uploaded to
+          const miscUpload = mockUploadCalls.find((c) => c.folder.includes("misc"));
+          expect(miscUpload).toBeUndefined();
+        });
+
+        it("sanitizes unsafe slashes in versionTag to hyphens (v1/0/0 -> v1-0-0)", async () => {
+          const mockProject = {
+            _id: "60c72b2f9b1d8b2bad000001",
+            slug: "my-project",
+            versions: [
+              {
+                _id: "60c72b2f9b1d8b2bad000010",
+                versionTag: "v1.0.0",
+                isLatest: true,
+              },
+            ] as Array<{
+              _id: string;
+              versionTag: string;
+              isLatest: boolean;
+              image?: string;
+            }>,
+            save: jest.fn().mockResolvedValue(true),
+          };
+          (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+          const res = await request(app)
+            .put("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+            .set("Authorization", "Bearer test-secret-token")
+            .field("versionTag", "v1/0/0")
+            .attach("image", Buffer.from("image"), {
+              filename: "img.png",
+              contentType: "image/png",
+            });
+
+          expect(res.status).toBe(200);
+          const uploadCall = mockUploadCalls.find((c) =>
+            c.folder.includes("portfolio/projects/my-project/v1-0-0/images")
+          );
+          expect(uploadCall).toBeDefined();
+        });
+      });
+    });
+
+    describe("DELETE /api/v1/projects/:slug/versions/:versionId", () => {
+      it("rejects unauthorized request without token", async () => {
+        const res = await request(app).delete("/api/v1/projects/my-slug/versions/60c72b2f9b1d8b2bad000010");
+        expect(res.status).toBe(401);
+      });
+
+      it("returns 400 for invalid versionId format", async () => {
+        const res = await request(app)
+          .delete("/api/v1/projects/my-slug/versions/invalid-id")
+          .set("Authorization", "Bearer test-secret-token");
+        expect(res.status).toBe(400);
+        expect(res.body.message).toContain("Invalid identifier format");
+      });
+
+      it("returns 404 if project is not found by slug", async () => {
+        (Project.findOne as jest.Mock).mockResolvedValue(null);
+
+        const res = await request(app)
+          .delete("/api/v1/projects/unknown-slug/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token");
+        expect(res.status).toBe(404);
+        expect(res.body.message).toContain("Project not found with slug: unknown-slug");
+      });
+
+      it("returns 404 if version is not found in project", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000020", versionTag: "v1.0.0" },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .delete("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token");
+        expect(res.status).toBe(404);
+        expect(res.body.message).toContain("Version not found with id: 60c72b2f9b1d8b2bad000010");
+      });
+
+      it("deletes version successfully and does NOT destroy Cloudinary assets", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0", isLatest: true },
+            { _id: "60c72b2f9b1d8b2bad000020", versionTag: "v1.1.0", isLatest: false },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .delete("/api/v1/projects/my-project/versions/60c72b2f9b1d8b2bad000010")
+          .set("Authorization", "Bearer test-secret-token");
+
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect(res.body.message).toBe("Version deleted successfully");
+        expect(mockProject.versions.length).toBe(1);
+        expect(mockProject.versions[0]._id).toBe("60c72b2f9b1d8b2bad000020");
+        expect(mockProject.versions[0].isLatest).toBe(false); // Does NOT promote v1.1.0 to latest
+        expect(mockDestroy).not.toHaveBeenCalled();
+        expect(mockProject.save).toHaveBeenCalled();
+      });
+    });
+
+    describe("Systemic Upload Rollback & Duplicate Version Tag Enforcement", () => {
+      it("POST /api/v1/projects rolls back uploaded image when creation fails with 409 duplicate", async () => {
+        const duplicateError = new Error("E11000 duplicate key error") as Error & { code?: number };
+        duplicateError.code = 11000;
+        (Project.create as jest.Mock).mockRejectedValueOnce(duplicateError);
+
+        const res = await request(app)
+          .post("/api/v1/projects")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("title", "Duplicate Project")
+          .field("category", "web")
+          .field("description", "A project with duplicate slug")
+          .attach("image", Buffer.from("proj image"), {
+            filename: "proj.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(409);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/projects/duplicate-project/images/"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("PUT /api/v1/projects/:id rolls back uploaded image when validation fails with 400", async () => {
+        const res = await request(app)
+          .put("/api/v1/projects/60c72b2f9b1d8b2bad000001")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("deployedLink", "javascript:alert(1)")
+          .attach("image", Buffer.from("updated image"), {
+            filename: "updated.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(400);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/projects/misc/images/"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("POST /api/v1/config rolls back uploaded pfp when payload validation fails with 400", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          // Missing "name" to trigger validation failure
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .attach("pfp", Buffer.from("fake pfp image"), {
+            filename: "pfp.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(400);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("POST /api/v1/projects/:slug/versions returns 409, names the tag, and rolls back uploads on duplicate versionTag", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [
+            { _id: "60c72b2f9b1d8b2bad000010", versionTag: "v1.0.0", isLatest: true },
+          ],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .post("/api/v1/projects/my-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "V1.0.0") // Case-insensitive duplicate of v1.0.0
+          .attach("image", Buffer.from("new version image"), {
+            filename: "new-v.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(409);
+        expect(res.body.success).toBe(false);
+        expect(res.body.message).toContain("Version tag 'V1.0.0' already exists for this project");
+        expect(mockProject.versions.length).toBe(1);
+        expect(mockProject.save).not.toHaveBeenCalled();
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/projects/my-project/v1.0.0/images/"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("POST /api/v1/config cleans up uploaded pfp image and resume PDF if config already exists (409)", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue({ name: "Existing Config" });
+        const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+        const fakePfp = Buffer.from("fake pfp image content");
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "pfp.png",
+            contentType: "image/png",
+          })
+          .attach("resume", fakePdf, {
+            filename: "resume.pdf",
+            contentType: "application/pdf",
+          });
+
+        expect(res.status).toBe(409);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+        expect(mockDestroy).toHaveBeenCalledWith(
+          "portfolio/site_config/resume/resume_date_1"
+        );
+      });
+
+      it("POST /api/v1/config rolls back uploaded pfp when attached resume fails PDF buffer check (400)", async () => {
+        const fakePfp = Buffer.from("valid pfp content");
+        const invalidResume = Buffer.from("not a valid pdf content");
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "avatar.png",
+            contentType: "image/png",
+          })
+          .attach("resume", invalidResume, {
+            filename: "resume.pdf",
+            contentType: "application/pdf",
+          });
+
+        expect(res.status).toBe(400);
+        expect(res.body.message).toContain("Invalid file content: only PDF files are allowed for resume upload");
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+        expect(mockUploadCalls.filter((c) => c.folder === "portfolio/site_config/resume")).toHaveLength(0);
+      });
+
+      it("POST /api/v1/config cleans up uploaded pfp image if database creation throws (500)", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+        (SiteConfig.create as jest.Mock).mockRejectedValue(new Error("Database write error"));
+        const fakePfp = Buffer.from("fake pfp image data");
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "pfp.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(500);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("PUT /api/v1/config cleans up uploaded resume PDF when history mismatch occurs (400)", async () => {
+        const existingConfig = {
+          name: "Shibraj Das",
+          jobTitles: ["Dev"],
+          resumeUrl: "https://example.com/resume.pdf",
+          statusMessage: "Building...",
+          bioSummary: "Bio...",
+          pfpUrl: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+          pfpPublicId: "portfolio/site_config/pfp_1",
+          pfpHistory: [
+            {
+              url: "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1",
+              publicId: "portfolio/site_config/pfp_1",
+              uploadedAt: new Date(),
+            },
+          ],
+        };
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue(existingConfig);
+        const fakePdf = Buffer.from("%PDF-1.4 fake pdf data");
+
+        const res = await request(app)
+          .put("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .field("pfpPublicId", "portfolio/site_config/mismatched_pfp")
+          .field("pfpUrl", "https://res.cloudinary.com/demo/image/portfolio/site_config/pfp_1")
+          .attach("resume", fakePdf, {
+            filename: "resume.pdf",
+            contentType: "application/pdf",
+          });
+
+        expect(res.status).toBe(400);
+        expect(res.body.message).toContain("Selected profile picture does not match history or is mismatched");
+        expect(mockDestroy).toHaveBeenCalledWith(
+          "portfolio/site_config/resume/resume_date_1"
+        );
+      });
+
+      it("PUT /api/v1/config cleans up uploaded pfp image if database update throws (500)", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue({
+          name: "Old Config",
+          jobTitles: ["Dev"],
+          resumeUrl: "https://example.com/resume.pdf",
+          statusMessage: "Building...",
+          bioSummary: "Bio...",
+        });
+        (SiteConfig.findOneAndUpdate as jest.Mock).mockRejectedValue(new Error("Database write error"));
+        const fakePfp = Buffer.from("fake pfp image data");
+
+        const res = await request(app)
+          .put("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "pfp.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(500);
+        expect(mockDestroy).toHaveBeenCalledWith(
+          expect.stringContaining("portfolio/site_config/pfp_"),
+          { resource_type: "image" }
+        );
+      });
+
+      it("POST /api/v1/config creates config with uploaded pfp and resume and destroys nothing (201)", async () => {
+        (SiteConfig.findOne as jest.Mock).mockResolvedValue(null);
+        (SiteConfig.create as jest.Mock).mockImplementation((data) => Promise.resolve({ _id: "new-cfg", ...data }));
+        const fakePfp = Buffer.from("valid pfp content");
+        const fakePdf = Buffer.from("%PDF-1.4 valid pdf content");
+
+        const res = await request(app)
+          .post("/api/v1/config")
+          .set("x-admin-token", "test-secret-token")
+          .field("name", "Shibraj Das")
+          .field("jobTitles", JSON.stringify(["Dev"]))
+          .field("resumeUrl", "https://example.com/resume.pdf")
+          .field("statusMessage", "Building...")
+          .field("bioSummary", "Bio...")
+          .attach("pfp", fakePfp, {
+            filename: "avatar.png",
+            contentType: "image/png",
+          })
+          .attach("resume", fakePdf, {
+            filename: "resume.pdf",
+            contentType: "application/pdf",
+          });
+
+        expect(res.status).toBe(201);
+        expect(mockDestroy).not.toHaveBeenCalled();
+      });
+
+      it("POST /api/v1/projects/:slug/versions successfully adds version with uploaded image and destroys nothing (201)", async () => {
+        const mockProject = {
+          _id: "60c72b2f9b1d8b2bad000001",
+          slug: "my-project",
+          versions: [] as any[],
+          save: jest.fn().mockResolvedValue(true),
+        };
+        (Project.findOne as jest.Mock).mockResolvedValue(mockProject);
+
+        const res = await request(app)
+          .post("/api/v1/projects/my-project/versions")
+          .set("Authorization", "Bearer test-secret-token")
+          .field("versionTag", "v2.0.0")
+          .attach("image", Buffer.from("version image"), {
+            filename: "v2.png",
+            contentType: "image/png",
+          });
+
+        expect(res.status).toBe(201);
+        expect(mockDestroy).not.toHaveBeenCalled();
+      });
     });
   });
 });
