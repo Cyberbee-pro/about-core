@@ -17,6 +17,8 @@ type CloudinaryMockCallback = (
   result?: { secure_url: string; public_id: string }
 ) => void;
 
+const mockDestroy = jest.fn().mockResolvedValue({ result: "ok" });
+
 jest.mock("@/config/cloudinary", () => {
   const uploadCalls: CloudinaryMockOptions[] = [];
   const search = {
@@ -27,6 +29,7 @@ jest.mock("@/config/cloudinary", () => {
   search.expression.mockReturnValue(search);
   search.max_results.mockReturnValue(search);
   const uploader = {
+    destroy: mockDestroy,
     upload_stream: (
       options: CloudinaryMockOptions,
       callback: CloudinaryMockCallback
@@ -40,7 +43,9 @@ jest.mock("@/config/cloudinary", () => {
       process.nextTick(() =>
         callback(null, {
           secure_url: `https://res.cloudinary.com/demo/${options.resource_type}/${options.folder}/${options.public_id || "file"}`,
-          public_id: options.public_id || "test_id",
+          public_id: options.folder
+            ? `${options.folder}/${options.public_id || "file"}`
+            : options.public_id || "test_id",
         })
       );
       return writable;
@@ -79,7 +84,7 @@ const validExperiencePayload = {
   organization: "Tech Corp",
   tag: "focus",
   type: "internship",
-  iconUrl: "portfolio/experience/techcorp.png",
+  iconUrl: "https://example.com/experience/techcorp.png",
   skills: [],
   weight: 0,
   positions: [
@@ -102,6 +107,7 @@ describe("Experiences API Integration Tests", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUploadCalls.length = 0;
+    mockDestroy.mockClear();
     mockSearch.expression.mockReturnValue(mockSearch);
     mockSearch.max_results.mockReturnValue(mockSearch);
     mockSearch.execute.mockResolvedValue({ resources: [], total_count: 0 });
@@ -199,13 +205,46 @@ describe("Experiences API Integration Tests", () => {
       (c) => c.folder === "portfolio/experiences/focus/tech-corp/media"
     );
     expect(mediaUpload).toBeDefined();
-    expect(mediaUpload?.public_id).toBe("experience_media_1");
+    expect(mediaUpload?.public_id).toMatch(/^experience_media_\d+_[a-z0-9]+$/);
 
     const certUpload = mockUploadCalls.find(
       (c) => c.folder === "portfolio/experiences/focus/tech-corp/certificates"
     );
     expect(certUpload).toBeDefined();
-    expect(certUpload?.public_id).toBe("experience_certificate_1");
+    expect(certUpload?.public_id).toMatch(/^experience_certificate_\d+_[a-z0-9]+$/);
+    expect(mockDestroy).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/v1/experiences with duplicate organization rolls back uploaded iconUrl, mediaUrls, and certificateUrls (409)", async () => {
+    (Experience.findOne as jest.Mock).mockResolvedValue(mockExperienceDoc);
+    const fakeIconBuffer = Buffer.from("fake-icon-bytes");
+    const fakeMediaBuffer = Buffer.from("fake-media-bytes");
+    const fakeCertBuffer = Buffer.from("fake-cert-bytes");
+
+    const res = await request(app)
+      .post("/api/v1/experiences")
+      .set("Authorization", "Bearer test-secret-token")
+      .field("organization", "Tech Corp")
+      .field("tag", "focus")
+      .field("type", "internship")
+      .field("positions", JSON.stringify(validExperiencePayload.positions))
+      .attach("iconUrl", fakeIconBuffer, { filename: "techcorp.png", contentType: "image/png" })
+      .attach("mediaUrls", fakeMediaBuffer, { filename: "media1.png", contentType: "image/png" })
+      .attach("certificateUrls", fakeCertBuffer, { filename: "cert1.png", contentType: "image/png" });
+
+    expect(res.status).toBe(409);
+    expect(mockDestroy).toHaveBeenCalledWith(
+      expect.stringContaining("portfolio/experiences/focus/tech-corp/icons/"),
+      { resource_type: "image" }
+    );
+    expect(mockDestroy).toHaveBeenCalledWith(
+      expect.stringContaining("portfolio/experiences/focus/tech-corp/media/"),
+      { resource_type: "image" }
+    );
+    expect(mockDestroy).toHaveBeenCalledWith(
+      expect.stringContaining("portfolio/experiences/focus/tech-corp/certificates/"),
+      { resource_type: "image" }
+    );
   });
 
   it("POST /api/v1/experiences with duplicate organization returns 409", async () => {
@@ -232,6 +271,40 @@ describe("Experiences API Integration Tests", () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.organization).toBe("Updated Tech Corp");
+  });
+
+  it("PUT /api/v1/experiences/:id handles multipart iconUrl upload and destroys nothing on success", async () => {
+    (Experience.findOne as jest.Mock).mockResolvedValue(mockExperienceDoc);
+    (Experience.findByIdAndUpdate as jest.Mock).mockResolvedValue({
+      ...mockExperienceDoc,
+      iconUrl: "https://example.com/new-icon.png",
+    });
+    const fakeIconBuffer = Buffer.from("fake-icon-bytes");
+
+    const res = await request(app)
+      .put("/api/v1/experiences/exp-1")
+      .set("Authorization", "Bearer test-secret-token")
+      .attach("iconUrl", fakeIconBuffer, { filename: "icon.png", contentType: "image/png" });
+
+    expect(res.status).toBe(200);
+    expect(mockDestroy).not.toHaveBeenCalled();
+  });
+
+  it("PUT /api/v1/experiences/:id rolls back uploaded iconUrl when experience is not found (404)", async () => {
+    (Experience.findOne as jest.Mock).mockResolvedValue(null);
+    (Experience.findByIdAndUpdate as jest.Mock).mockResolvedValue(null);
+    const fakeIconBuffer = Buffer.from("fake-icon-bytes");
+
+    const res = await request(app)
+      .put("/api/v1/experiences/exp-unknown")
+      .set("Authorization", "Bearer test-secret-token")
+      .attach("iconUrl", fakeIconBuffer, { filename: "icon.png", contentType: "image/png" });
+
+    expect(res.status).toBe(404);
+    expect(mockDestroy).toHaveBeenCalledWith(
+      expect.stringContaining("portfolio/experiences/"),
+      { resource_type: "image" }
+    );
   });
 
   it("DELETE /api/v1/experiences/:id deletes an experience (admin protected)", async () => {
@@ -388,13 +461,52 @@ describe("Experiences API Integration Tests", () => {
         (c) => c.folder === "portfolio/experiences/focus/tech-corp/media"
       );
       expect(mediaUpload).toBeDefined();
-      expect(mediaUpload?.public_id).toBe("experience_media_1");
+      expect(mediaUpload?.public_id).toMatch(/^experience_media_\d+_[a-z0-9]+$/);
 
       const certUpload = mockUploadCalls.find(
         (c) => c.folder === "portfolio/experiences/focus/tech-corp/certificates"
       );
       expect(certUpload).toBeDefined();
-      expect(certUpload?.public_id).toBe("experience_certificate_1");
+      expect(certUpload?.public_id).toMatch(/^experience_certificate_\d+_[a-z0-9]+$/);
+      expect(mockDestroy).not.toHaveBeenCalled();
+    });
+
+    it("POST /api/v1/experiences/:organization/positions rolls back uploaded media and certificates when organization is not found (404)", async () => {
+      (Experience.findOne as jest.Mock).mockResolvedValue(null);
+      const fakeMediaBuffer = Buffer.from("fake-media");
+      const fakeCertBuffer = Buffer.from("fake-cert");
+
+      const res = await request(app)
+        .post("/api/v1/experiences/NonExistentOrg/positions")
+        .set("Authorization", "Bearer test-secret-token")
+        .field(
+          "position",
+          JSON.stringify({
+            position: "Intern",
+            description: "Intern role",
+            startDate: "2024-01-01",
+            isCurrent: false,
+          })
+        )
+        .attach("mediaUrls", fakeMediaBuffer, {
+          filename: "demo.png",
+          contentType: "image/png",
+        })
+        .attach("certificateUrls", fakeCertBuffer, {
+          filename: "award.png",
+          contentType: "image/png",
+        });
+
+      expect(res.status).toBe(404);
+      expect(mockDestroy).toHaveBeenCalledTimes(2);
+      expect(mockDestroy).toHaveBeenCalledWith(
+        expect.stringContaining("portfolio/experiences/focus/nonexistentorg/media/"),
+        { resource_type: "image" }
+      );
+      expect(mockDestroy).toHaveBeenCalledWith(
+        expect.stringContaining("portfolio/experiences/focus/nonexistentorg/certificates/"),
+        { resource_type: "image" }
+      );
     });
   });
 });

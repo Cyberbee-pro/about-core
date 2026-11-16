@@ -44,3 +44,48 @@ export const sanitizeResumePublicId = (publicId: string): string => {
   return stripExtension(publicId);
 };
 
+/**
+ * Extracts a single string from an Express route parameter which may be string or string[].
+ */
+export const extractParamString = (param: string | string[] | undefined): string => {
+  if (Array.isArray(param)) {
+    return param[0] ?? "";
+  }
+  return param ?? "";
+};
+
+/**
+ * Validates that an input is an absolute http: or https: URL.
+ * Parses with WHATWG `new URL`.
+ * Rejects javascript:, data:, vbscript:, file:, ftp:, protocol-relative "//host",
+ * relative paths, strings with control characters or embedded whitespace.
+ * Trims surrounding whitespace first.
+ */
+export const isValidHttpUrl = (urlString: unknown): boolean => {
+  if (typeof urlString !== "string") return false;
+  const trimmed = urlString.trim();
+  if (!trimmed) return false;
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return false;
+  }
+  if (/[\s\x00-\x1f\x7f]/.test(trimmed)) {
+    return false;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
+export const isHttpUrl = isValidHttpUrl;
+
+export const normalizeHttpUrl = (urlString: unknown): string | null => {
+  return isValidHttpUrl(urlString) ? (urlString as string).trim() : null;
+};
+
+export { parseBooleanField } from "./booleanUtils";
+
+
+

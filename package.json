@@ -8,7 +8,9 @@
     "start": "node dist/src/server.js",
     "dev": "ts-node-dev -r tsconfig-paths/register --respawn --transpile-only src/server.ts",
     "test": "jest --runInBand",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "clear-legacy-contributors": "ts-node -r tsconfig-paths/register scripts/clear-legacy-contributors.ts",
+    "rename-contributors-collection": "ts-node -r tsconfig-paths/register scripts/rename-contributors-collection.ts"
   },
   "keywords": [
     "express",
@@ -39,6 +41,7 @@
     "mongodb-memory-server": "^11.3.0",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "tsc-alias": "^1.9.7",
     "tsconfig-paths": "^4.2.0",
