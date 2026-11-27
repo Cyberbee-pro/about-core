@@ -5,6 +5,7 @@ export interface IAchievement extends Document {
   date: string; // e.g. "Month Year"
   detail: string;
   weight: number;
+  featured: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -14,6 +15,7 @@ const AchievementSchema = new Schema<IAchievement>({
   date: { type: String, required: true },
   detail: { type: String, required: true },
   weight: { type: Number, default: 0 },
+  featured: { type: Boolean, default: false },
 }, { timestamps: true });
 
 export const Achievement = model<IAchievement>("Achievement", AchievementSchema);

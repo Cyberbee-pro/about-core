@@ -48,9 +48,9 @@
     "semantic_hash": ""
   },
   "src/controllers/achievementController.ts": {
-    "mtime": 1792098536.2710009,
-    "seen": 1795798492.812088,
-    "ast_hash": "ba122bbe31382ec7819314cecb2527c4",
+    "mtime": 1795811495.1790557,
+    "seen": 1795811632.3309555,
+    "ast_hash": "730a0cbd4c28dd51eabc4fb143cc4ab9",
     "semantic_hash": ""
   },
   "src/controllers/certificateController.ts": {
@@ -72,9 +72,9 @@
     "semantic_hash": ""
   },
   "src/controllers/logController.ts": {
-    "mtime": 1792098536.2712553,
-    "seen": 1795798492.8120933,
-    "ast_hash": "a108f71cfb3696024b22731741732a85",
+    "mtime": 1795811501.4761696,
+    "seen": 1795811632.330968,
+    "ast_hash": "c4c573aa6849962bb0dc2d9413d2b9b5",
     "semantic_hash": ""
   },
   "src/controllers/personController.ts": {
@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "src/middlewares/dbLoggerMiddleware.ts": {
-    "mtime": 1792098536.2714765,
-    "seen": 1795798492.8120985,
-    "ast_hash": "c0634dc7573bf1b8df8bf03cbd7aebcf",
+    "mtime": 1795811499.29213,
+    "seen": 1795811632.3309808,
+    "ast_hash": "6610bc4f3f6770004dc2bae0305d4dba",
     "semantic_hash": ""
   },
   "src/middlewares/errorMiddleware.ts": {
@@ -120,9 +120,9 @@
     "semantic_hash": ""
   },
   "src/models/Achievement.ts": {
-    "mtime": 1792098536.272055,
-    "seen": 1795798492.8121018,
-    "ast_hash": "6cbc1e926c858eb337aff0d34773c691",
+    "mtime": 1795811490.8459778,
+    "seen": 1795811632.3309894,
+    "ast_hash": "0ab7f451b8b885aa2c89e3d78d33fb3f",
     "semantic_hash": ""
   },
   "src/models/Certificate.ts": {
@@ -138,9 +138,9 @@
     "semantic_hash": ""
   },
   "src/models/LogEntry.ts": {
-    "mtime": 1792098536.2722237,
-    "seen": 1795798492.812106,
-    "ast_hash": "714f2851f2c0efc2c8cc8561138aeadc",
+    "mtime": 1795811497.2030923,
+    "seen": 1795811632.330996,
+    "ast_hash": "5f8deab93c8c60fd7040c7dc6c6cb7fa",
     "semantic_hash": ""
   },
   "src/models/Person.ts": {
@@ -258,15 +258,15 @@
     "semantic_hash": ""
   },
   "tests/achievements-tests.test.ts": {
-    "mtime": 1792098536.2737803,
-    "seen": 1795798492.8121297,
-    "ast_hash": "b04a1677558fabcba1dc92b363dc5684",
+    "mtime": 1795811593.5298696,
+    "seen": 1795811632.3310425,
+    "ast_hash": "2e02870d629a1c3ab62325346e40f94b",
     "semantic_hash": ""
   },
   "tests/api.test.ts": {
-    "mtime": 1794065582.212777,
-    "seen": 1795798492.812131,
-    "ast_hash": "19f9fdac228c1b4d49807d5638a07ea2",
+    "mtime": 1795811595.722911,
+    "seen": 1795811632.3310447,
+    "ast_hash": "ca528ba6d33515e75f5a468ff41051b3",
     "semantic_hash": ""
   },
   "tests/certificates-tests.test.ts": {
@@ -312,9 +312,9 @@
     "semantic_hash": ""
   },
   "tests/models.test.ts": {
-    "mtime": 1794065582.2133744,
-    "seen": 1795798492.8121393,
-    "ast_hash": "f3effc30cc9c85b8a8edfb85d664171c",
+    "mtime": 1795811591.643834,
+    "seen": 1795811632.3310707,
+    "ast_hash": "edeb374b2c0aabe14306d4a11982c77d",
     "semantic_hash": ""
   },
   "tests/people.test.ts": {
@@ -372,9 +372,9 @@
     "semantic_hash": ""
   },
   ".agents/API_HANDOFF.md": {
-    "mtime": 1794165528.7278938,
-    "seen": 1795798492.8121543,
-    "ast_hash": "29b3a1a4980b8a216b40aa9259631307",
+    "mtime": 1795811586.1257305,
+    "seen": 1795811632.331101,
+    "ast_hash": "edecbe27a286b7ff51897b0f0d3d310c",
     "semantic_hash": ""
   },
   ".agents/api_working.md": {
@@ -513,6 +513,12 @@
     "mtime": 1792098536.2706976,
     "seen": 1795798492.8121812,
     "ast_hash": "b50e145a3ab352568db4195af9b6f53e",
+    "semantic_hash": ""
+  },
+  "tests/dbLoggerMiddleware.test.ts": {
+    "mtime": 1795811597.8349507,
+    "seen": 1795811632.3310575,
+    "ast_hash": "f55d99e2087db51eed508becaf0cd973",
     "semantic_hash": ""
   },
   "package-lock.json": {
