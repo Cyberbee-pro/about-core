@@ -3,12 +3,32 @@ import { Achievement } from "../models/Achievement";
 import { escapeRegex } from "../utils/stringUtils";
 
 export const getAchievements = async (
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const achievements = await Achievement.find().sort({ weight: 1, title: 1 });
+    const filter: Record<string, unknown> = {};
+    if (req.query.featured !== undefined) {
+      if (typeof req.query.featured !== "string") {
+        res.status(400).json({
+          success: false,
+          message: "Invalid featured filter: must be 'true' or 'false'",
+        });
+        return;
+      }
+      const normalizedFeatured = req.query.featured.trim().toLowerCase();
+      if (normalizedFeatured !== "true" && normalizedFeatured !== "false") {
+        res.status(400).json({
+          success: false,
+          message: "Invalid featured filter: must be 'true' or 'false'",
+        });
+        return;
+      }
+      filter.featured = normalizedFeatured === "true";
+    }
+
+    const achievements = await Achievement.find(filter).sort({ weight: 1, title: 1 });
     res.status(200).json({
       success: true,
       count: achievements.length,
@@ -69,11 +89,15 @@ export const createAchievement = async (
       return;
     }
 
+    const featured =
+      req.body.featured === true || req.body.featured === "true";
+
     const achievement = await Achievement.create({
       title: trimmedTitle,
       detail: req.body.detail,
       date: req.body.date,
       weight: req.body.weight ?? 0,
+      featured,
     });
 
     res.status(201).json({
@@ -112,6 +136,10 @@ export const updateAchievement = async (
     if (req.body.detail !== undefined) updateData.detail = req.body.detail;
     if (req.body.date !== undefined) updateData.date = req.body.date;
     if (req.body.weight !== undefined) updateData.weight = req.body.weight;
+    if (req.body.featured !== undefined) {
+      updateData.featured =
+        req.body.featured === true || req.body.featured === "true";
+    }
 
     const achievement = await Achievement.findByIdAndUpdate(
       req.params.id,

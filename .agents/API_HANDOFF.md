@@ -141,7 +141,7 @@ HTTP Request
 | `PUT` | `/api/v1/certificates/:id` | Admin | JSON / Multipart | Update certificate by MongoDB ObjectId. Accepts media upload on `mediaUrl`. |
 | `DELETE` | `/api/v1/certificates/:id` | Admin | `application/json` | Delete certificate by MongoDB ObjectId. |
 | **Achievements** | | | | |
-| `GET` | `/api/v1/achievements` | Public | `application/json` | List all achievements sorted by `{ weight: 1, title: 1 }`. |
+| `GET` | `/api/v1/achievements` | Public | `application/json` | List all achievements sorted by `{ weight: 1, title: 1 }`. Supports `?featured=true\|false`. |
 | `GET` | `/api/v1/achievements/:id` | Public | `application/json` | Get single achievement by MongoDB ObjectId. |
 | `POST` | `/api/v1/achievements` | Admin | `application/json` | Create an achievement. Unique title. |
 | `PUT` | `/api/v1/achievements/:id` | Admin | `application/json` | Update achievement by MongoDB ObjectId. |
@@ -761,6 +761,8 @@ Tags are free-form strings validated and normalized strictly in this sequential 
 
 #### `GET /api/v1/achievements`
 - **Access**: Public
+- **Query Parameters**:
+  - `featured` (optional, `"true"` | `"false"`): Filter achievements by featured status.
 - **Sorting**: `{ weight: 1, title: 1 }`
 - **Response**: `200 OK` `{ "success": true, "count": 1, "data": [ ...achievements ] }`
 
@@ -777,13 +779,14 @@ Tags are free-form strings validated and normalized strictly in this sequential 
   - `detail` (required, string)
   - `date` (required, string, e.g. `"October 2024"`)
   - `weight` (optional number, default `0`)
+  - `featured` (optional boolean, default `false`)
 - **Response**: `201 Created` `{ "success": true, "data": { ...createdAchievement } }`
 
 #### `PUT /api/v1/achievements/:id`
 - **Access**: Admin
 - **Path Parameters**: `:id` (MongoDB ObjectId)
 - **Content-Type**: `application/json`
-- **Fields**: Partial update of `title`, `detail`, `date`, `weight`.
+- **Fields**: Partial update of `title`, `detail`, `date`, `weight`, `featured`.
 - **Response**: `200 OK` `{ "success": true, "data": { ...updatedAchievement } }`
 
 #### `DELETE /api/v1/achievements/:id`
@@ -994,6 +997,7 @@ Tags are free-form strings validated and normalized strictly in this sequential 
 
 #### `GET /api/v1/admin/logs`
 - **Access**: Admin
+- **Behavior**: Successful `GET` requests (`statusCode < 400`) are deduplicated per UTC day (`dayKey` in `YYYY-MM-DD`) by `(method, endpoint, ip, userAgent, dayKey)`, incrementing `visits`, updating `timestamp` to the latest request, and refreshing `message` (e.g. `GET /api/v1/projects 200 (visits: N)`). Non-`GET` requests and `4xx`/`5xx` responses are stored as individual entries with `visits: 1`.
 - **Query Parameters**:
   - `date` (optional, `"YYYY-MM-DD"`): Exact UTC day range filter (`00:00:00.000` to `23:59:59.999`).
   - `month` (optional, `"YYYY-MM"`): UTC month range filter (`date` takes precedence).
@@ -1022,7 +1026,10 @@ Tags are free-form strings validated and normalized strictly in this sequential 
       "endpoint": "/api/v1/projects",
       "statusCode": 200,
       "ip": "::1",
-      "message": "GET /api/v1/projects 200 - 15ms",
+      "userAgent": "Mozilla/5.0",
+      "dayKey": "2026-10-17",
+      "visits": 3,
+      "message": "GET /api/v1/projects 200 (visits: 3)",
       "metadata": {},
       "stack": null
     }
@@ -1320,6 +1327,7 @@ export interface IAchievement {
   date: string; // e.g. "Month Year"
   detail: string;
   weight: number;
+  featured: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1398,6 +1406,9 @@ export interface ILogEntry {
   endpoint: string;
   statusCode: number;
   ip: string;
+  userAgent?: string;
+  dayKey?: string;
+  visits: number;
   message: string;
   metadata?: Record<string, unknown>;
   stack?: string;

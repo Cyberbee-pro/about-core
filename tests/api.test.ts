@@ -154,24 +154,48 @@ describe("about-core API & Middleware Integration Tests", () => {
   });
 
   describe("LogEntry MongoDB Middleware", () => {
-    it("intercepts incoming request and logs to MongoDB LogEntry collection", async () => {
-      (LogEntry.create as jest.Mock).mockResolvedValue({});
+    it("deduplicates successful GET requests via findOneAndUpdate and updates visit message", async () => {
+      (LogEntry.findOneAndUpdate as jest.Mock).mockResolvedValue({
+        _id: "log-health-1",
+        visits: 2,
+      });
+      (LogEntry.updateOne as jest.Mock).mockResolvedValue({ modifiedCount: 1 });
 
-      const res = await request(app).get("/health");
+      const res = await request(app)
+        .get("/health")
+        .set("User-Agent", "jest-agent/1.0");
       expect(res.status).toBe(200);
 
       // Give event loop a tick for res.on('finish') async callback
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      expect(LogEntry.create).toHaveBeenCalled();
-      const createCallArg = (LogEntry.create as jest.Mock).mock.calls[0][0];
-      expect(createCallArg).toHaveProperty("method", "GET");
-      expect(createCallArg).toHaveProperty("endpoint", "/health");
-      expect(createCallArg).toHaveProperty("statusCode", 200);
-      expect(createCallArg).toHaveProperty("level", "INFO");
+      expect(LogEntry.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: "GET",
+          endpoint: "/health",
+          userAgent: "jest-agent/1.0",
+          dayKey: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        }),
+        expect.objectContaining({
+          $inc: { visits: 1 },
+          $set: expect.objectContaining({
+            timestamp: expect.any(Date),
+          }),
+          $setOnInsert: expect.objectContaining({
+            level: "INFO",
+            statusCode: 200,
+          }),
+        }),
+        { upsert: true, new: true }
+      );
+      expect(LogEntry.updateOne).toHaveBeenCalledWith(
+        { _id: "log-health-1", visits: 2 },
+        { $set: { message: "GET /health 200 (visits: 2)" } }
+      );
+      expect(LogEntry.create).not.toHaveBeenCalled();
     });
 
-    it("assigns WARN level for 4xx status codes", async () => {
+    it("assigns WARN level and creates individual entry for 4xx status codes", async () => {
       (LogEntry.create as jest.Mock).mockResolvedValue({});
 
       const res = await request(app).get("/non-existent-route");
@@ -183,6 +207,7 @@ describe("about-core API & Middleware Integration Tests", () => {
       const createCallArg = (LogEntry.create as jest.Mock).mock.calls[0][0];
       expect(createCallArg).toHaveProperty("statusCode", 404);
       expect(createCallArg).toHaveProperty("level", "WARN");
+      expect(createCallArg).toHaveProperty("visits", 1);
     });
   });
 

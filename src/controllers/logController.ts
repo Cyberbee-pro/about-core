@@ -54,13 +54,18 @@ export const getAdminLogs = async (
         .lean(),
     ]);
 
+    const normalizedLogs = logs.map((log) => ({
+      ...log,
+      visits: log.visits ?? 1,
+    }));
+
     res.status(200).json({
       success: true,
-      count: logs.length,
+      count: normalizedLogs.length,
       total,
       page: pageNum,
       totalPages: Math.ceil(total / limitNum),
-      data: logs,
+      data: normalizedLogs,
     });
   } catch (error) {
     next(error);

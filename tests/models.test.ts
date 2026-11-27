@@ -3,6 +3,7 @@ import { Skill } from "@/models/Skill";
 import { Achievement } from "@/models/Achievement";
 import { Experience } from "@/models/Experience";
 import { Certificate } from "@/models/Certificate";
+import { LogEntry } from "@/models/LogEntry";
 import { Project } from "@/models/Project";
 import { SiteConfig, migrateSiteConfigResumeUrl } from "@/models/SiteConfig";
 import { Person } from "@/models/Person";
@@ -104,14 +105,16 @@ describe("Achievement Model", () => {
     expect(error).toBeUndefined();
   });
 
-  it("defaults weight to 0", () => {
+  it("defaults weight to 0 and featured to false", () => {
     const achievement = new Achievement(validAchievementData);
     expect(achievement.weight).toBe(0);
+    expect(achievement.featured).toBe(false);
   });
 
-  it("accepts a custom weight", () => {
-    const achievement = new Achievement({ ...validAchievementData, weight: 5 });
+  it("accepts a custom weight and featured flag", () => {
+    const achievement = new Achievement({ ...validAchievementData, weight: 5, featured: true });
     expect(achievement.weight).toBe(5);
+    expect(achievement.featured).toBe(true);
     expect(achievement.validateSync()).toBeUndefined();
   });
 
@@ -1035,5 +1038,47 @@ describe("Models barrel export (src/models/index.ts)", () => {
     expect(barrel.Person).toBeDefined();
     expect(barrel.Person.modelName).toBe("Person");
     expect(barrel.Contributor).toBeUndefined();
+  });
+});
+
+// ─── LogEntry Model ──────────────────────────────────────────────────────────
+
+describe("LogEntry Model", () => {
+  const validLogData = {
+    level: "INFO" as const,
+    method: "GET",
+    endpoint: "/api/v1/projects",
+    statusCode: 200,
+    ip: "127.0.0.1",
+    userAgent: "Mozilla/5.0",
+    dayKey: "2026-11-28",
+    message: "GET /api/v1/projects 200 (visits: 1)",
+  };
+
+  it("validates a well-formed log entry and defaults visits to 1", () => {
+    const entry = new LogEntry(validLogData);
+    expect(entry.validateSync()).toBeUndefined();
+    expect(entry.visits).toBe(1);
+    expect(entry.userAgent).toBe("Mozilla/5.0");
+    expect(entry.dayKey).toBe("2026-11-28");
+  });
+
+  it("accepts custom visits count", () => {
+    const entry = new LogEntry({ ...validLogData, visits: 5 });
+    expect(entry.validateSync()).toBeUndefined();
+    expect(entry.visits).toBe(5);
+  });
+
+  it("defines compound index for daily GET deduplication", () => {
+    const indexes = LogEntry.schema.indexes();
+    const hasCompound = indexes.some(
+      ([fields]) =>
+        fields.method === 1 &&
+        fields.endpoint === 1 &&
+        fields.ip === 1 &&
+        fields.userAgent === 1 &&
+        fields.dayKey === 1
+    );
+    expect(hasCompound).toBe(true);
   });
 });
